@@ -693,6 +693,28 @@
             gap: 4px;
         }
 
+        .ranking-list-extended {
+            width: 100%;
+            max-width: 500px;
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .extended-item {
+            display: flex;
+            align-items: center;
+            background: rgba(255,255,255,0.05);
+            padding: 6px 12px;
+            border-radius: 8px;
+            border-left: 3px solid #555;
+            backdrop-filter: blur(5px);
+        }
+        .ext-rank { font-weight: 900; color: #888; width: 25px; font-size: 12px; }
+        .ext-avatar { width: 24px; height: 24px; border-radius: 50%; margin: 0 8px; border: 1px solid rgba(255,255,255,0.2); }
+        .ext-name { flex: 1; font-weight: bold; color: #eee; font-size: 13px; }
+        .ext-score { font-weight: 900; color: #ffdd44; font-size: 14px; }
+
         /* Mobile adjustments for Podium */
         @media (max-width: 768px),
         (max-height: 800px) {
@@ -2008,7 +2030,7 @@
                     <span id="txtGiftHeart" class="cmd-icon">❤️</span>
                 </div>
                 <div class="cmd-row"
-                    onclick="ensureAudio();var m=(pick.userName||'@player').toLowerCase(); var p=persistentScores[m]=persistentScores[m]||{score:0,giftsValue:0}; p.giftsCount=(p.giftsCount||0)+1; spawnText(pick?pick.x:canvas.width/2, (pick?pick.y:camY+100)-30, '🍦 UPGRADE!', '#00ffff'); pick.pickaxe=getPickaxeForGifts(m); currentPickaxe=pick.pickaxe||PICKAXES[0]; safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color); if(_audioStarted)sfxPickaxeChange(); showGiftAlert(m, pick.userAvatarUrl, 'ice cream', document.getElementById('imgGiftIceCream').src, currentPickaxe);">
+                    onclick="ensureAudio();var m=(pick.userName||'@player').toLowerCase(); var p=persistentScores[m]=persistentScores[m]||{score:0,giftsValue:0}; p.giftsCount=(p.giftsCount||0)+1; spawnText(pick?pick.x:canvas.width/2, (pick?pick.y:camY+100)-30, '🍦 UPGRADE!', '#00ffff'); var inv=getPlayerInventory(m); pick.pickaxe=inv[0]; currentPickaxe=pick.pickaxe||PICKAXES[0]; syncCompanions(pick, inv); safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color); if(_audioStarted)sfxPickaxeChange(); showGiftAlert(m, pick.userAvatarUrl, 'ice cream', document.getElementById('imgGiftIceCream').src, currentPickaxe);">
                     <img src="pickaxe/wooden_pickaxe.png" style="width:32px;height:32px;vertical-align:middle;" />
                     <span class="cmd-badge badge-cyan">+ 1</span>
                     <img id="imgGiftIceCream" src=""
@@ -2016,7 +2038,7 @@
                     <span id="txtGiftIceCream" class="cmd-icon" style="font-size:32px;">🍦</span>
                 </div>
                 <div class="cmd-row"
-                    onclick="ensureAudio();var m=(pick.userName||'@player').toLowerCase(); var p=persistentScores[m]=persistentScores[m]||{score:0,giftsValue:0}; p.giftsCount=PICKAXES.length-1; spawnText(pick?pick.x:canvas.width/2, (pick?pick.y:camY+100)-30, '🤞 MAX PICKAXE!', '#ff00ff'); pick.pickaxe=getPickaxeForGifts(m); currentPickaxe=pick.pickaxe||PICKAXES[0]; safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color); if(_audioStarted)sfxPickaxeChange(); showGiftAlert(m, pick.userAvatarUrl, 'finger heart', document.getElementById('imgGiftFingerHeart').src, currentPickaxe);">
+                    onclick="ensureAudio();var m=(pick.userName||'@player').toLowerCase(); var p=persistentScores[m]=persistentScores[m]||{score:0,giftsValue:0}; p.giftsCount=(p.giftsCount||0)+7; spawnText(pick?pick.x:canvas.width/2, (pick?pick.y:camY+100)-30, '🤞 EXTRA PICKAXE!', '#ff00ff'); var inv=getPlayerInventory(m); pick.pickaxe=inv[0]; currentPickaxe=pick.pickaxe||PICKAXES[0]; syncCompanions(pick, inv); safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color); if(_audioStarted)sfxPickaxeChange(); showGiftAlert(m, pick.userAvatarUrl, 'finger heart', document.getElementById('imgGiftFingerHeart').src, currentPickaxe);">
                     <img src="pickaxe/wooden_pickaxe.png" style="width:32px;height:32px;vertical-align:middle;" />
                     <span class="cmd-badge badge-purple">++</span>
                     <img src="pickaxe/netherite_pickaxe.png" style="width:32px;height:32px;vertical-align:middle;" />
@@ -2052,11 +2074,12 @@
         </div>
     </div>
 
-    <div id="gameWrapper" style="position:relative;display:inline-block;max-width:100vw;max-height:100vh;">
+    <div id="gameWrapper" style="position:relative; display:flex; justify-content:center; align-items:center; width:100%; height:100vh; background:#0d0d2b;">
         <div id="announceOverlay"></div>
         <div id="cycleRankingOverlay" class="ranking-overlay">
             <h1 class="ranking-title">RESUMO DO CICLO</h1>
             <div id="podiumContainer" class="podium-container"></div>
+            <div id="rankingListExtended" class="ranking-list-extended"></div>
             <div style="margin-top: 40px; display: flex; gap: 20px;">
                 <button onclick="generateCommemorativeImage()" class="ui-action-btn" style="background: rgba(0, 255, 136, 0.2); color: #00ff88; border: 2px solid #00ff88; padding: 12px 30px; font-size: 16px; border-radius: 50px; cursor: pointer; backdrop-filter: blur(5px); font-weight: 900; letter-spacing: 1px; transition: all 0.3s; box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);">
                     📸 SALVAR IMAGEM
@@ -2079,6 +2102,7 @@
         var lastActivity = {};
         // --- Otimização: Fila de Eventos ---
         var liveEventQueue = [];
+        var processedEventIds = new Set();
         var uiUpdateTick = 0;
         var countryMapping = {}; // ISO code -> Name
         var nameToCountryCode = {}; // Name -> ISO code
@@ -2155,7 +2179,7 @@
             flagImages[code] = img;
             return img;
         }
-        var pick = { x: 540, y: 100, vx: 0, vy: 0, ang: 0, spin: 0, stuck: false, stuckTimer: 0, userName: '', userAvatarUrl: '', stormTimer: 0, swordTimer: 0, active: true };
+        var pick = { x: 540, y: 100, vx: 0, vy: 0, ang: 0, spin: 0, stuck: false, stuckTimer: 0, userName: '', userAvatarUrl: '', stormTimer: 0, swordTimer: 0, active: true, companions: [] };
 
 
 
@@ -2612,8 +2636,8 @@
                     persistentScores[b.userName].score += pts;
                 }
             }
-            var debrisPerBlock = b.mega ? 2 : (b.heart ? 0 : 1);
-            var maxExplosionDebris = b.mega ? 40 : (b.heart ? 0 : 20);
+            var debrisPerBlock = b.mega ? 1 : (b.heart ? 0 : 1);
+            var maxExplosionDebris = b.mega ? 15 : (b.heart ? 0 : 10);
             var spawned = 0;
             for (var i = 0; i < destroyedBlocks.length && spawned < maxExplosionDebris; i++) {
                 var blk = destroyedBlocks[i];
@@ -2624,6 +2648,8 @@
                     var d = Math.sqrt(dx * dx + dy * dy) || 1;
                     var baseSpd = (b.mega ? 5 : 3.5) + Math.random() * 3;
                     var scatter = b.mega ? 4 : 2.5;
+                    var finalOwner = getMotherPickaxe(b);
+
                     debris.push({
                         x: blk.wx + (Math.random() - 0.5) * TILE * 0.5,
                         y: blk.wy + (Math.random() - 0.5) * TILE * 0.5,
@@ -2631,9 +2657,10 @@
                         vy: (dy / d) * baseSpd - Math.random() * 3,
                         t: blk.t,
                         size: (b.mega ? 14 : 10) + Math.random() * 8,
-                        life: 1, age: 0, followFrames: 0,
+                        life: 1, age: 0, followFrames: 60,
                         ang: Math.random() * Math.PI * 2,
-                        spin: (Math.random() - 0.5) * 0.3
+                        spin: (Math.random() - 0.5) * 0.3,
+                        owner: finalOwner
                     });
                     spawned++;
                 }
@@ -2897,12 +2924,15 @@
             var spawned = 0;
             for (var bi = 0; bi < destroyedBlocks.length && spawned < maxDebris; bi++) {
                 var blk = destroyedBlocks[bi];
+                var finalOwner = getMotherPickaxe(c);
+
                 debris.push({
                     x: blk.wx, y: blk.wy,
                     vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 4,
                     t: blk.t, size: 8 + Math.random() * 6,
-                    life: 1, age: 0, followFrames: 0,
-                    ang: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.3
+                    life: 1, age: 0, followFrames: 60,
+                    ang: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.3,
+                    owner: finalOwner
                 });
                 spawned++;
             }
@@ -3214,26 +3244,78 @@
         var PICK_SIZE = 80;
         var pickaxeChangeInterval = 10;
 
+        function getPlayerInventory(userName) {
+            var totalLevel = (persistentScores[userName] && persistentScores[userName].giftsCount) || 0;
+            var inventory = [];
+            for (var i = 0; i < 5; i++) {
+                var startLevel = i * 7;
+                if (totalLevel >= startLevel) {
+                    var tier = Math.min(totalLevel - startLevel, 6);
+                    inventory.push(PICKAXES[tier]);
+                } else break;
+            }
+            return inventory;
+        }
+
         function getPickaxeForGifts(userName) {
-            var giftsCount = (persistentScores[userName] && persistentScores[userName].giftsCount) || 0;
-            var tier = Math.min(giftsCount, PICKAXES.length - 1);
-            return PICKAXES[tier];
+            var inv = getPlayerInventory(userName);
+            return inv[0] || PICKAXES[0];
+        }
+
+        function syncCompanions(p, inventory) {
+            if (!p.companions) p.companions = [];
+            // Precisamos de inventory.length - 1 companheiros (a primeira picareta é do jogador)
+            var needed = Math.max(0, inventory.length - 1);
+            
+            // Adiciona se estiver faltando
+            while (p.companions.length < needed) {
+                var compIdx = p.companions.length + 1;
+                p.companions.push({
+                    x: p.x, y: p.y - 40, vx: 0, vy: 0, ang: 0, spin: 0,
+                    userName: p.userName, userAvatarUrl: p.userAvatarUrl,
+                    isCompanion: true, companionIdx: compIdx, owner: p,
+                    pickaxe: inventory[compIdx],
+                    swordTimer: p.swordTimer || 0,
+                    bigTimer: p.bigTimer || 0,
+                    stuck: false, stuckTimer: 0
+                });
+            }
+            
+            // Remove se houver extras
+            while (p.companions.length > needed) {
+                p.companions.pop();
+            }
+            
+            // Atualiza tiers e sincroniza skills
+            for (var i = 0; i < p.companions.length; i++) {
+                p.companions[i].pickaxe = inventory[i + 1];
+                p.companions[i].swordTimer = p.swordTimer || 0;
+                p.companions[i].bigTimer = p.bigTimer || 0;
+                // Sincroniza userName/Avatar caso mudem
+                p.companions[i].userName = p.userName;
+                p.companions[i].userAvatarUrl = p.userAvatarUrl;
+            }
         }
 
         function updateAllPickaxes() {
             var mainUser = (ownerName || '@player').toLowerCase();
-            var newPickObj = getPickaxeForGifts(mainUser);
-            if (pick.pickaxe !== newPickObj) {
-                pick.pickaxe = newPickObj;
-                currentPickaxe = newPickObj || PICKAXES[0];
+            var mainInv = getPlayerInventory(mainUser);
+            
+            if (pick.pickaxe !== mainInv[0]) {
+                pick.pickaxe = mainInv[0];
+                currentPickaxe = mainInv[0] || PICKAXES[0];
                 safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color);
                 if (_audioStarted) sfxPickaxeChange();
             }
+            syncCompanions(pick, mainInv);
+
             for (var i = 0; i < userPicks.length; i++) {
-                var newPlayerPick = getPickaxeForGifts(userPicks[i].userName);
-                if (userPicks[i].pickaxe !== newPlayerPick) {
-                    userPicks[i].pickaxe = newPlayerPick;
+                var up = userPicks[i];
+                var inv = getPlayerInventory(up.userName);
+                if (up.pickaxe !== inv[0]) {
+                    up.pickaxe = inv[0];
                 }
+                syncCompanions(up, inv);
             }
         }
 
@@ -3867,86 +3949,226 @@
 
         function addCycleScore(userName, pts, type) {
             if (!userName) return;
-            if (!_cycleScores[userName]) _cycleScores[userName] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, sheep: 0, pig: 0, avatar: '' };
-            _cycleScores[userName].score += pts;
-            if (type === 'kill') _cycleScores[userName].kills++;
-            if (type === 'item') _cycleScores[userName].items++;
-            if (type === 'ball') _cycleScores[userName].balls++;
-            if (type === 'sheep') _cycleScores[userName].sheep++;
-            if (type === 'pig') _cycleScores[userName].pig++;
+            if (!_cycleScores[userName]) _cycleScores[userName] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, sheep: 0, pig: 0, pending: 0, avatar: '' };
+            
+            // Inimigos e ovos bônus são acumulados como 'pending' para animação no ranking
+            var isPendingType = (type === 'kill' || type === 'sheep' || type === 'pig' || type === 'ball');
+            
+            if (isPendingType) {
+                _cycleScores[userName].pending = (_cycleScores[userName].pending || 0) + pts;
+                if (type === 'kill') _cycleScores[userName].kills = (_cycleScores[userName].kills || 0) + 1;
+                if (type === 'sheep') _cycleScores[userName].sheep = (_cycleScores[userName].sheep || 0) + 1;
+                if (type === 'pig') _cycleScores[userName].pig = (_cycleScores[userName].pig || 0) + 1;
+                if (type === 'ball') _cycleScores[userName].balls = (_cycleScores[userName].balls || 0) + 1;
+
+                if (!persistentScores[userName]) persistentScores[userName] = { score: 0, likes: 0, giftsValue: 0, pendingScore: 0 };
+                persistentScores[userName].pendingScore = (persistentScores[userName].pendingScore || 0) + pts;
+            } else {
+                _cycleScores[userName].score += pts;
+                if (type === 'item') _cycleScores[userName].items++; // Items não são pending, somam direto
+                if (persistentScores[userName]) {
+                    persistentScores[userName].score = (persistentScores[userName].score || 0) + pts;
+                }
+            }
             if (persistentScores[userName] && persistentScores[userName].avatar) _cycleScores[userName].avatar = persistentScores[userName].avatar;
         }
 
         function triggerCycleEnd(cycle) {
-            var players = Object.keys(_cycleScores).map(function (n) {
+            var allPlayers = Object.keys(_cycleScores).map(function (n) {
                 var cs = _cycleScores[n];
                 var pTier = currentPickaxe;
-                if (ownerName && n === ownerName) {
-                    pTier = currentPickaxe;
-                } else {
+                if (ownerName && n === ownerName) { pTier = currentPickaxe; }
+                else {
                     for (var j = 0; j < userPicks.length; j++) {
                         if (userPicks[j].userName === n) { pTier = userPicks[j].pickaxe || PICKAXES[0]; break; }
                     }
                 }
                 var av = cs.avatar || (persistentScores[n] ? persistentScores[n].avatar : '');
-                if (av) loadAvatar(av);
                 var giftsTotal = (persistentScores[n] && persistentScores[n].giftsValue !== undefined) ? persistentScores[n].giftsValue : 0;
-                return { name: n, score: cs.score || 0, kills: cs.kills || 0, items: cs.items || 0, balls: cs.balls || 0, likes: cs.likes || 0, giftsValue: giftsTotal, userAvatarUrl: av, pickaxe: pTier };
-            }).sort(function (a, b) { return b.score - a.score; }).slice(0, 3);
+                
+                return { 
+                    name: n, 
+                    baseScore: Math.floor(cs.score || 0), 
+                    pending: Math.floor(cs.pending || 0),
+                    totalScore: Math.floor((cs.score || 0) + (cs.pending || 0)),
+                    kills: cs.kills || 0, 
+                    pig: cs.pig || 0,
+                    sheep: cs.sheep || 0,
+                    items: cs.items || 0, 
+                    balls: cs.balls || 0, 
+                    likes: cs.likes || 0, 
+                    giftsValue: giftsTotal, 
+                    userAvatarUrl: av, 
+                    pickaxe: pTier 
+                };
+            }).sort(function (a, b) { return b.totalScore - a.totalScore; });
 
-            if (players.length === 0) return;
+            var top3 = allPlayers.slice(0, 3);
+            var others = allPlayers.slice(3, 8);
 
-            // POPULAR PODIUM DOM
+            if (top3.length === 0) return;
+
             var podiumHTML = '';
             var medals = ['🥇', '🥈', '🥉'];
             var classes = ['first', 'second', 'third'];
 
-            // Reordenar jogadores para o podium (1º, 2º, 3º)
-            var reorderedPlayers = [];
-            if (players.length >= 1) reorderedPlayers.push(players[0]);
-            if (players.length >= 2) reorderedPlayers.push(players[1]);
-            if (players.length >= 3) reorderedPlayers.push(players[2]);
-
-            reorderedPlayers.forEach(function (p, i) {
+            top3.forEach(function (p, i) {
                 if (!p) return;
-                var originalIdx = players.indexOf(p);
-                var medalIcon = medals[originalIdx];
-                var stepClass = classes[originalIdx];
-                var avatar = p.userAvatarUrl || 'pickaxe/default_avatar.png';
+                var medalIcon = medals[i];
+                var stepClass = classes[i];
+                var avatar = p.userAvatarUrl || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>';
 
                 var statsHTML = '';
-                if (p.kills > 0) statsHTML += `<div class="podium-stat-badge">💥 ${p.kills}</div>`;
+                if (p.kills > 0) statsHTML += `<div class="podium-stat-badge" id="stat_kills_${i}"><img src="slime/Slime.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.kills}</div>`;
+                if (p.balls > 0) statsHTML += `<div class="podium-stat-badge" id="stat_balls_${i}"><img src="items/xp_orb.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.balls}</div>`;
+                if (p.pig > 0) statsHTML += `<div class="podium-stat-badge" id="stat_pig_${i}"><img src="pig/pig%20kid.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.pig}</div>`;
+                if (p.sheep > 0) statsHTML += `<div class="podium-stat-badge" id="stat_sheep_${i}"><img src="animais%20bonus/ovelha/Ovelha%20kid.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.sheep}</div>`;
                 if (p.giftsValue > 0) statsHTML += `<div class="podium-stat-badge">🎁 ${p.giftsValue}</div>`;
                 if (p.likes > 0) statsHTML += `<div class="podium-stat-badge">❤️ ${p.likes}</div>`;
 
-                podiumHTML += `
-                    <div class="podium-step ${stepClass}">
-                        <div class="podium-info">
-                            <div class="podium-avatar-wrapper">
-                                <img src="${avatar}" class="podium-avatar" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>'">
-                                <div class="podium-medal" style="color:${stepClass === 'first' ? '#ffd700' : (stepClass === 'second' ? '#c0c0c0' : '#cd7f32')}">${medalIcon}</div>
-                            </div>
-                            <div class="podium-name">${p.name.replace(/^@/, '')}</div>
-                            <div class="podium-score">${Math.floor(p.score)} PTS</div>
-                            <div class="podium-stats">${statsHTML}</div>
-                        </div>
-                        <div class="podium-base">${originalIdx + 1}</div>
-                    </div>
-                `;
+                podiumHTML += '<div class="podium-step ' + stepClass + '" id="podium_step_' + i + '">' +
+                    '<div class="podium-info">' +
+                        '<div class="podium-avatar-wrapper">' +
+                            '<img src="' + avatar + '" class="podium-avatar" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>\'">' +
+                            '<div class="podium-medal" style="color:' + (stepClass === 'first' ? '#ffd700' : (stepClass === 'second' ? '#c0c0c0' : '#cd7f32')) + '">' + medalIcon + '</div>' +
+                            (p.pending > 0 ? '<div class="podium-bonus-tag" id="bonus_tag_' + i + '">+' + p.pending + '⚡</div>' : '') +
+                        '</div>' +
+                        '<div class="podium-name">' + p.name.replace(/^@/, '') + '</div>' +
+                        '<div class="podium-score" id="podium_score_' + i + '">' + Math.floor(p.baseScore) + ' PTS</div>' +
+                        '<div class="podium-stats">' + statsHTML + '</div>' +
+                    '</div>' +
+                    '<div class="podium-base">' + (i + 1) + '</div>' +
+                '</div>';
             });
+            
             document.getElementById('podiumContainer').innerHTML = podiumHTML;
-            document.getElementById('cycleRankingOverlay').classList.add('active');
 
-            _cycleOverlay = { timer: 480, top3: players, cycle: cycle, confetti: [] };
+            // Ranking estendido (processado imediatamente)
+            var extendedHTML = others.map(function(p, i) {
+                var pickColor = p.pickaxe ? p.pickaxe.color : '#555';
+                var fallbackAvatar = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23222%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>';
+                return '<div class="extended-item" style="border-left-color: ' + pickColor + '">' +
+                        '<span class="ext-rank">#' + (i + 4) + '</span>' +
+                        '<img src="' + (p.userAvatarUrl || fallbackAvatar) + '" class="ext-avatar" onerror="this.src=\'' + fallbackAvatar + '\'" />' +
+                        '<span class="ext-name">' + p.name.replace(/^@/, '') + '</span>' +
+                        '<span class="ext-score">' + Math.floor(p.totalScore) + ' PTS</span>' +
+                    '</div>';
+            }).join('');
+            document.getElementById('rankingListExtended').innerHTML = extendedHTML;
+
+            var overlay = document.getElementById('cycleRankingOverlay');
+            overlay.classList.add('active');
+
+            _cycleOverlay = { timer: 900, top3: top3, cycle: cycle, confetti: [] };
             _cycleOverlayTimer = 0;
 
-            Object.keys(_cycleScores).forEach(function (n) {
-                if (persistentScores[n]) persistentScores[n].balls = 0;
+            // Iniciar animação de bônus sequencial após 2.5 segundos
+            setTimeout(function() {
+                top3.forEach(function(p, i) {
+                    var scoreEl = document.getElementById('podium_score_' + i);
+                    var bonusEl = document.getElementById('bonus_tag_' + i);
+                    if (!scoreEl || !bonusEl) return;
+
+                    // Fila de bônus para este jogador
+                    var queue = [];
+                    if (p.kills > 0) queue.push({ count: p.kills, icon: '<img src="slime/Slime.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 50, color: '#ff4444', statId: 'stat_kills_' + i });
+                    if (p.balls > 0) queue.push({ count: p.balls, icon: '<img src="items/xp_orb.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 80, color: '#00ffff', statId: 'stat_balls_' + i });
+                    if (p.pig > 0) queue.push({ count: p.pig, icon: '<img src="pig/pig%20kid.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 120, color: '#ffaaaa', statId: 'stat_pig_' + i });
+                    if (p.sheep > 0) queue.push({ count: p.sheep, icon: '<img src="animais%20bonus/ovelha/Ovelha%20kid.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 180, color: '#ffffff', statId: 'stat_sheep_' + i });
+
+                    if (queue.length === 0) {
+                        if (p.pending > 0) { // Fallback para qualquer outro pending
+                            queue.push({ count: 1, icon: '⚡', ptsPer: p.pending, color: '#ffdd44' });
+                        } else return;
+                    }
+
+                    var currentScore = p.baseScore;
+                    var qIdx = 0;
+
+                    function processNext() {
+                        if (qIdx >= queue.length) {
+                            bonusEl.style.display = 'none';
+                            scoreEl.style.color = '#00ff88';
+                            scoreEl.style.transform = 'scale(1.2)';
+                            if (_audioStarted) sfxSkillActivate();
+                            setTimeout(function() { scoreEl.style.transform = 'scale(1)'; }, 300);
+                            return;
+                        }
+
+                        var item = queue[qIdx];
+                        var countLeft = item.count;
+                        var startScore = currentScore;
+                        var duration = 800 + (item.count * 100); 
+                        if (duration > 2000) duration = 2000;
+                        
+                        var startTime = null;
+                        var lastSoundTime = 0;
+
+                        bonusEl.style.background = item.color;
+                        bonusEl.style.color = '#000';
+                        bonusEl.classList.add('animating-to-score');
+
+                        function animate(timestamp) {
+                            if (!startTime) startTime = timestamp;
+                            var progress = timestamp - startTime;
+                            var perc = Math.min(progress / duration, 1);
+
+                            var added = Math.floor(item.count * item.ptsPer * perc);
+                            var currentItemCount = Math.ceil(item.count * (1 - perc));
+                            
+                            scoreEl.textContent = Math.floor(startScore + added) + ' PTS';
+                            bonusEl.innerHTML = item.icon + ' ' + currentItemCount;
+                            
+                            // Sincroniza o badge estático
+                            if (item.statId) {
+                                var sBadge = document.getElementById(item.statId);
+                                if (sBadge) {
+                                    if (currentItemCount <= 0) sBadge.style.opacity = '0.3';
+                                    sBadge.innerHTML = item.icon + ' ' + currentItemCount;
+                                }
+                            }
+
+                            if (progress - lastSoundTime > 180 && progress < duration) {
+                                if (_audioStarted) {
+                                    if (item.icon === '🐷') sfxPig(true);
+                                    else if (item.icon === '🐐') sfxSheep(true);
+                                    else sfxPop();
+                                }
+                                lastSoundTime = progress;
+                            }
+
+                            if (progress < duration) {
+                                requestAnimationFrame(animate);
+                            } else {
+                                currentScore = Math.floor(startScore + (item.count * item.ptsPer));
+                                qIdx++;
+                                setTimeout(processNext, 300); // Pausa entre tipos de bônus
+                            }
+                        }
+                        requestAnimationFrame(animate);
+                    }
+                    processNext();
+                });
+            }, 2500);
+
+            // Efetiva os pontos no persistentScores para TODOS os jogadores do ciclo (incluindo 4º lugar em diante)
+            Object.keys(_cycleScores).forEach(function(n) {
+                var cs = _cycleScores[n];
+                if (persistentScores[n]) {
+                    // Adiciona o bônus pendente ao score total persistente
+                    persistentScores[n].score = (persistentScores[n].score || 0) + (cs.pending || 0);
+                    persistentScores[n].pendingScore = 0; // Limpa o acumulado pendente
+                }
             });
+
+            // Salva no localStorage para não perder em caso de refresh
+            localStorage.setItem('pd_persistent_scores', JSON.stringify(persistentScores));
+            
+            // Limpa o estado do ciclo atual
             _cycleScores = {};
-            _currentCycle = cycle;
-            _saveCycleScores();
-            _ignoreLikesUntil = Date.now() + 3000;
+            localStorage.removeItem('pd_cycle_scores');
+
+            _cycleScores = {};
         }
 
         var _uiHiddenForOverlay = false;
@@ -4146,7 +4368,11 @@
             if (doublePickActive) return;
             doublePickActive = true;
             doublePickTimer = DOUBLE_PICK_DURATION;
-            if (pick) extraPicks.push({ x: pick.x, y: pick.y - 20, vx: pick.vx - 3, vy: pick.vy - 2, ang: pick.ang, spin: 0.1, stuck: false, stuckTimer: 0 });
+            if (pick) extraPicks.push({ 
+                x: pick.x, y: pick.y - 20, vx: pick.vx - 3, vy: pick.vy - 2, 
+                ang: pick.ang, spin: 0.1, stuck: false, stuckTimer: 0,
+                owner: pick, isCompanion: true 
+            });
             if (_audioStarted) sfxSkillActivate();
             updateDoublePickHUD();
         }
@@ -4182,6 +4408,11 @@
 
             skillCooldowns[cdKey] = SWORD_DURATION + SWORD_COOLDOWN;
             p.swordTimer = SWORD_DURATION;
+            
+            // Replicar para companheiros
+            if (p.companions) {
+                p.companions.forEach(function(c) { c.swordTimer = SWORD_DURATION; });
+            }
 
             if (p === pick) {
                 swordActive = true;
@@ -4204,6 +4435,15 @@
             skillCooldowns[cdKey] = bigCooldown;
             p.bigTimer = BIG_DURATION;
             p._safetyTimer = 60; // 1 second of insta-destroy to open space
+            
+            // Replicar para companheiros
+            if (p.companions) {
+                p.companions.forEach(function(c) { 
+                    c.bigTimer = BIG_DURATION; 
+                    c._safetyTimer = 60;
+                });
+            }
+
             spawnText(p.x, p.y - 40, '🍄 BIG MODE!', '#44aaff');
             if (_audioStarted) sfxSkillActivate();
         }
@@ -4331,7 +4571,6 @@
             if (isMegaClearingRow(pRow)) {
                 var gMz = getMegaZone(pRow);
                 if (gMz >= 0 && megaClearedZones[gMz] && !megaClearedZones[gMz + '_gateOpen']) {
-                    // Gate row = bottom of mega-clearing minus 10 rows
                     var gateRow = getMegaStart(gMz) + MEGA_CLEARING_HEIGHT - 10;
                     var gateY = gateRow * TILE;
                     if (p.y + r > gateY && p.vy > 0) {
@@ -4345,12 +4584,44 @@
 
             p.ang += p.spin;
             if (hitAny) p.spin = p.spin * 0.9 + (Math.random() - 0.5) * 0.12; else p.spin *= 0.995;
-            // Combo armor: when hitting block, give 1s immunity before combo can reset
             if (hitAny && p.combo > 0) { p.comboArmor = 120; }
-            // Combo timer decay — reset combo if no enemy hit for 3 seconds (but armor protects)
             if (p.comboTimer > 0) { p.comboTimer--; } else if (!p.comboArmor || p.comboArmor <= 0) { resetCombo(p); }
             if (p.comboArmor > 0) p.comboArmor--;
             return hitAny;
+        }
+
+        function updateCompanion(c, owner) {
+            var dx = owner.x - c.x;
+            var dy = (owner.y - 80) - c.y;
+            var dist = Math.sqrt(dx*dx + dy*dy);
+
+            // Teleporte de segurança apenas se sumir da tela (muito longe)
+            if (dist > 1200) {
+                c.x = owner.x;
+                c.y = owner.y - 100;
+                c.vx = owner.vx;
+                c.vy = owner.vy;
+            }
+
+            // ZONA MORTA E DRIFT ORGÂNICO
+            // Se estiver a menos de 150px, o companheiro é 100% livre (gravidade pura)
+            if (dist > 150) {
+                var force = 0.0012; // Força mínima para não parecer elástico
+                var sway = Math.sin(Date.now() * 0.001 + c.companionIdx) * 0.15;
+                c.vx += (dx * force) + sway;
+                c.vy += (dy * force);
+            }
+
+            // Aplica física real (gravidade, colisões, mineração)
+            applyPhysics(c, 24);
+            
+            // Sincroniza timers de skill
+            c.swordTimer = owner.swordTimer;
+            c.bigTimer = owner.bigTimer;
+            c._safetyTimer = owner._safetyTimer;
+            
+            // Rotação suave e natural
+            c.ang += (c.vx * 0.03) + (Math.sin(Date.now() * 0.002) * 0.01);
         }
 
         function updateUserPicks() {
@@ -4383,6 +4654,11 @@
                     continue;
                 }
                 applyPhysics(up, 28);
+                if (up.companions) {
+                    for (var ci = 0; ci < up.companions.length; ci++) {
+                        updateCompanion(up.companions[ci], up);
+                    }
+                }
                 if (up.isStorm) {
                     up.life--;
                     if (up.life < 0) userPicks.splice(i, 1);
@@ -4448,14 +4724,30 @@
             });
         }
 
+        function getAllActivePicks() {
+            var base = [pick].concat(userPicks, extraPicks);
+            var all = [];
+            for (var i = 0; i < base.length; i++) {
+                var p = base[i];
+                if (!p || p.stuck) continue;
+                all.push(p);
+                if (p.companions) {
+                    for (var j = 0; j < p.companions.length; j++) {
+                        all.push(p.companions[j]);
+                    }
+                }
+            }
+            return all;
+        }
+
         function updateItems() {
             for (var i = items.length - 1; i >= 0; i--) {
                 var it = items[i];
                 // Grotto items: stay still until a player gets close
                 if (it.isGrotta && it.wait > 100) {
                     it.ang += it.spin;
-                    // Check proximity to any pick
-                    var allP = [pick].concat(userPicks, extraPicks);
+                    // Check proximity to any pick (including companions)
+                    var allP = getAllActivePicks();
                     for (var pi = 0; pi < allP.length; pi++) {
                         var pp = allP[pi];
                         if (!pp) continue;
@@ -4516,9 +4808,25 @@
             }
         }
 
+        function getMotherPickaxe(p) {
+            if (!p) return pick;
+            var safety = 0;
+            var curr = p;
+            while (curr && curr.owner && safety < 3) {
+                curr = curr.owner;
+                safety++;
+            }
+            if (curr && curr.cloneOwner) {
+                var name = curr.cloneOwner;
+                var mother = (ownerName && name === ownerName) ? pick : userPicks.find(function(u){ return u.userName === name; });
+                if (mother) return mother;
+            }
+            return curr || pick;
+        }
+
         function spawnDebris(bx, by, blockType, source) {
             if (debris.length > MAX_DEBRIS) return;
-            var target = source || pick;
+            var target = getMotherPickaxe(source);
             var n = 1 + Math.floor(Math.random() * 2);
             for (var i = 0; i < n; i++) {
                 var ox = (Math.random() - 0.5) * TILE * 0.6, oy = (Math.random() - 0.5) * TILE * 0.6;
@@ -4529,7 +4837,8 @@
                     vx: (dx / dist) * spd + (Math.random() - 0.5) * 2,
                     vy: (dy / dist) * spd + (Math.random() - 0.5) * 2,
                     t: blockType, size: 10 + Math.random() * 8,
-                    life: 1, age: 0, followFrames: 20 + Math.floor(Math.random() * 30),
+                    life: 1, age: 0, 
+                    followFrames: (target && target !== pick) ? 60 : (20 + Math.floor(Math.random() * 30)),
                     ang: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.2,
                     owner: target
                 });
@@ -5251,24 +5560,9 @@
                         if (ball.animalType === 'sheep') sfxSheep(true);
                         else sfxPig(true);
                         if (owner.userName) {
-                            var player = userPicks.find(function (u) { return u.userName === owner.userName; });
-                            if (player) player.score = (player.score || 0) + BONUS_BALL_PTS;
-                            if (!persistentScores[owner.userName]) persistentScores[owner.userName] = { score: 0, avatar: owner.userAvatarUrl || '' };
-                            persistentScores[owner.userName].score += BONUS_BALL_PTS;
-                            if (ball.animalType === 'sheep') {
-                                persistentScores[owner.userName].sheep = (persistentScores[owner.userName].sheep || 0) + 1;
-                                addCycleScore(owner.userName, BONUS_BALL_PTS, 'sheep');
-                            } else {
-                                persistentScores[owner.userName].pig = (persistentScores[owner.userName].pig || 0) + 1;
-                                addCycleScore(owner.userName, BONUS_BALL_PTS, 'pig');
-                            }
-                        }
-                        var isOwnerTarget = (owner === pick);
-                        if (isOwnerTarget && pick.active) {
-                            score += BONUS_BALL_PTS;
-                            if (ownerName && persistentScores[ownerName]) {
-                                persistentScores[ownerName].score += BONUS_BALL_PTS;
-                            }
+                            addCycleScore(owner.userName, BONUS_BALL_PTS, ball.animalType === 'sheep' ? 'sheep' : 'pig');
+                        } else if (owner === pick && pick.active && ownerName) {
+                            addCycleScore(ownerName, BONUS_BALL_PTS, ball.animalType === 'sheep' ? 'sheep' : 'pig');
                         }
                         spawnText(ball.x, ball.y - 10, '+' + BONUS_BALL_PTS, '#ffdd44');
                         spawnText(boxX + boxW / 2, boxY - 16, '→ ' + (ball.ownerName || '?'), ball.color);
@@ -5410,6 +5704,13 @@
                     applyPhysics(pick, 28);
                 }
 
+                // Atualiza companheiros da picareta principal
+                if (pick.companions) {
+                    for (var ci = 0; ci < pick.companions.length; ci++) {
+                        updateCompanion(pick.companions[ci], pick);
+                    }
+                }
+
                 // ── Proteção anti-queda infinita (Main Pick) ──
                 var fallLimit = camY + canvas.height + 800;
                 if (pick.y > fallLimit || !isFinite(pick.y) || !isFinite(pick.x)) {
@@ -5466,7 +5767,11 @@
                     if (savedTT) displayOwner = '@' + savedTT.toLowerCase();
                 }
                 var displayScore = (displayOwner && persistentScores[displayOwner]) ? persistentScores[displayOwner].score : score;
-                document.getElementById('scoreDisplay').textContent = '⛏ ' + displayScore;
+                var pending = (displayOwner && persistentScores[displayOwner]) ? (persistentScores[displayOwner].pendingScore || 0) : 0;
+                
+                var scoreStr = '⛏ ' + displayScore;
+                if (pending > 0) scoreStr += ' <small style="font-size:0.6em; color:#ffdd44; opacity:0.8;">+' + pending + '⚡</small>';
+                document.getElementById('scoreDisplay').innerHTML = scoreStr;
             }
 
             // ── Democratic Camera: follow the deepest player ──
@@ -6052,6 +6357,20 @@
 
                 if (db.age < db.followFrames) {
                     var dTarget = db.owner || pick;
+                    
+                    // Busca recursiva: se o alvo atual tem um dono, o alvo real é o dono
+                    var safetyCount = 0;
+                    while (dTarget && dTarget.owner && safetyCount < 3) {
+                        dTarget = dTarget.owner;
+                        safetyCount++;
+                    }
+                    // Se o alvo for um clone por nome, tenta localizar o objeto mãe
+                    if (dTarget && dTarget.cloneOwner) {
+                        var cOwner = dTarget.cloneOwner;
+                        var ownerPick = (ownerName && cOwner === ownerName) ? pick : userPicks.find(function (u) { return u.userName === cOwner; });
+                        if (ownerPick) dTarget = ownerPick;
+                    }
+
                     var dx = (dTarget ? dTarget.x : db.x) - db.x, dy = (dTarget ? dTarget.y : db.y) - db.y;
                     var dist = Math.sqrt(dx * dx + dy * dy) || 1;
                     db.vx += (dx / dist) * 0.18; db.vy += (dy / dist) * 0.18;
@@ -6599,6 +6918,116 @@
             context.restore();
         }
 
+
+        function drawPickaxeSprite(p) {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.ang);
+            
+            var scale = (p.bigTimer > 0) ? BIG_SCALE : 1;
+            if (p.isCompanion) scale *= 0.85; // um pouco menor
+            if (scale !== 1) ctx.scale(scale, scale);
+            
+            var pickData = p.pickaxe || currentPickaxe;
+            var pickImg = pickData.imgObj;
+            
+            if (pickImg && pickImg.complete && pickImg.naturalWidth > 0) {
+                var hMask = pickData.headMask;
+                if (hMask && !(p.swordTimer > 0)) {
+                    ctx.save();
+                    var pulse = (Math.sin(Date.now() * 0.004 + (p.companionIdx || 0)) + 1) / 2;
+                    ctx.globalAlpha = p.isCompanion ? 0.6 : 1.0;
+                    ctx.shadowBlur = p.isCompanion ? 8 : (12 + pulse * 18);
+                    ctx.shadowColor = pickData.color || '#fff';
+                    ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    ctx.restore();
+                }
+                
+                var tex = pickImg;
+                if (p.isChicken) {
+                    var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
+                    tex = chickenFrames[frame];
+                    ctx.drawImage(tex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
+                } else {
+                    if (p.swordTimer > 0) {
+                        var mat = pickData.name || 'Wood';
+                        if (SWORD_ASSETS[mat]) tex = SWORD_ASSETS[mat];
+                    }
+                    ctx.drawImage(tex, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                }
+            } else if (pickData.color) {
+                ctx.fillStyle = pickData.color;
+                ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+            }
+            ctx.restore();
+        }
+
+        function drawPickaxeInfo(p) {
+            if (!p.userName) return;
+            ctx.save();
+            var avImg = (p.userAvatarUrl && avatarCache[p.userAvatarUrl]) || null;
+            
+            // Auto-precarregamento se não estiver no cache
+            if (p.userAvatarUrl && !avImg) {
+                loadAvatar(p.userAvatarUrl);
+            } else if (!p.userAvatarUrl && persistentScores[p.userName] && persistentScores[p.userName].avatar) {
+                p.userAvatarUrl = persistentScores[p.userName].avatar;
+                loadAvatar(p.userAvatarUrl);
+            }
+
+            var avSize = p.isCompanion ? 32 : 48;
+            var avY = p.y - PICK_HALF - (p.isCompanion ? 34 : 44);
+            
+            if (avImg && avImg.complete && avImg.naturalWidth > 0) {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.clip();
+                try { ctx.drawImage(avImg, p.x - 10 - avSize, avY - avSize / 2, avSize, avSize); } catch (e) { }
+                ctx.restore();
+                ctx.strokeStyle = (p.isCompanion ? '#aaa' : (p.color || '#ffdd44'));
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.stroke();
+            } else {
+                ctx.save();
+                ctx.fillStyle = (p.isCompanion ? '#aaa' : (p.color || '#ffdd44'));
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#000'; ctx.font = 'bold ' + Math.floor(avSize * 0.4) + 'px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText((p.userName || '?').replace('@', '').charAt(0).toUpperCase(), p.x - 10 - avSize / 2, avY);
+                ctx.restore();
+            }
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold ' + (p.isCompanion ? '16px' : '26px') + ' Arial';
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.strokeStyle = '#000'; ctx.lineWidth = p.isCompanion ? 3 : 4; ctx.lineJoin = 'round';
+            ctx.strokeText(p.userName, p.x + 10, avY);
+            if (SHADOW_ENABLED) { ctx.shadowBlur = p.isCompanion ? 4 : 8; ctx.shadowColor = '#000'; }
+            ctx.fillText(p.userName, p.x + 10, avY);
+            
+            if (!p.isCompanion) {
+                drawPlayerCooldowns(ctx, p.x - 10 - avSize / 2, avY, p.userName);
+                
+                // Desenhar Bandeira (se houver)
+                var ps = persistentScores[p.userName];
+                if (ps && ps.countryCode) {
+                    var fImg = getFlagImage(ps.countryCode);
+                    if (fImg.complete) {
+                        var fW = 40, fH = 26;
+                        var baseAX = p.x - 10 - avSize;
+                        var baseAY = avY - avSize / 2;
+                        ctx.save();
+                        ctx.translate(baseAX, baseAY);
+                        ctx.rotate(-0.4);
+                        ctx.strokeStyle = '#ddd'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -35); ctx.stroke();
+                        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(2, -35 + 2, fW, fH);
+                        ctx.drawImage(fImg, 0, -35, fW, fH);
+                        ctx.restore();
+                    }
+                }
+            }
+            ctx.restore();
+        }
 
         function draw() {
             // Always clear canvas first
@@ -7210,106 +7639,17 @@
             if (pick && pick.active) {
                 drawTormentaAura(pick);
                 drawSpinAura(pick);
-                ctx.save();
-                ctx.translate(pick.x, pick.y);
-                ctx.rotate(pick.ang);
-                var _bigS = (pick.bigTimer > 0) ? BIG_SCALE : 1;
-                if (_bigS > 1) ctx.scale(_bigS, _bigS);
-                var pimg = currentPickaxe.imgObj;
-                if (pimg && pimg.complete && pimg.naturalWidth > 0) {
-                    // Head Glow Effect (only if NOT sword)
-                    var hMask = currentPickaxe.headMask;
-                    if (hMask && !(pick.swordTimer > 0)) {
-                        ctx.save();
-                        var pulse = (Math.sin(Date.now() * 0.004) + 1) / 2;
-                        ctx.shadowBlur = 12 + pulse * 18;
-                        ctx.shadowColor = currentPickaxe.color || '#fff';
-                        ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
-                        ctx.restore();
-                    }
-                    // Draw Pickaxe (or Sword) or Chicken
-                    var pickTex = pimg;
-                    if (pick.isChicken) {
-                        var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
-                        pickTex = chickenFrames[frame];
-                        ctx.drawImage(pickTex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
-                    } else {
-                        if (pick.swordTimer > 0) {
-                            var matName = (currentPickaxe && currentPickaxe.name) || 'Wood';
-                            if (SWORD_ASSETS[matName]) pickTex = SWORD_ASSETS[matName];
-                        }
-                        ctx.drawImage(pickTex, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
-                    }
-                } else {
-                    ctx.fillStyle = currentPickaxe.color;
-                    ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                drawPickaxeSprite(pick);
+                
+                // Desenha companheiros do host
+                if (pick.companions) {
+                    pick.companions.forEach(function(c) {
+                        drawPickaxeSprite(c);
+                    });
                 }
-                ctx.restore();
 
                 // Owner name & avatar on main pickaxe
-                if (pick.userName) {
-                    ctx.save();
-                    // Auto-reload owner avatar if missing from cache
-                    if (pick.userAvatarUrl && !avatarCache[pick.userAvatarUrl]) {
-                        loadAvatar(pick.userAvatarUrl);
-                    } else if (!pick.userAvatarUrl && persistentScores[pick.userName] && persistentScores[pick.userName].avatar) {
-                        pick.userAvatarUrl = persistentScores[pick.userName].avatar;
-                        loadAvatar(pick.userAvatarUrl);
-                    }
-                    var ownerAvImg = (pick.userAvatarUrl && avatarCache[pick.userAvatarUrl]) || null;
-                    var oAvSize = 48;
-                    var oAvY = pick.y - PICK_HALF - 44;
-                    if (ownerAvImg && ownerAvImg.complete && ownerAvImg.naturalWidth > 0) {
-                        ctx.save();
-                        ctx.beginPath(); ctx.arc(pick.x - 10 - oAvSize / 2, oAvY, oAvSize / 2, 0, Math.PI * 2); ctx.clip();
-                        try { ctx.drawImage(ownerAvImg, pick.x - 10 - oAvSize, oAvY - oAvSize / 2, oAvSize, oAvSize); } catch (e) { }
-                        ctx.restore();
-                        ctx.strokeStyle = '#ffdd44'; ctx.lineWidth = 2;
-                        ctx.beginPath(); ctx.arc(pick.x - 10 - oAvSize / 2, oAvY, oAvSize / 2, 0, Math.PI * 2); ctx.stroke();
-                    } else {
-                        // Fallback: golden circle with initials
-                        ctx.save();
-                        ctx.fillStyle = '#ffdd44';
-                        ctx.beginPath(); ctx.arc(pick.x - 10 - oAvSize / 2, oAvY, oAvSize / 2, 0, Math.PI * 2); ctx.fill();
-                        ctx.fillStyle = '#000'; ctx.font = 'bold ' + Math.floor(oAvSize * 0.4) + 'px Arial';
-                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                        ctx.fillText((pick.userName || '?').replace('@', '').charAt(0).toUpperCase(), pick.x - 10 - oAvSize / 2, oAvY);
-                        ctx.restore();
-                    }
-                    ctx.fillStyle = '#ffdd44'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                    ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
-                    ctx.strokeText(pick.userName, pick.x + 10, oAvY);
-                    if (SHADOW_ENABLED) { ctx.shadowBlur = 8; ctx.shadowColor = '#000'; }
-                    ctx.fillText(pick.userName, pick.x + 10, oAvY);
-
-
-
-                    drawPlayerCooldowns(ctx, pick.x - 10 - oAvSize / 2, oAvY, pick.userName);
-
-                    // Draw Flag with Pole
-                    var oPS = persistentScores[pick.userName];
-                    if (oPS && oPS.countryCode) {
-                        var fImg = getFlagImage(oPS.countryCode);
-                        if (fImg.complete) {
-                            var fW = 40, fH = 26; // Bigger
-                            var baseAX = pick.x - 10 - oAvSize;
-                            var baseAY = oAvY - oAvSize / 2;
-                            ctx.save();
-                            ctx.translate(baseAX, baseAY);
-                            ctx.rotate(-0.4); // Inclinada
-                            // Pole
-                            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-                            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -35); ctx.stroke();
-                            // Flag shadow
-                            ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(2, -35 + 2, fW, fH);
-                            // Flag
-                            ctx.drawImage(fImg, 0, -35, fW, fH);
-                            ctx.restore();
-                        }
-                    }
-
-                    ctx.restore();
-                }
+                drawPickaxeInfo(pick);
             }
 
             // picaretas extras (skill dupla + clones)
@@ -7324,10 +7664,9 @@
                     var cFadeThreshold = Math.floor(cloneCooldown * 0.15); // fade last 15%
                     var cloneAlpha = ep.cloneTimer < cFadeThreshold ? (ep.cloneTimer / cFadeThreshold) : 1; // fade out last 15%
                     ctx.globalAlpha = cloneAlpha;
-                    if (SHADOW_ENABLED) {
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = ep.cloneColor || '#44ddff';
-                    }
+                    
+                    // Shadow for clones disabled to improve FPS
+                    
                     var cImg = (ep.clonePickaxe || currentPickaxe).imgObj;
                     if (ep.swordTimer > 0) {
                         var cMatName = (ep.clonePickaxe || currentPickaxe).name || 'Wood';
@@ -7363,25 +7702,24 @@
                     ctx.fillStyle = '#fff'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                     ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
                     ctx.strokeText(ep.cloneOwner || '', ep.x + 10, cloneAvY);
-                    if (SHADOW_ENABLED) { ctx.shadowBlur = 8; ctx.shadowColor = '#000'; }
+                    
+                    // Text shadow for clones disabled to improve FPS
+                    
                     ctx.fillText(ep.cloneOwner || '', ep.x + 10, cloneAvY);
                     ctx.restore();
                 } else {
                     // Original doublePick extra
-                    if (SHADOW_ENABLED) {
-                        var pulse = doublePickTimer > 0 ? (Math.sin(doublePickTimer * 0.15) * 0.5 + 0.5) : 1;
-                        ctx.shadowBlur = 8 + pulse * 6;
-                        ctx.shadowColor = '#44ddff';
-                    }
+                    
+                    // Shadow for double pick disabled to improve FPS
+                    
                     var epimg = currentPickaxe.imgObj;
                     if (epimg && epimg.complete && epimg.naturalWidth > 0) {
                         // Head Glow Effect (only if NOT sword)
                         var hMask = currentPickaxe.headMask;
                         if (hMask && SHADOW_ENABLED && !(ep.swordTimer > 0)) {
                             ctx.save();
-                            var pulse = (Math.sin(Date.now() * 0.004) + 1) / 2;
-                            ctx.shadowBlur = 5 + pulse * 12;
-                            ctx.shadowColor = currentPickaxe.color || '#fff';
+                            // Simplified head glow to improve FPS
+                            ctx.globalAlpha = 0.5;
                             ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
                             ctx.restore();
                         }
@@ -7404,100 +7742,17 @@
                 var up = userPicks[ui];
                 drawTormentaAura(tormentaPick === up ? up : null);
                 drawSpinAura(up);
+                
                 ctx.save();
-                ctx.translate(up.x, up.y);
-                ctx.rotate(up.ang);
-                var _upBigS = (up.bigTimer > 0) ? BIG_SCALE : 1;
-                if (_upBigS > 1) ctx.scale(_upBigS, _upBigS);
-                var cPickObj = up.pickaxe || currentPickaxe;
-                var uImg = cPickObj.imgObj;
-                if (uImg && uImg.complete && uImg.naturalWidth > 0) {
-                    if (hMask && !(up.swordTimer > 0)) {
-                        // Otimização: Sombras pesadas desativadas para jogadores do chat
-                        // Usamos um brilho radial simples ou apenas desenhamos a máscara
-                        ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.01) * 0.4;
-                        ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
-                        ctx.globalAlpha = 1.0;
-                    }
-                    // Draw Pickaxe (or Sword) or Chicken
-                    var upPickTex = uImg;
-                    if (up.isChicken) {
-                        var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
-                        upPickTex = chickenFrames[frame];
-                        ctx.drawImage(upPickTex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
-                    } else {
-                        if (up.swordTimer > 0) {
-                            var upMat = (up.pickaxe && up.pickaxe.name) || 'Wood';
-                            if (SWORD_ASSETS[upMat]) upPickTex = SWORD_ASSETS[upMat];
-                        }
-                        ctx.drawImage(upPickTex, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
-                    }
-                }
-                ctx.restore();
-
-                // nome e avatar
-                ctx.save();
-                // Auto-reload avatar from persistentScores if missing from cache
-                if (up.userAvatarUrl && !avatarCache[up.userAvatarUrl]) {
-                    loadAvatar(up.userAvatarUrl);
-                } else if (!up.userAvatarUrl && persistentScores[up.userName] && persistentScores[up.userName].avatar) {
-                    up.userAvatarUrl = persistentScores[up.userName].avatar;
-                    loadAvatar(up.userAvatarUrl);
-                }
-                var avImg = (up.userAvatarUrl && avatarCache[up.userAvatarUrl]) || null;
-                var avSize = 48;
-                var avY = up.y - PICK_HALF - 44;
-                if (avImg && avImg.complete && avImg.naturalWidth > 0) {
-                    ctx.save();
-                    // Avatar redondo (estética premium)
-                    ctx.beginPath(); ctx.arc(up.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.clip();
-                    try { ctx.drawImage(avImg, up.x - 10 - avSize, avY - avSize / 2, avSize, avSize); } catch (e) { }
-                    ctx.restore();
-                    // Borda redonda
-                    ctx.strokeStyle = up.color || '#fff'; ctx.lineWidth = 2;
-                    ctx.beginPath(); ctx.arc(up.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.stroke();
-                } else {
-                    // Fallback: colored circle with initials
-                    ctx.save();
-                    ctx.fillStyle = up.color || '#00ff88';
-                    ctx.beginPath(); ctx.arc(up.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = '#000'; ctx.font = 'bold ' + Math.floor(avSize * 0.4) + 'px Arial';
-                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                    ctx.fillText((up.userName || '?').replace('@', '').charAt(0).toUpperCase(), up.x - 10 - avSize / 2, avY);
-                    ctx.restore();
-                }
-                ctx.fillStyle = '#fff'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
-                ctx.strokeText(up.userName, up.x + 10, avY);
-                if (SHADOW_ENABLED) { ctx.shadowBlur = 8; ctx.shadowColor = '#000'; }
-                ctx.fillText(up.userName, up.x + 10, avY);
-
-
-
-                drawPlayerCooldowns(ctx, up.x - 10 - avSize / 2, avY, up.userName);
-
-                // Draw Flag with Pole
-                var uPS = persistentScores[up.userName];
-                if (uPS && uPS.countryCode) {
-                    var ufImg = getFlagImage(uPS.countryCode);
-                    if (ufImg.complete) {
-                        var ufW = 40, ufH = 26;
-                        var uBaseAX = up.x - 10 - avSize;
-                        var uBaseAY = avY - avSize / 2;
-                        ctx.save();
-                        ctx.translate(uBaseAX, uBaseAY);
-                        ctx.rotate(-0.4); // Inclinada
-                        // Pole
-                        ctx.strokeStyle = '#ddd'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -35); ctx.stroke();
-                        // Flag shadow
-                        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(2, -35 + 2, ufW, ufH);
-                        // Flag
-                        ctx.drawImage(ufImg, 0, -35, ufW, ufH);
-                        ctx.restore();
-                    }
+                drawPickaxeSprite(up);
+                if (up.companions) {
+                    up.companions.forEach(function(c) {
+                        drawPickaxeSprite(c);
+                    });
                 }
 
+                // nome e avatar (apenas da picareta principal)
+                drawPickaxeInfo(up);
                 ctx.restore();
             }
 
@@ -7534,7 +7789,7 @@
                 var pulse = 1 + Math.sin(Date.now() * 0.01) * 0.2;
                 ctx.fillStyle = '#ff4400';
                 ctx.beginPath(); ctx.arc(0, 0, 15 * pulse, 0, Math.PI * 2); ctx.fill();
-                ctx.shadowBlur = 20; ctx.shadowColor = '#ff0000';
+                // Shadow disabled for performance
                 ctx.fillStyle = '#ffff00';
                 ctx.beginPath(); ctx.arc(0, 0, 8 * pulse, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
@@ -7679,7 +7934,7 @@
             var HS = SPIDER_SIZE * 0.35;
             for (var i = spiders.length - 1; i >= 0; i--) {
                 var s = spiders[i];
-                if (s.y < camY - 400) { spiders.splice(i, 1); continue; }
+                if (s.y < camY - 400 || s.y > camY + canvas.height + 2000) { spiders.splice(i, 1); continue; }
 
                 if (s._dirTimer > 0) s._dirTimer--;
 
@@ -7788,7 +8043,7 @@
 
         function checkPickSpiderCollisions() {
             var PICK_R = 28;
-            var allPicks = [pick].concat(userPicks, extraPicks);
+            var allPicks = getAllActivePicks();
             for (var pi = 0; pi < allPicks.length; pi++) {
                 var p = allPicks[pi];
                 if (!p || p.stuck) continue;
@@ -7834,16 +8089,10 @@
                             registerComboHit(p, s.x, s.y);
                             if (s.hp <= 0) {
                                 s.state = 'dead'; s.animTimer = 0; s.deadTimer = 0;
-                                if (p === pick && pick.active) {
-                                    score += s.pts;
-                                    if (ownerName && persistentScores[ownerName]) {
-                                        persistentScores[ownerName].score += s.pts;
-                                    }
-                                }
                                 if (p.userName) {
-                                    if (!persistentScores[p.userName]) persistentScores[p.userName] = { score: 0, avatar: p.userAvatarUrl || '' };
-                                    persistentScores[p.userName].score += s.pts;
                                     addCycleScore(p.userName, s.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, s.pts, 'kill');
                                 }
                                 sfxZombieDeath();
                             }
@@ -8374,7 +8623,7 @@
 
         function checkPickBatCollisions() {
             var PICK_R = 28;
-            var allPicks = [pick].concat(userPicks, extraPicks);
+            var allPicks = getAllActivePicks();
             for (var pi = 0; pi < allPicks.length; pi++) {
                 var p = allPicks[pi];
                 if (!p || p.stuck) continue;
@@ -8429,16 +8678,10 @@
                             spawnText(b.x, b.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
                             if (b.hp <= 0) {
                                 b.state = 'dead'; b.anim = 0; b.deadTimer = 0;
-                                if (p === pick && pick.active) {
-                                    score += b.pts;
-                                    if (ownerName && persistentScores[ownerName]) {
-                                        persistentScores[ownerName].score += b.pts;
-                                    }
-                                }
                                 if (p.userName) {
-                                    if (!persistentScores[p.userName]) persistentScores[p.userName] = { score: 0, avatar: p.userAvatarUrl || '' };
-                                    persistentScores[p.userName].score += b.pts;
                                     addCycleScore(p.userName, b.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, b.pts, 'kill');
                                 }
                                 sfxBatDeath();
                             } else {
@@ -8505,12 +8748,8 @@
                 var beeImg = frames[frameIdx];
 
                 if (beeImg && beeImg.complete && beeImg.naturalWidth > 0) {
-                    if ((b.isBlaze || b.isGhast) && SHADOW_ENABLED) {
-                        ctx.shadowBlur = 20;
-                        ctx.shadowColor = b.isBlaze ? '#ff4400' : '#ffffff';
-                    }
+                    // Shadows disabled on Blaze/Ghast for performance
                     ctx.drawImage(beeImg, -r, -r + wobble, r * 2, r * 2);
-                    if (b.isBlaze || b.isGhast) ctx.shadowBlur = 0;
                 } else {
 
                     // Fallback to original bubble body
@@ -8671,7 +8910,7 @@
 
         function checkPickZombieCollisions() {
             var PICK_R = 28;
-            var allPicks = [pick].concat(userPicks, extraPicks);
+            var allPicks = getAllActivePicks();
             for (var pi = 0; pi < allPicks.length; pi++) {
                 var p = allPicks[pi];
                 if (!p || p.stuck) continue;
@@ -8720,14 +8959,10 @@
                             registerComboHit(p, z.x, z.y);
                             if (z.hp <= 0) {
                                 z.state = 'dead'; z.animTimer = 0; z.deadTimer = 0;
-                                if (p === pick && pick.active) {
-                                    score += z.pts;
-                                    if (ownerName && persistentScores[ownerName]) persistentScores[ownerName].score += z.pts;
-                                }
                                 if (p.userName) {
-                                    if (!persistentScores[p.userName]) persistentScores[p.userName] = { score: 0, avatar: p.userAvatarUrl || '' };
-                                    persistentScores[p.userName].score += z.pts;
                                     addCycleScore(p.userName, z.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, z.pts, 'kill');
                                 }
                                 sfxZombieDeath();
                             }
@@ -10100,27 +10335,52 @@
 
             // Like simulation
             if (k === 'l' || k === 'L') {
-                var lMe = pick ? pick.userName : (ownerName || '@Player');
+                var lMe = (pick ? pick.userName : (ownerName || '@Player')).toLowerCase();
                 var lx = pick ? pick.x : canvas.width / 2;
                 var ly = pick ? pick.y : camY + canvas.height / 2;
                 activateHeartTNT(lx, ly, lMe, pick ? pick.userAvatarUrl : '');
-                if (pick.active) score += 1;
+                if (pick.active) score += 2;
                 spawnText(lx, ly - 20, '+2 ❤', '#ff4488');
-                if (!persistentScores[lMe]) persistentScores[lMe] = { score: 0, avatar: pick ? pick.userAvatarUrl : '', color: '#ff4488', likes: 0, giftsValue: 0 };
-                persistentScores[lMe].likes = (persistentScores[lMe].likes || 0) + 1;
-                if (pick.active || lMe !== ownerName) persistentScores[lMe].score = (persistentScores[lMe].score || 0) + 2;
+                
+                if (!persistentScores[lMe]) persistentScores[lMe] = { score: 0, avatar: pick ? pick.userAvatarUrl : '', color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0 };
+                
+                var oldLikes = persistentScores[lMe].likes || 0;
+                var newLikes = oldLikes + 100; // Aumentado para 100 para facilitar testes de milhar
+                persistentScores[lMe].likes = newLikes;
+
+                // Milestone: Cada 1000 likes ganha um upgrade
+                if (Math.floor(newLikes / 1000) > Math.floor(oldLikes / 1000)) {
+                    persistentScores[lMe].giftsCount = (persistentScores[lMe].giftsCount || 0) + 1;
+                    var inv = getPlayerInventory(lMe);
+                    if (pick) {
+                        pick.pickaxe = inv[0];
+                        syncCompanions(pick, inv);
+                    }
+                    spawnText(lx, ly - 60, '🚀 UPGRADE POR LIKES!', '#ff4488');
+                }
+
+                if (pick.active || lMe !== (ownerName || '').toLowerCase()) persistentScores[lMe].score = (persistentScores[lMe].score || 0) + 2;
                 if (!_cycleScores[lMe]) _cycleScores[lMe] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, avatar: persistentScores[lMe].avatar || '' };
-                if (pick.active || lMe !== ownerName) _cycleScores[lMe].score += 1;
-                _cycleScores[lMe].likes += 1;
+                if (pick.active || lMe !== (ownerName || '').toLowerCase()) _cycleScores[lMe].score += 2;
+                _cycleScores[lMe].likes += 100;
             }
 
             // Bot simulation
-            if (k === 's' || k === 'S') {
+            if (k === 's' || k === 'S' || kc === 83) {
+                console.log('Shortcut S: Spawning 20 bots with scores...');
                 for (var bi = 0; bi < 20; bi++) {
                     var botName = '@Bot_' + (1 + Math.floor(Math.random() * 9999));
                     spawnUserPickaxe(botName, '');
+                    
+                    var randomBase = Math.floor(Math.random() * 1000);
+                    var randomKills = Math.floor(Math.random() * 15);
+                    
+                    addCycleScore(botName, randomBase, 'item');
+                    for(var k_i=0; k_i < randomKills; k_i++) {
+                        addCycleScore(botName, 50, 'kill');
+                    }
                 }
-                spawnText(canvas.width / 2, camY + 100, '20 BOTS ADDED!', '#ffff00');
+                spawnText(canvas.width / 2, camY + 100, '20 BOTS COM SCORE ADDED!', '#ffff00');
             }
 
             if (k === 'v' || k === 'V' || kc === 86) {
@@ -10306,6 +10566,12 @@
             _apiConnected = _ttConnected;
         }
 
+        function getProxyUrl(url) {
+            if (!url || url.startsWith('data:') || url.startsWith('blob:') || !url.startsWith('http')) return url;
+            if (url.includes(location.host)) return url;
+            return '/proxy-image?url=' + encodeURIComponent(url);
+        }
+
         function showApiSetup(msg) {
             if (_gameStarted) { showApiBanner(msg); return; }
             document.getElementById('apiSetupOverlay').style.display = 'flex'; _apiSetupShown = true;
@@ -10367,8 +10633,16 @@
         }
 
         function processLiveEvent(data) {
+            // Deduplicação para evitar banners e contagens dobradas
+            var eventId = data.msgId || (data.type + '_' + data.user + '_' + (data.comment || '') + '_' + (data.diamondCount || 0) + '_' + (data.repeatCount || 0) + '_' + Date.now());
+            if (processedEventIds.has(eventId)) return;
+            processedEventIds.add(eventId);
+            if (processedEventIds.size > 200) {
+                var first = processedEventIds.values().next().value;
+                processedEventIds.delete(first);
+            }
+
             var plat = data.platform || 'tiktok';
-            console.log('[Live]', plat, data.type, data.message || data.username || '');
             if (data.type === 'connected') {
                 if (data.ownerAvatar) {
                     pick.userAvatarUrl = data.ownerAvatar;
@@ -10405,7 +10679,7 @@
                 if (cAvatar) loadAvatar(cAvatar);
                 var isOwner = ownerName && cUser === ownerName;
                 if (isOwner && cAvatar) { pick.userAvatarUrl = cAvatar; if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: cAvatar, color: '#ffdd44' }; else persistentScores[ownerName].avatar = cAvatar; }
-                if (!isOwner && !userPicks.some(function (up) { return up.userName === cUser; })) spawnUserPickaxe(cUser, cAvatar);
+                // spawnUserPickaxe is now explicitly called via 'play' or 'join' commands below
                 var msg = cText.toLowerCase();
                 var words = msg.split(/\s+/).slice(0, 5); // Process up to 5 words/commands
                 var uPick = isOwner ? pick : userPicks.find(function (up) { return up.userName === cUser; });
@@ -10519,16 +10793,30 @@
                 var resultingPickaxe = null;
 
                 if (giftName.includes('ice cream') || giftName.includes('sorvete')) {
-                    persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (1 * repeat);
                     spawnText(gx, gy - 30, '🍦 UPGRADE!', '#00ffff');
-                    resultingPickaxe = getPickaxeForGifts(gUser);
-                    if (gPick) gPick.pickaxe = resultingPickaxe;
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName||'').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
                 }
                 else if (giftName.includes('finger heart') || giftName.includes('coração com os dedos')) {
-                    persistentScores[gUser].giftsCount = PICKAXES.length - 1;
-                    spawnText(gx, gy - 30, '🤞 MAX PICKAXE!', '#ff00ff');
-                    resultingPickaxe = getPickaxeForGifts(gUser);
-                    if (gPick) gPick.pickaxe = resultingPickaxe;
+                    spawnText(gx, gy - 30, '🤞 EXTRA PICKAXE!', '#ff00ff');
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName||'').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
                 }
                 else if (giftName.includes('rose') || giftName.includes('rosa')) {
                     var count = 10 * Math.min(repeat, 5);
@@ -10572,11 +10860,20 @@
                     spawnText(gx, gy - 30, '❤️ MEGA!', '#ff4488'); if (pick.active) score += 5 * repeat;
                 }
                 else {
-                    for (var gi = 0; gi < Math.min(repeat, 10); gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar);
-                    spawnText(gx, gy - 30, '🎁 TNT!', '#ffaa44'); if (pick.active) score += 1 * repeat;
+                    // Fallback para qualquer presente: 10 TNTs para cada 1 moeda
+                    var tntCount = (diamonds * 10) * repeat;
+                    if (tntCount > 150) tntCount = 150; // Cap de segurança para performance
+                    for (var gi = 0; gi < tntCount; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar);
+                    spawnText(gx, gy - 30, '🎁 ' + tntCount + ' TNT!', '#ffaa44');
+                    if (pick.active) score += Math.floor(diamonds * 0.5) * repeat;
                 }
-                // Contabilizar valor dos presentes (diamantes) no ranking — TODOS os jogadores, incluindo owner
+
+                // --- PROCESSAMENTO FINAL DO PRESENTE ---
                 if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                
+                // Incrementa contador de presentes corretamente (1 por presente enviado)
+                persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (1 * repeat);
+                
                 var giftScoreValue = diamonds * repeat;
                 persistentScores[gUser].score += giftScoreValue;
                 persistentScores[gUser].giftsValue = (persistentScores[gUser].giftsValue || 0) + giftScoreValue;
@@ -10585,6 +10882,24 @@
                 addCycleScore(gUser, giftScoreValue);
 
                 showGiftAlert(gUser, gAvatar, giftName, gUrl, resultingPickaxe);
+
+                // --- APRENDIZADO DE NOVAS IMAGENS DE PRESENTES ---
+                if (giftName && gUrl) {
+                    var cachedGiftsStr = localStorage.getItem('pd_cached_gifts') || '[]';
+                    var cachedGifts = JSON.parse(cachedGiftsStr);
+                    var existing = cachedGifts.find(function(cg){ return cg.name === giftName; });
+                    if (!existing) {
+                        cachedGifts.push({ name: giftName, url: gUrl });
+                        localStorage.setItem('pd_cached_gifts', JSON.stringify(cachedGifts));
+                        // Tenta aplicar imediatamente se for uma das skills visíveis
+                        applyGiftImages([{ name: giftName, url: gUrl }]);
+                    } else if (existing.url !== gUrl) {
+                        // Atualiza URL se mudou
+                        existing.url = gUrl;
+                        localStorage.setItem('pd_cached_gifts', JSON.stringify(cachedGifts));
+                        applyGiftImages([{ name: giftName, url: gUrl }]);
+                    }
+                }
             }
             else if (data.type === 'follow') {
                 var fUserRaw = data.user || 'unknown';
@@ -10731,6 +11046,7 @@
         function spawnUserPickaxe(userName, avatarUrl) {
             userName = userName.replace(/^@@+/, '@');
             if (ownerName && userName === ownerName) return;
+            if (userPicks.length >= 50) return; // Limite de bots para evitar "loop" de processamento
             if (userPicks.some(up => up.userName === userName)) return;
 
             // Fallback: get avatar from persistentScores if not provided
@@ -10759,7 +11075,8 @@
                 stormTimer: 0,
                 color: (persistentScores[userName] && persistentScores[userName].color)
                     ? persistentScores[userName].color
-                    : `hsl(${Math.floor(Math.random() * 360)}, 100%, 70%)`
+                    : 'hsl(' + Math.floor(Math.random() * 360) + ', 100%, 70%)',
+                companions: []
             };
 
             // Garante que está na persistência
@@ -10778,8 +11095,15 @@
                 userPicks.shift(); // Remove o mais antigo
             }
             userPicks.push(p);
+            
+            // Sincroniza companheiros imediatamente se o bot já tiver "nível"
+            var inv = getPlayerInventory(userName);
+            if (inv.length > 1) syncCompanions(p, inv);
+
             lastActivity[userName] = Date.now();
-            spawnText(p.x, p.y, userName + ' JOINED!', '#00ff88');
+            if (!userName.startsWith('@Bot_')) {
+                spawnText(p.x, p.y, userName + ' JOINED!', '#00ff88');
+            }
             if (_audioStarted) sfxSkillActivate();
         }
 
@@ -10805,6 +11129,8 @@
                     userName: userName, // attribute points to owner
                     userAvatarUrl: avatarUrl || sourcePick.userAvatarUrl || '',
                     cloneOwner: userName,
+                    owner: sourcePick, // Referência direta para redirecionamento de minerais
+                    isCompanion: true,
                     cloneAvatar: avatarUrl || sourcePick.userAvatarUrl || '',
                     cloneTimer: cloneCooldown, // sincronizado com o cooldown visual
                     clonePickaxe: sourcePick.pickaxe || currentPickaxe,
@@ -11695,7 +12021,7 @@
             var defGift = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="%23ffaa00"><path d="M20 6h-2.18c.11-.31.18-.65.18-1 0-1.66-1.34-3-3-3-1.05 0-1.96.54-2.5 1.35l-.5.67-.5-.68C10.96 2.54 10.05 2 9 2 7.34 2 6 3.34 6 5c0 .35.07.69.18 1H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-5-2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zM9 4c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm11 15H4v-2h16v2zm0-5H4V8h5.08L7 10.83 8.62 12 11 8.76l1-1.36 1 1.36L15.38 12 17 10.83 14.92 8H20v6z"/></svg>';
 
             var av = document.createElement('img');
-            av.src = userAvatar || defAvatar;
+            av.src = getProxyUrl(userAvatar) || defAvatar;
             av.style.width = '40px';
             av.style.height = '40px';
             av.style.borderRadius = '50%';
@@ -11707,7 +12033,7 @@
 
             var giftImg = document.createElement('img');
             if (giftImgUrl && !giftImgUrl.endsWith('/')) {
-                giftImg.src = giftImgUrl;
+                giftImg.src = getProxyUrl(giftImgUrl);
             } else {
                 giftImg.src = defGift;
             }
@@ -12448,31 +12774,31 @@
                 if (g.name.includes('rose') || g.name.includes('rosa')) {
                     var el = document.getElementById('imgGiftRose');
                     var txt = document.getElementById('txtGiftRose');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
                 if (g.name === 'gg') {
                     var el = document.getElementById('imgGiftGG');
                     var txt = document.getElementById('txtGiftGG');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
                 if (g.name.includes('finger heart') || g.name.includes('coração com os dedos')) {
                     var el = document.getElementById('imgGiftFingerHeart');
                     var txt = document.getElementById('txtGiftFingerHeart');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 } else if (g.name.includes('heart me') || g.name.includes('heart') || g.name.includes('coração')) {
                     var el = document.getElementById('imgGiftHeart');
                     var txt = document.getElementById('txtGiftHeart');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
                 if (g.name.includes('ice cream') || g.name.includes('sorvete')) {
                     var el = document.getElementById('imgGiftIceCream');
                     var txt = document.getElementById('txtGiftIceCream');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
                 if (g.name.includes('donut') || g.name.includes('rosquinha')) {
                     var el = document.getElementById('imgGiftDonut');
                     var txt = document.getElementById('txtGiftDonut');
-                    if (el && txt) { el.src = g.url; el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
             });
         }

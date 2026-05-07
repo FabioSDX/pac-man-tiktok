@@ -10,6 +10,14 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3000;
 
+// Silenciar console.log para mensagens repetitivas
+const originalLog = console.log;
+console.log = function(...args) {
+  const msg = args.join(' ');
+  if (msg.includes('JOINED') || msg.includes('connected') || msg.includes('viewerCount')) return;
+  originalLog.apply(console, args);
+};
+
 // ── CORS headers ─────────────────────────────────────────────────────────────────
 app.use(function (req, res, next) {
   res.header('Access-Control-Allow-Origin', '*');
@@ -129,7 +137,7 @@ function attachTikTokEvents(ws, tiktok, username, session) {
 
   tiktok.on('chat', function (data) {
     var u = data.user || {}, uid = getUser(u, data, username), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    var chatEv = { type: 'chat', platform: 'tiktok', user: uid, nickname: nick, avatar: av, comment: data.comment || '' };
+    var chatEv = { type: 'chat', platform: 'tiktok', user: uid, nickname: nick, avatar: av, comment: data.comment || '', msgId: data.msgId };
     
     if (!session.chatBuffer) session.chatBuffer = [];
     session.chatBuffer.push(chatEv);
@@ -146,14 +154,14 @@ function attachTikTokEvents(ws, tiktok, username, session) {
   });
   tiktok.on('member', function (data) {
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) send(ws, { type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av });
+    if (uid) send(ws, { type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('gift', function (data) {
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     send(ws, {
       type: 'gift', platform: 'tiktok', user: uid, nickname: nick, avatar: av,
       giftName: (data.giftName || data.describe || '').toLowerCase(), diamondCount: data.diamondCount || 1,
-      repeatCount: data.repeatCount || 1, giftId: data.giftId || 0,
+      repeatCount: data.repeatCount || 1, giftId: data.giftId || 0, msgId: data.msgId,
       giftPictureUrl: data.giftPictureUrl || (data.extendedGiftInfo && data.extendedGiftInfo.icon && data.extendedGiftInfo.icon.url_list ? data.extendedGiftInfo.icon.url_list[0] : '')
     });
   });
@@ -164,7 +172,7 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     // Buffer likes per user to avoid flooding the WebSocket
     if (!session.likeBuffer) session.likeBuffer = {};
     if (!session.likeBuffer[uid]) {
-      session.likeBuffer[uid] = { type: 'like', platform: 'tiktok', user: uid, nickname: nick, avatar: av, likeCount: 0 };
+      session.likeBuffer[uid] = { type: 'like', platform: 'tiktok', user: uid, nickname: nick, avatar: av, likeCount: 0, msgId: data.msgId };
     }
     session.likeBuffer[uid].likeCount += (data.likeCount || 1);
 
@@ -182,15 +190,15 @@ function attachTikTokEvents(ws, tiktok, username, session) {
   });
   tiktok.on('follow', function (data) {
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    send(ws, { type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av });
+    send(ws, { type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('share', function (data) {
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    send(ws, { type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av });
+    send(ws, { type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('social', function (data) {
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) send(ws, { type: 'social', platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social' });
+    if (uid) send(ws, { type: 'social', platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social', msgId: data.msgId });
   });
   tiktok.on('roomUser', function (data) { send(ws, { type: 'roomUser', platform: 'tiktok', viewerCount: data.viewerCount || 0 }); });
   tiktok.on('streamEnd', function () {
@@ -397,6 +405,8 @@ app.get('/proxy-image', function (req, res) {
   });
 });
 
+let edgeTTSDisabled = false;
+
 app.get('/tts', async function (req, res) {
   var text = req.query.text;
   var voice = req.query.voice || 'en-US-GuyNeural';
@@ -405,6 +415,7 @@ app.get('/tts', async function (req, res) {
   text = text.substring(0, 500);
 
   try {
+    if (edgeTTSDisabled) throw new Error('Microsoft TTS desabilitado por falhas (403)');
     console.log('[TTS] Microsoft Natural:', voice, '| Texto:', text.substring(0, 30) + '...');
     const audioBuffer = await getEdgeTTS(text, voice);
 
@@ -415,7 +426,15 @@ app.get('/tts', async function (req, res) {
     throw new Error('Buffer de áudio vazio');
 
   } catch (e) {
-    console.error('[TTS] Erro Microsoft TTS:', e.message);
+    if (e.message && e.message.includes('403')) {
+      if (!edgeTTSDisabled) {
+        console.error('[TTS] Erro 403 detectado. Desabilitando Microsoft TTS por 5 minutos para evitar engasgos.');
+        edgeTTSDisabled = true;
+        setTimeout(() => { edgeTTSDisabled = false; }, 5 * 60 * 1000);
+      }
+    } else {
+      console.error('[TTS] Erro Microsoft TTS:', e.message);
+    }
     // Fallback final Google Translate (Proxy to avoid CORS/Referer issues)
     let tl = voice.startsWith('pt-BR') ? 'pt-br' : 'en';
     var googleUrl = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(text) + '&tl=' + tl + '&client=tw-ob';
