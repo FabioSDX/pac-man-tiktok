@@ -1,0 +1,11716 @@
+
+        function platformSkip() {
+            var overlay = document.getElementById('apiSetupOverlay');
+            if (overlay) overlay.style.display = 'none';
+            console.log('Skipped platform connection (Offline Mode)');
+        }
+        var persistentScores = {};
+        var userPicks = [];
+        var ownerName = '';
+        var _cycleScores = {};
+        var lastActivity = {};
+        // --- Otimização: Fila de Eventos ---
+        var liveEventQueue = [];
+        var processedEventIds = new Set();
+        var lastGiftRepeat = {}; // Tracker para evitar sobrecontagem em combos do TikTok
+        var lastGiftProcessed = new Map(); // Tracker para evitar duplicação de eventos reais em curto intervalo
+        var lastHeartDamage = {}; // Tracker para cooldown de dano (0.5 hearts)
+
+        const INITIAL_HEART_SLOTS = 3;
+        const MAX_HEART_SLOTS = 10;
+        const LIKES_PER_HEART = 50; // 50 likes = 1 full heart
+        const LIKES_PER_SLOT = 2000;
+        const DAMAGE_COOLDOWN = 1000; // 1s entre danos de mobs
+        var uiUpdateTick = 0;
+        var countryMapping = {}; // ISO code -> Name
+        var nameToCountryCode = {}; // Name -> ISO code
+        var flagImages = {}; // ISO code -> Image object
+
+        // Background Video Logic
+        var bgVideos = [];
+        var currentBgIdx = -1; // -1 means no video
+        var bgVideoActive = false;
+
+        function loadVideoList() {
+            fetch('/video-list')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.files && data.files.length > 0) {
+                        bgVideos = data.files;
+                        console.log('Videos carregados:', bgVideos);
+                    }
+                })
+                .catch(function (e) { console.warn('Erro ao carregar lista de vídeos:', e); });
+        }
+        loadVideoList();
+
+        function cycleBgVideo() {
+            var vid = document.getElementById('bgVideo');
+            if (!vid) return;
+
+            if (bgVideos.length === 0) {
+                spawnText(canvas.width / 2, camY + canvas.height / 2, 'NENHUM VÍDEO ENCONTRADO', '#ff4444');
+                return;
+            }
+
+            currentBgIdx++;
+            if (currentBgIdx >= bgVideos.length) {
+                // Cycle back to no video
+                currentBgIdx = -1;
+                bgVideoActive = false;
+                vid.style.display = 'none';
+                vid.pause();
+                spawnText(canvas.width / 2, camY + canvas.height / 2, 'FUNDO: DINÂMICO', '#ffffff');
+            } else {
+                bgVideoActive = true;
+                vid.src = bgVideos[currentBgIdx];
+                vid.style.display = 'block';
+                vid.play().catch(function (e) { console.warn('Video play error:', e); });
+                var fileName = bgVideos[currentBgIdx].split('/').pop();
+                spawnText(canvas.width / 2, camY + canvas.height / 2, 'VÍDEO: ' + fileName, '#00ff88');
+            }
+        }
+
+        // Fetch country mapping from FlagCDN (EN + PT)
+        function loadFlags() {
+            var urls = ['https://flagcdn.com/en/codes.json', 'https://flagcdn.com/pt/codes.json'];
+            Promise.all(urls.map(u => fetch(u).then(r => r.json())))
+                .then(function (results) {
+                    countryMapping = results[0]; // Use EN as base
+                    results.forEach(function (data) {
+                        for (var code in data) {
+                            nameToCountryCode[data[code].toLowerCase()] = code;
+                            // Add code to mapping if missing
+                            if (!countryMapping[code]) countryMapping[code] = data[code];
+                        }
+                    });
+                    console.log('Flags system initialized (EN + PT).');
+                }).catch(function (e) { console.error('Error loading flags:', e); });
+        }
+        loadFlags();
+
+        function getFlagImage(code) {
+            code = code.toLowerCase();
+            if (flagImages[code]) return flagImages[code];
+            var img = new Image();
+            img.src = 'https://flagcdn.com/w80/' + code + '.png'; // Bigger size
+            flagImages[code] = img;
+            return img;
+        }
+        var pick = { x: 540, y: 100, vx: 0, vy: 0, ang: 0, spin: 0, stuck: false, stuckTimer: 0, userName: '', userAvatarUrl: '', stormTimer: 0, swordTimer: 0, goldSwordsTimer: 0, diamondSwordsTimer: 0, activeSwords: [], active: true, companions: [] };
+
+
+
+        var canvas = document.getElementById('gameCanvas');
+        var ctx = canvas.getContext('2d');
+
+        // Resolução Tradicional (Vertical 9:16 aprox)
+        var COLS = 15, TILE = 72;
+        var VIS = 27;
+
+        canvas.width = COLS * TILE;
+        canvas.height = VIS * TILE;
+        console.log('[Resolução] VIS:', VIS, 'Canvas:', canvas.width, 'x', canvas.height);
+
+        var MAX_PARTS = 50;
+        var MAX_DEBRIS = 20;
+        var MAX_TEXTS = 10;
+        var MAX_ITEMS = 15;
+        var SHADOW_ENABLED = false;
+        var SHIMMER_ENABLED = false;
+        var BG_DETAIL = 0;
+        // ── Tipos ──
+        var E = 0, DIRT = 1, STONE = 2, COAL = 3, IRON = 4, GOLD = 5, REDSTONE = 6, DIAMOND = 7, EMERALD = 8, BEDROCK = 9,
+            GRASS = 10, ANDESITE = 11, DIORITE = 12, GRANITE = 13, COBBLE = 14, MOSSY = 15, COPPER = 16, LAPIS = 17, OBSIDIAN = 18, BONUS_BOX = 19;
+        var BDEF = {
+            1: { color: '#c4a423', glow: '#c88451', hp: 1, pts: 0.5, name: 'Dirt', img: 'block/dirt.png' },
+            2: { color: '#4a5a6a', glow: '#90b0c0', hp: 3, pts: 1, name: 'Stone', img: 'block/stone.png' },
+            3: { color: '#2a2a2a', glow: '#888888', hp: 2, pts: 2, name: 'Coal', img: 'block/coal_ore.png' },
+            4: { color: '#7a6050', glow: '#ffcc80', hp: 3, pts: 3.5, name: 'Iron', img: 'block/iron_ore.png' },
+            5: { color: '#a07010', glow: '#ffe066', hp: 4, pts: 6, name: 'Gold', img: 'block/gold_ore.png' },
+            6: { color: '#8a0000', glow: '#ff4444', hp: 3, pts: 5, name: 'Redstone', img: 'block/redstone_ore.png' },
+            7: { color: '#007a9a', glow: '#88ffff', hp: 6, pts: 15, name: 'Diamond', img: 'block/diamond_ore.png' },
+            8: { color: '#006040', glow: '#88ffcc', hp: 5, pts: 20, name: 'Emerald', img: 'block/emerald_ore.png' },
+            9: { color: '#1a1a2a', glow: '#444466', hp: 999, pts: 0, name: 'Bedrock', img: 'block/bedrock.png' },
+            10: { color: '#5a8c32', glow: '#7acc44', hp: 1, pts: 0.3, name: 'Grass', img: 'block/grass_block.png' },
+            11: { color: '#6a6a6a', glow: '#a0a0a0', hp: 2, pts: 0.8, name: 'Andesite', img: 'block/andesite.png' },
+            12: { color: '#b0a8a0', glow: '#d0c8c0', hp: 2, pts: 0.8, name: 'Diorite', img: 'block/diorite.png' },
+            13: { color: '#9a6a4a', glow: '#c09070', hp: 2, pts: 0.8, name: 'Granite', img: 'block/granite.png' },
+            14: { color: '#5a5a5a', glow: '#909090', hp: 3, pts: 1.2, name: 'Cobblestone', img: 'block/cobblestone.png' },
+            15: { color: '#4a6a4a', glow: '#70a070', hp: 3, pts: 1.5, name: 'Mossy Cobblestone', img: 'block/mossy_cobblestone.png' },
+            16: { color: '#b06030', glow: '#e08850', hp: 3, pts: 3, name: 'Copper', img: 'block/copper_ore.png' },
+            17: { color: '#1a3a8a', glow: '#4488ff', hp: 3, pts: 4.5, name: 'Lapis Lazuli', img: 'block/lapis_ore.png' },
+            18: { color: '#0a0a14', glow: '#4a2a6a', hp: 8, pts: 10, name: 'Obsidian', img: 'block/obsidian.png' },
+            19: { color: '#ffdd44', glow: '#ffff88', hp: 4, pts: 5, name: 'Bonus Box', img: 'block/obsidian.png' }
+        };
+
+        // ── Itens Colecionáveis ──
+        var ITEM_DEFS = {
+            3: { img: 'item/coal.png' },
+            4: { img: 'item/iron_ingot.png' },
+            5: { img: 'item/gold_ingot.png' },
+            6: { img: 'item/redstone.png' },
+            7: { img: 'item/diamond.png' },
+            8: { img: 'item/emerald.png' },
+            16: { img: 'item/copper_ingot.png' },
+            17: { img: 'item/lapis_lazuli.png' }
+        };
+        var ITEX = {};
+        var BTEX = {};
+        var CREEPER_TEX = null;
+
+        (function () {
+            Object.keys(BDEF).forEach(function (k) {
+                var img = new Image();
+                img.src = BDEF[k].img;
+                BTEX[k] = img;
+            });
+            Object.keys(ITEM_DEFS).forEach(function (k) {
+                var img = new Image();
+                img.src = ITEM_DEFS[k].img;
+                ITEX[k] = img;
+            });
+            // Creeper explosivo
+            CREEPER_TEX = new Image();
+            CREEPER_TEX.src = 'block/creeper.png';
+        })();
+
+        var SWORD_LOOT_TABLE = [
+            { type: 'Wood', chance: 0.015, damage: 1.5, color: '#a07040' },
+            { type: 'Stone', chance: 0.008, damage: 2.0, color: '#808080' },
+            { type: 'Iron', chance: 0.004, damage: 2.8, color: '#d0d0d0' },
+            { type: 'Gold', chance: 0.002, damage: 3.5, color: '#ffd700' },
+            { type: 'Diamond', chance: 0.001, damage: 4.5, color: '#00ffff' },
+            { type: 'Netherite', chance: 0.0005, damage: 6.0, color: '#403040' }
+        ];
+
+        function rollForSwordDrop(x, y, source) {
+            var rand = Math.random();
+            var cumulative = 0;
+            for (var i = SWORD_LOOT_TABLE.length - 1; i >= 0; i--) {
+                var entry = SWORD_LOOT_TABLE[i];
+                cumulative += entry.chance;
+                if (rand < cumulative) {
+                    spawnItem(x, y, 'sword_' + entry.type, source);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // ── Destroy stages (0-9) ──
+        var DESTROY_TEX = [];
+        (function () {
+            for (var i = 0; i <= 9; i++) {
+                var img = new Image();
+                img.src = 'destroy_stage/destroy_stage_' + i + '.png';
+                DESTROY_TEX.push(img);
+            }
+        })();
+
+        // ── Explosion frames ──
+        var EXPLOSION_TEX = [];
+        (function () {
+            for (var i = 0; i <= 15; i++) {
+                var img = new Image();
+                img.src = 'particle/explosion_' + i + '.png';
+                EXPLOSION_TEX.push(img);
+            }
+        })();
+        var TNT_TEX = new Image(); TNT_TEX.src = 'block/tnt.png';
+        var MEGA_TNT_TEX = new Image(); MEGA_TNT_TEX.src = 'block/mega_tnt.png';
+        var HEART_TNT_TEX = new Image(); HEART_TNT_TEX.src = 'block/heart_tnt.png';
+        var SLIME_TEX = new Image(); SLIME_TEX.src = 'slime/Slime.png';
+        var SPIDER_TEX = new Image(); SPIDER_TEX.src = 'spider/Spider.png';
+        var SHEEP_MOTHER_TEX = new Image(); SHEEP_MOTHER_TEX.src = 'animais bonus/ovelha/Ovelha.png';
+        var SHEEP_KID_TEX = new Image(); SHEEP_KID_TEX.src = 'animais bonus/ovelha/Ovelha kid.png';
+        var SHEEP_EGG_TEX = new Image(); SHEEP_EGG_TEX.src = 'animais bonus/ovelha/ovo ovelha.png';
+        var PIG_MOTHER_TEX = new Image(); PIG_MOTHER_TEX.src = 'pig/pig mother.png';
+        var PIG_KID_TEX = new Image(); PIG_KID_TEX.src = 'pig/pig kid.png';
+        var PIG_EGG_TEX = new Image(); PIG_EGG_TEX.src = 'pig/Pig eg.png';
+        var megaSpamTracker = {}; // Anti-spam para Mega TNT
+
+        // --- Chicken Punishment Assets ---
+        var chickenFrames = [];
+        for (var i = 0; i < 8; i++) {
+            var img = new Image();
+            img.src = 'galinha/galinha.png/a3c8870fc87a45f4a67b28b8181a8133bAEgRDEP5hXtghXy-' + i + '.png';
+            chickenFrames.push(img);
+        }
+        var chickenSounds = [
+            new Audio('sons/galinha um.ogg'),
+            new Audio('sons/galinha dois.ogg')
+        ];
+        var homerSound = new Audio('homer/homer.mp3');
+        var steveFrames = [];
+        for (var i = 0; i <= 20; i++) {
+            var img = new Image();
+            img.src = 'stev/steve.png/ff386735e41a46b7f9a2ffa9f0184c93h0LWpOeylH7DLyFh-' + i + '.png';
+            steveFrames.push(img);
+        }
+
+        var lastBonusType = 'pig'; // will start with sheep
+
+        // Bee Animation Frames
+        var ABELHA_MOTHER_FRAMES = [];
+        var ABELHA_KID_FRAMES = [];
+
+        // Load Mother frames (84 frames)
+        for (var i = 0; i <= 83; i++) {
+            var img = new Image();
+            img.src = 'abelha/abelha-mother.png/7df9fb41e03f4de2f52e96f01a3b74abBHjasXeSLuj7PS4k-' + i + '.png';
+            ABELHA_MOTHER_FRAMES.push(img);
+        }
+        // Load Kid frames (42 frames)
+        for (var i = 0; i <= 41; i++) {
+            var img = new Image();
+            img.src = 'abelha/abelha-kid.png/2d6302f36bea41cfc4772579c7bea09dRE8sn56vAWAfYYIE-' + i + '.png';
+            ABELHA_KID_FRAMES.push(img);
+        }
+
+        // Blaze Boss Animation Frames
+        var BLAZE_BOSS_FRAMES = [];
+        // Load Blaze frames (66 frames)
+        for (var i = 0; i <= 65; i++) {
+            var img = new Image();
+            img.src = 'blaze/Blaze.png/a8176196d1b74cd996ae40325f02a4a5CR4wOzoYwDkCGPvG-' + i + '.png';
+            BLAZE_BOSS_FRAMES.push(img);
+        }
+
+
+
+
+
+
+        // Ghast Animation Frames
+        var GHAST_FRAMES = [];
+        // Load Ghast frames (34 frames)
+        for (var i = 0; i <= 33; i++) {
+            var img = new Image();
+            img.src = 'ghast/Ghast.png/66594c3c795e4748cd9e396c9d8e8287bCv72EG52DCre4hr-' + i + '.png';
+            GHAST_FRAMES.push(img);
+        }
+
+        // Sword Assets
+        var SWORD_ASSETS = {};
+        var enchantedWoodenSwordFrames = [];
+        var enchantedStoneSwordFrames = [];
+        var enchantedIronSwordFrames = [];
+        var enchantedGoldSwordFrames = [];
+        var enchantedDiamondSwordFrames = [];
+        var enchantedNetheriteSwordFrames = [];
+        var ENCHANTED_SWORD_FRAMES = {};
+        function loadSwordAssets() {
+            var materials = ['Wood', 'Stone', 'Copper', 'Iron', 'Gold', 'Diamond', 'Netherite'];
+            var filenames = {
+                'Wood': 'Wooden_Sword.png',
+                'Stone': 'Stone_Sword.png',
+                'Copper': 'Copper_Sword.png',
+                'Iron': 'Iron_Sword.png',
+                'Gold': 'Golden_Sword.png',
+                'Diamond': 'Diamond_Sword.png',
+                'Netherite': 'Netherite_Sword_JE2_BE2.png'
+            };
+            materials.forEach(function (m) {
+                var img = new Image();
+                img.src = 'sword/' + filenames[m];
+                SWORD_ASSETS[m] = img;
+            });
+            // Load Enchanted Gold Sword frames
+            var framePrefixGold = '792778768c024da0802eda1a2770ad6eMKgyAnLqnCjJaSBQ-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Golden_Sword.png/' + framePrefixGold + i + '.png';
+                enchantedGoldSwordFrames.push(img);
+            }
+            // Load Enchanted Diamond Sword frames
+            var framePrefixDiamond = 'db8c3021f4654da1f870e71c328b370cuVVe9tdnlCRnPkuY-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Diamond_Sword.png/' + framePrefixDiamond + i + '.png';
+                enchantedDiamondSwordFrames.push(img);
+            }
+            // Load Enchanted Wooden Sword frames
+            var framePrefixWood = '6a0417361c2c4776de1858bb60666f09pnbwNQd8TJEFUyOf-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Wooden_Sword.png/' + framePrefixWood + i + '.png';
+                enchantedWoodenSwordFrames.push(img);
+            }
+            // Load Enchanted Stone Sword frames
+            var framePrefixStone = 'ebeb5ad286194630f274d23983eed4f9xa0LpJW2GQflRFCA-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Stone_Sword.png/' + framePrefixStone + i + '.png';
+                enchantedStoneSwordFrames.push(img);
+            }
+            // Load Enchanted Iron Sword frames
+            var framePrefixIron = 'c2331df1a6ee4672e149e69a7f81d7baqJQfcPC5W6Yb9bqz-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Iron_Sword.png_1/' + framePrefixIron + i + '.png';
+                enchantedIronSwordFrames.push(img);
+            }
+            // Load Enchanted Netherite Sword frames
+            var framePrefixNetherite = '054a2660d1524936ba3f2ab90a1e637d7sHyyc56s1K7xoNq-';
+            for (var i = 0; i <= 824; i++) {
+                var img = new Image();
+                img.src = 'sword/Enchanted_Netherite_Sword.png/' + framePrefixNetherite + i + '.png';
+                enchantedNetheriteSwordFrames.push(img);
+            }
+
+            ENCHANTED_SWORD_FRAMES = {
+                'Wood': enchantedWoodenSwordFrames,
+                'Stone': enchantedStoneSwordFrames,
+                'Iron': enchantedIronSwordFrames,
+                'Gold': enchantedGoldSwordFrames,
+                'Diamond': enchantedDiamondSwordFrames,
+                'Netherite': enchantedNetheriteSwordFrames
+            };
+        }
+        loadSwordAssets();
+
+        // Otimização: Cache de sprite para o Coração TNT (Blitting)
+        var HEART_SPRITE = document.createElement('canvas');
+        HEART_SPRITE.width = 128;
+        HEART_SPRITE.height = 128;
+        var HEART_SPRITE_URL = '';
+        (function preRenderHeart() {
+            var sctx = HEART_SPRITE.getContext('2d');
+            // Aumentamos o canvas para 128x128 para a sombra não bater nas bordas (o que causava o efeito quadrado)
+            sctx.shadowBlur = 25;
+            sctx.shadowColor = 'rgba(255, 20, 147, 0.9)';
+
+            var gradient = sctx.createRadialGradient(64, 64, 5, 64, 64, 40);
+            gradient.addColorStop(0, '#ffbbdd');
+            gradient.addColorStop(1, '#ff0066');
+
+            sctx.fillStyle = gradient;
+            sctx.font = 'bold 70px Arial';
+            sctx.textAlign = 'center';
+            sctx.textBaseline = 'middle';
+            sctx.fillText('❤️', 64, 64);
+
+            // Exporta como DataURL para usar no resto da UI
+            HEART_SPRITE_URL = HEART_SPRITE.toDataURL();
+
+            // Aplica ao painel de presentes se o elemento já existir (ou fazemos depois do DOM Load)
+            setTimeout(function () {
+                var img = document.getElementById('giftPanelHeartIcon');
+                if (img) img.src = HEART_SPRITE_URL;
+            }, 100);
+        })();
+
+        var TNT_RADIUS = 3;
+        var MEGA_TNT_RADIUS = 6;
+        var HEART_TNT_RADIUS = 3;
+        var CREEPER_RADIUS = 4;
+
+        var BOUNCE = 0.82;
+        var FRICTION = 0.995;
+        var SPIN_DAMP = 0.99;
+        var GRAVITY = 0.15;
+
+        // ── Swept AABB para TNT ──
+        function sweptAABB(bx, by, vx, vy, hs, tileCol, tileRow) {
+            var tl = tileCol * TILE, tr = tl + TILE;
+            var tt = tileRow * TILE, tb = tt + TILE;
+            var el = tl - hs, er = tr + hs;
+            var et = tt - hs, eb = tb + hs;
+
+            var txEntry, txExit, tyEntry, tyExit;
+            if (vx === 0) {
+                txEntry = -Infinity; txExit = Infinity;
+            } else {
+                var tx1 = (el - bx) / vx, tx2 = (er - bx) / vx;
+                txEntry = Math.min(tx1, tx2); txExit = Math.max(tx1, tx2);
+            }
+            if (vy === 0) {
+                tyEntry = -Infinity; tyExit = Infinity;
+            } else {
+                var ty1 = (et - by) / vy, ty2 = (eb - by) / vy;
+                tyEntry = Math.min(ty1, ty2); tyExit = Math.max(ty1, ty2);
+            }
+
+            var entry = Math.max(txEntry, tyEntry);
+            var exit = Math.min(txExit, tyExit);
+            if (entry > exit || entry > 1 || exit < 0) return null;
+            if (entry < 0) return null;
+
+            var nx = 0, ny = 0;
+            if (txEntry > tyEntry) { nx = vx < 0 ? 1 : -1; }
+            else { ny = vy < 0 ? 1 : -1; }
+            return { t: entry, nx: nx, ny: ny };
+        }
+
+        function updateTNTBlocks() {
+            var TNT_GRAVITY = 0.35;
+            var wallLeft = 1;
+            var wallRight = COLS * TILE - 1;
+            for (var i = tntBlocks.length - 1; i >= 0; i--) {
+                var b = tntBlocks[i];
+                var hs = b.nuke ? TILE * 0.3 : (b.mega ? TILE * 0.9 : TILE * 0.5);
+                b.blinkTimer++;
+                b.vy += TNT_GRAVITY;
+                // TNT floats in water
+                if (isInWater(b.x, b.y)) {
+                    b.vx *= 0.9;
+                    b.vy *= 0.8;
+                    b.vy -= TNT_GRAVITY * 1.2; // strong buoyancy — TNT floats
+                    b.spin = (b.spin || 0) * 0.95; // slow rotation in water
+                }
+                b.ang = (b.ang || 0) + (b.spin || 0);
+
+                // sanitizar NaN/Infinity
+                if (!isFinite(b.vx)) b.vx = 0;
+                if (!isFinite(b.vy)) b.vy = 0;
+                if (!isFinite(b.x) || !isFinite(b.y)) { tntBlocks.splice(i, 1); continue; }
+
+                var maxSpd = TILE * 0.9;
+                var spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+                if (spd > maxSpd) { b.vx = b.vx / spd * maxSpd; b.vy = b.vy / spd * maxSpd; }
+
+                // clamp paredes laterais (bedrock)
+                if (b.x - hs < wallLeft) { b.x = wallLeft + hs; b.vx = Math.abs(b.vx) * BOUNCE; }
+                if (b.x + hs > wallRight) { b.x = wallRight - hs; b.vx = -Math.abs(b.vx) * BOUNCE; }
+
+                // topo
+                if (b.y - hs < 0) { b.y = hs; b.vy = Math.abs(b.vy) * BOUNCE; }
+
+                // depenetração — se a TNT está dentro de um bloco sólido, empurrar para fora
+                var centerCol = Math.floor(b.x / TILE);
+                var centerRow = Math.floor(b.y / TILE);
+                var depR0 = Math.floor((b.y - hs) / TILE);
+                var depR1 = Math.floor((b.y + hs) / TILE);
+                var depC0 = Math.floor((b.x - hs) / TILE);
+                var depC1 = Math.floor((b.x + hs) / TILE);
+                for (var dr = depR0; dr <= depR1; dr++) {
+                    for (var dc = depC0; dc <= depC1; dc++) {
+                        var depCell = getCell(dr, dc);
+                        if (!depCell || depCell.t === E) continue;
+                        // calcular overlap AABB
+                        var bl = b.x - hs, br2 = b.x + hs, bt = b.y - hs, bb = b.y + hs;
+                        var tl = dc * TILE, tr = tl + TILE, tt = dr * TILE, tb = tt + TILE;
+                        var ox = Math.min(br2, tr) - Math.max(bl, tl);
+                        var oy = Math.min(bb, tb) - Math.max(bt, tt);
+                        if (ox > 0 && oy > 0) {
+                            // empurrar pelo eixo de menor penetração
+                            if (ox < oy) {
+                                if (b.x < tl + TILE * 0.5) { b.x -= ox + 1; b.vx = -Math.abs(b.vx) * 0.3; }
+                                else { b.x += ox + 1; b.vx = Math.abs(b.vx) * 0.3; }
+                            } else {
+                                if (b.y < tt + TILE * 0.5) { b.y -= oy + 1; b.vy = -Math.abs(b.vy) * 0.3; }
+                                else { b.y += oy + 1; b.vy = Math.abs(b.vy) * 0.3; }
+                            }
+                        }
+                    }
+                }
+
+                // swept collision — até 3 bounces por frame
+                var remainVx = b.vx, remainVy = b.vy;
+                for (var iter = 0; iter < 3; iter++) {
+                    if (remainVx === 0 && remainVy === 0) break;
+
+                    //    candidatos ao redor da TNT
+                    var r0 = Math.floor((b.y - hs) / TILE) - 1;
+                    var r1 = Math.floor((b.y + hs) / TILE) + 1;
+                    var c0 = Math.floor((b.x - hs) / TILE) - 1;
+                    var c1 = Math.floor((b.x + hs) / TILE) + 1;
+
+                    var earliest = null;
+                    for (var r = r0; r <= r1; r++) {
+                        for (var c = c0; c <= c1; c++) {
+                            var cell = getCell(r, c);
+                            if (!cell || cell.t === E) continue;
+                            var hit = sweptAABB(b.x, b.y, remainVx, remainVy, hs, c, r);
+                            if (hit && (!earliest || hit.t < earliest.t)) { earliest = hit; earliest.cell = cell; }
+                        }
+                    }
+
+                    if (!earliest) {
+                        b.x += remainVx; b.y += remainVy;
+                        break;
+                    }
+
+                    // move até o ponto de colisão (com pequena margem)
+                    b.x += remainVx * (earliest.t - 0.001);
+                    b.y += remainVy * (earliest.t - 0.001);
+
+                    // reflete velocidade no eixo da normal
+                    if (earliest.nx !== 0) {
+                        remainVx = -remainVx * BOUNCE;
+                        b.vx = -b.vx * BOUNCE * FRICTION;
+                        remainVy *= (1 - earliest.t);
+                    } else {
+                        remainVy = -remainVy * BOUNCE; b.vy = -b.vy * BOUNCE;
+                        remainVx *= (1 - earliest.t) * FRICTION;
+
+                        if (earliest.cell && earliest.cell.t === BEDROCK && earliest.ny < 0) {
+                            b.vy = Math.min(b.vy, -12);
+                            b.vx += (Math.random() - 0.5) * 4;
+                            remainVy = b.vy;
+                            remainVx = b.vx;
+                        }
+                    }
+                    b.spin = (b.spin || 0) * SPIN_DAMP + (Math.random() - 0.5) * 0.05;
+                }
+
+                // colisão entre TNT
+                for (var j = i - 1; j >= 0; j--) {
+                    var o = tntBlocks[j];
+                    var ohs = o.mega ? TILE * 0.9 : TILE * 0.5;
+                    var minDist = hs + ohs;
+                    var dx = b.x - o.x, dy = b.y - o.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < minDist && dist > 0) {
+                        var nx = dx / dist, ny = dy / dist;
+                        var overlap = minDist - dist;
+                        b.x += nx * overlap * 0.5; b.y += ny * overlap * 0.5;
+                        o.x -= nx * overlap * 0.5; o.y -= ny * overlap * 0.5;
+                        var dvx = b.vx - o.vx, dvy = b.vy - o.vy;
+                        var dot = dvx * nx + dvy * ny;
+                        if (dot < 0) {
+                            b.vx -= dot * nx * BOUNCE; b.vy -= dot * ny * BOUNCE;
+                            o.vx += dot * nx * BOUNCE; o.vy += dot * ny * BOUNCE;
+                        }
+                        b.spin = (b.spin || 0) * SPIN_DAMP + (Math.random() - 0.5) * 0.08;
+                        o.spin = (o.spin || 0) * SPIN_DAMP + (Math.random() - 0.5) * 0.08;
+                    }
+                }
+
+                // colisão TNT vs picareta
+                var pdx = b.x - pick.x, pdy = b.y - pick.y;
+                var pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+                if (pdist < hs + PICK_HALF && pdist > 0) {
+                    var pnx = pdx / pdist, pny = pdy / pdist;
+                    var pov = (hs + PICK_HALF) - pdist;
+                    b.x += pnx * pov * 0.5; b.y += pny * pov * 0.5;
+                    pick.x -= pnx * pov * 0.5; pick.y -= pny * pov * 0.5;
+                    var pdvx = b.vx - pick.vx, pdvy = b.vy - pick.vy;
+                    var pdot = pdvx * pnx + pdvy * pny;
+                    if (pdot < 0) {
+                        b.vx -= pdot * pnx * BOUNCE; b.vy -= pdot * pny * BOUNCE;
+                        pick.vx += pdot * pnx * BOUNCE; pick.vy += pdot * pny * BOUNCE;
+                    }
+                    b.spin = (b.spin || 0) * SPIN_DAMP + (Math.random() - 0.5) * 0.08;
+                    pick.spin = (pick.spin || 0) * SPIN_DAMP + (Math.random() - 0.5) * 0.08;
+                }
+
+                if (b.blinkTimer > b.fuse) { detonateTNTBlock(b); tntBlocks.splice(i, 1); }
+            }
+        }
+
+        function detonateTNTBlock(b) {
+
+            var radius = b.nuke ? 9 : (b.mega ? MEGA_TNT_RADIUS : (b.heart ? HEART_TNT_RADIUS : TNT_RADIUS));
+            var cx = Math.floor(b.x / TILE);
+            var cy = Math.floor(b.y / TILE);
+            var pts = 0;
+            var destroyedBlocks = [];
+            for (var r = cy - radius; r <= cy + radius; r++) {
+                for (var c = cx - radius; c <= cx + radius; c++) {
+                    var dist = Math.sqrt((c - cx) * (c - cx) + (r - cy) * (r - cy));
+                    if (dist > radius) continue;
+                    var cell = getCell(r, c);
+                    if (!cell || cell.t === E || cell.t === BEDROCK) continue;
+                    var bPts = BDEF[cell.t].pts || 0;
+                    pts += bPts;
+                    
+                    var tntSource = null;
+                    if (b.userName) {
+                        if (ownerName && b.userName === ownerName) tntSource = pick;
+                        else tntSource = userPicks.find(function (u) { return u.userName === b.userName; });
+                    }
+
+                    if (ITEM_DEFS[cell.t]) {
+                        spawnItem(c * TILE + TILE / 2, r * TILE + TILE / 2, cell.t, tntSource || pick);
+                    } else if (cell.t === BONUS_BOX) {
+                        var aType = ((r + c) % 2 === 0) ? 'pig' : 'sheep';
+                        spawnBonusBalls(c * TILE + TILE / 2, r * TILE + TILE / 2, tntSource || pick, aType);
+                    }
+                    
+                    destroyedBlocks.push({ t: cell.t, wx: c * TILE + TILE / 2, wy: r * TILE + TILE / 2 });
+                    cell.t = E; cell.hp = 0; cell.cr = 0;
+                }
+            }
+            if (pts > 0) {
+                var isOwnerAction = b.userName && (b.userName === ownerName || (pick && b.userName === pick.userName));
+                if (isOwnerAction && pick.active) {
+                    score += pts;
+                    if (ownerName && persistentScores[ownerName]) {
+                        persistentScores[ownerName].score += pts;
+                    }
+                }
+                spawnText(b.x, b.y, '+' + pts, '#ffdd44');
+                if (b.userName) {
+                    var player = userPicks.find(function (u) { return u.userName === b.userName; });
+                    if (player) player.score = (player.score || 0) + pts;
+                    if (!persistentScores[b.userName]) persistentScores[b.userName] = { score: 0, avatar: b.userAvatarUrl || '' };
+                    persistentScores[b.userName].score += pts;
+                }
+            }
+            var debrisPerBlock = b.mega ? 1 : (b.heart ? 0 : 1);
+            var maxExplosionDebris = b.mega ? 15 : (b.heart ? 0 : 10);
+            var spawned = 0;
+            for (var i = 0; i < destroyedBlocks.length && spawned < maxExplosionDebris; i++) {
+                var blk = destroyedBlocks[i];
+                var n = Math.min(debrisPerBlock, maxExplosionDebris - spawned);
+                for (var k = 0; k < n; k++) {
+                    if (debris.length >= 100) break;
+                    var dx = blk.wx - b.x, dy = blk.wy - b.y;
+                    var d = Math.sqrt(dx * dx + dy * dy) || 1;
+                    var baseSpd = (b.mega ? 5 : 3.5) + Math.random() * 3;
+                    var scatter = b.mega ? 4 : 2.5;
+                    var finalOwner = getMotherPickaxe(b);
+
+                    debris.push({
+                        x: blk.wx + (Math.random() - 0.5) * TILE * 0.5,
+                        y: blk.wy + (Math.random() - 0.5) * TILE * 0.5,
+                        vx: (dx / d) * baseSpd + (Math.random() - 0.5) * scatter,
+                        vy: (dy / d) * baseSpd - Math.random() * 3,
+                        t: blk.t,
+                        size: (b.mega ? 14 : 10) + Math.random() * 8,
+                        life: 1, age: 0, followFrames: 60,
+                        ang: Math.random() * Math.PI * 2,
+                        spin: (Math.random() - 0.5) * 0.3,
+                        owner: finalOwner
+                    });
+                    spawned++;
+                }
+            }
+            if (b.nuke) {
+                _nukeActive = true;
+                _nukeTimer = 45;
+                _nukeLocation = { x: b.x, y: b.y };
+            }
+            explosions.push({ x: b.x, y: b.y, frame: 0, timer: 0, mega: b.mega, nuke: b.nuke });
+            // Damage zombies in blast radius
+            var blastR = (b.nuke ? 9 : (b.mega ? MEGA_TNT_RADIUS : TNT_RADIUS)) * TILE;
+            for (var zi = zombies.length - 1; zi >= 0; zi--) {
+                var zz = zombies[zi];
+                if (zz.state === 'dead') continue;
+                var zdx = zz.x - b.x, zdy = zz.y - b.y;
+                var zd = Math.sqrt(zdx * zdx + zdy * zdy);
+                if (zd < blastR) {
+                    var dmg = b.nuke ? (zz.isZBoss ? Math.ceil(zz.maxHp * 0.3) : 999) : (b.mega ? 10 : 5);
+                    zz.hp -= dmg;
+                    zz.hurtTimer = 15;
+                    zz.animTimer = 0;
+                    if (zd > 0) { zz.vx = (zdx / zd) * (b.nuke ? 12 : 5); zz.vy = (zdy / zd) * (b.nuke ? 12 : 5) - 6; }
+                    spawnText(zz.x, zz.y - ZOMBIE_SIZE * 0.5, b.nuke ? '☢️ -' + dmg : '-' + dmg, b.nuke ? '#ff4400' : '#ff8844');
+                    sfxZombieHurt();
+                    if (zz.hp <= 0) {
+                        zz.state = 'dead'; zz.animTimer = 0; zz.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += zz.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += zz.pts;
+                            }
+                        }
+                        spawnText(zz.x, zz.y - ZOMBIE_SIZE * 0.6, '+' + zz.pts, '#ffdd44');
+                        if (b.userName) addCycleScore(b.userName, zz.pts, 'kill');
+                        sfxZombieDeath();
+                    }
+                }
+            }
+            // Damage bats in blast radius
+            for (var bi = bats.length - 1; bi >= 0; bi--) {
+                var bb = bats[bi];
+                if (bb.state === 'dead') continue;
+                var bdx = bb.x - b.x, bdy = bb.y - b.y;
+                var bd = Math.sqrt(bdx * bdx + bdy * bdy);
+                if (bd < blastR) {
+                    var batDmg = b.nuke ? ((bb.isQueen || bb.isBlaze || bb.isGhast) ? Math.ceil(bb.maxHp * 0.3) : 999) : (b.mega ? 5 : 3);
+                    bb.hp -= batDmg;
+                    bb.hurtTimer = 10;
+                    bb.anim = 0;
+                    if (bd > 0) { bb.vx = (bdx / bd) * (b.nuke ? 14 : 4); bb.vy = (bdy / bd) * (b.nuke ? 14 : 4) - (b.nuke ? 8 : 2); }
+                    spawnText(bb.x, bb.y - BAT_SIZE * 0.4, b.nuke ? '☢️ -' + batDmg : '-' + batDmg, b.nuke ? '#ff4400' : '#ff88cc');
+                    if (b.nuke) sfxZombieHurt(); else sfxBatHurt();
+                    if (bb.hp <= 0) {
+                        bb.state = 'dead'; bb.anim = 0; bb.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += bb.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += bb.pts;
+                            }
+                        }
+                        if (b.userName) {
+                            if (!persistentScores[b.userName]) persistentScores[b.userName] = { score: 0, avatar: '' };
+                            persistentScores[b.userName].score += bb.pts;
+                            addCycleScore(b.userName, bb.pts, 'kill');
+                        }
+                        spawnText(bb.x, bb.y - BAT_SIZE * 0.5, '+' + bb.pts, '#ffdd44');
+                        sfxBatDeath();
+                    } else {
+                        bb.state = 'hurt';
+                    }
+                }
+            }
+            // Damage spiders in blast radius
+            for (var si = spiders.length - 1; si >= 0; si--) {
+                var ss = spiders[si];
+                if (ss.state === 'dead') continue;
+                var sdx = ss.x - b.x, sdy = ss.y - b.y;
+                var sd = Math.sqrt(sdx * sdx + sdy * sdy);
+                if (sd < blastR) {
+                    var spDmg = b.nuke ? (ss.isMother ? Math.ceil(ss.maxHp * 0.3) : 999) : (b.mega ? 8 : 3);
+                    ss.hp -= spDmg;
+                    ss.state = 'hurt'; ss.hurtTimer = 12; ss.animTimer = 0;
+                    if (sd > 0) { ss.vx = (sdx / sd) * (b.nuke ? 12 : 4); ss.vy = (sdy / sd) * (b.nuke ? 12 : 4) - 4; }
+                    sfxZombieHurt();
+                    if (ss.hp <= 0) {
+                        ss.state = 'dead'; ss.animTimer = 0; ss.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += ss.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += ss.pts;
+                            }
+                        }
+                        if (b.userName) {
+                            if (!persistentScores[b.userName]) persistentScores[b.userName] = { score: 0, avatar: '' };
+                            persistentScores[b.userName].score += ss.pts;
+                            addCycleScore(b.userName, ss.pts, 'kill');
+                        }
+                        sfxZombieDeath();
+                    }
+                }
+            }
+            // Damage Wither Skeletons in blast radius
+            for (var wsi = witherSkeletons.length - 1; wsi >= 0; wsi--) {
+                var ws = witherSkeletons[wsi];
+                var wdx = ws.x - b.x, wdy = ws.y - b.y;
+                var wd = Math.sqrt(wdx * wdx + wdy * wdy);
+                if (wd < blastR) {
+                    var wsDmg = b.nuke ? 999 : (b.mega ? 2 : 1);
+                    ws.hp -= wsDmg;
+                    if (wd > 0) { ws.vx = (wdx / wd) * (b.nuke ? 12 : 5); ws.vy = (wdy / wd) * (b.nuke ? 12 : 5) - 6; }
+                    spawnText(ws.x, ws.y - 40, b.nuke ? '☢️ -' + wsDmg : '-' + wsDmg, '#ff4444');
+                    if (ws.hp <= 0) {
+                        playWitherDeath();
+                        if (typeof spawnParts === 'function') {
+                            spawnParts(ws.x, ws.y, '#555555', 10);
+                            spawnParts(ws.x, ws.y, '#aaaaaa', 10);
+                        }
+                        witherSkeletons.splice(wsi, 1);
+                        spawnText(ws.x, ws.y, '💀 DEAD', '#ffffff');
+                        if (b.userName) addCycleScore(b.userName, 50, 'kill');
+                    } else {
+                        playWitherHurt();
+                    }
+                }
+            }
+            shakeAmt = Math.max(shakeAmt, b.nuke ? 40 : (b.mega ? 22 : (b.heart ? 12 : 10)));
+            if (b.nuke || b.mega) sfxMegaTNT(); else sfxTNT();
+        }
+
+        function updateCreepers() {
+            var CREEPER_GRAVITY = 0.35;
+            var wallLeft = 1;
+            var wallRight = COLS * TILE - 1;
+            for (var i = creepers.length - 1; i >= 0; i--) {
+                var c = creepers[i];
+                var hs = TILE; // half-size para creeper de 2xTILE
+                c.vy += CREEPER_GRAVITY;
+                // Creeper floats in water (como TNT)
+                if (isInWater(c.x, c.y)) {
+                    c.vx *= 0.9;
+                    c.vy *= 0.8;
+                    c.vy -= CREEPER_GRAVITY * 1.2;
+                    c.spin = (c.spin || 0) * 0.95;
+                }
+                c.ang = (c.ang || 0) + (c.spin || 0);
+
+                // sanitizar NaN/Infinity
+                if (!isFinite(c.vx)) c.vx = 0;
+                if (!isFinite(c.vy)) c.vy = 0;
+                if (!isFinite(c.x) || !isFinite(c.y)) { creepers.splice(i, 1); continue; }
+
+                var maxSpd = TILE * 0.9;
+                var spd = Math.sqrt(c.vx * c.vx + c.vy * c.vy);
+                if (spd > maxSpd) { c.vx = c.vx / spd * maxSpd; c.vy = c.vy / spd * maxSpd; }
+
+                // clamp paredes laterais (bedrock)
+                if (c.x - hs < wallLeft) { c.x = wallLeft + hs; c.vx = Math.abs(c.vx) * BOUNCE; }
+                if (c.x + hs > wallRight) { c.x = wallRight - hs; c.vx = -Math.abs(c.vx) * BOUNCE; }
+
+                // topo
+                if (c.y - hs < 0) { c.y = hs; c.vy = Math.abs(c.vy) * BOUNCE; }
+
+                // depenetração — se o creeper está dentro de um bloco sólido, empurrar para fora
+                var centerCol = Math.floor(c.x / TILE);
+                var centerRow = Math.floor(c.y / TILE);
+                var depR0 = Math.floor((c.y - hs) / TILE);
+                var depR1 = Math.floor((c.y + hs) / TILE);
+                var depC0 = Math.floor((c.x - hs) / TILE);
+                var depC1 = Math.floor((c.x + hs) / TILE);
+                for (var dr = depR0; dr <= depR1; dr++) {
+                    for (var dc = depC0; dc <= depC1; dc++) {
+                        var depCell = getCell(dr, dc);
+                        if (!depCell || depCell.t === E) continue;
+                        // calcular overlap AABB
+                        var bl = c.x - hs, br2 = c.x + hs, bt = c.y - hs, bb = c.y + hs;
+                        var tl = dc * TILE, tr = tl + TILE, tt = dr * TILE, tb = tt + TILE;
+                        var ox = Math.min(br2, tr) - Math.max(bl, tl);
+                        var oy = Math.min(bb, tb) - Math.max(bt, tt);
+                        if (ox > 0 && oy > 0) {
+                            // empurrar pelo eixo de menor penetração
+                            if (ox < oy) {
+                                if (c.x < tl + TILE * 0.5) { c.x -= ox + 1; c.vx = -Math.abs(c.vx) * 0.3; }
+                                else { c.x += ox + 1; c.vx = Math.abs(c.vx) * 0.3; }
+                            } else {
+                                if (c.y < tt + TILE * 0.5) { c.y -= oy + 1; c.vy = -Math.abs(c.vy) * 0.3; }
+                                else { c.y += oy + 1; c.vy = Math.abs(c.vy) * 0.3; }
+                            }
+                        }
+                    }
+                }
+
+                // swept collision — até 3 bounces por frame
+                var remainVx = c.vx, remainVy = c.vy;
+                for (var iter = 0; iter < 3; iter++) {
+                    if (remainVx === 0 && remainVy === 0) break;
+
+                    //    candidatos ao redor do creeper
+                    var r0 = Math.floor((c.y - hs) / TILE) - 1;
+                    var r1 = Math.floor((c.y + hs) / TILE) + 1;
+                    var c0 = Math.floor((c.x - hs) / TILE) - 1;
+                    var c1 = Math.floor((c.x + hs) / TILE) + 1;
+
+                    var earliest = null;
+                    for (var r = r0; r <= r1; r++) {
+                        for (var cc = c0; cc <= c1; cc++) {
+                            var cell = getCell(r, cc);
+                            if (!cell || cell.t === E) continue;
+                            var hit = sweptAABB(c.x, c.y, remainVx, remainVy, hs, cc, r);
+                            if (hit && (!earliest || hit.t < earliest.t)) {
+                                earliest = hit;
+                                earliest.cell = cell;
+                            }
+                        }
+                    }
+                    if (!earliest) break;
+
+                    // mover até ponto de colisão
+                    c.x += remainVx * earliest.t;
+                    c.y += remainVy * earliest.t;
+
+                    // responder colisão
+                    if (earliest.nx) {
+                        c.vx = -c.vx * BOUNCE;
+                        remainVx = -remainVx * BOUNCE;
+                        c.x += earliest.nx * 0.1;
+                    }
+                    if (earliest.ny) {
+                        c.vy = -c.vy * BOUNCE;
+                        remainVy = -remainVy * BOUNCE;
+                        c.y += earliest.ny * 0.1;
+                        if (earliest.cell && earliest.cell.t === BEDROCK && earliest.ny < 0) {
+                            c.vy = Math.min(c.vy, -12);
+                            c.vx += (Math.random() - 0.5) * 4;
+                            remainVy = c.vy;
+                            remainVx = c.vx;
+                        }
+                    }
+                }
+                c.vx = remainVx;
+                c.vy = remainVy;
+                c.x += c.vx;
+                c.y += c.vy;
+
+                c.fuse--;
+                if (c.fuse <= 0 && !c.exploded) {
+                    detonateCreeper(c);
+                    creepers.splice(i, 1);
+                    continue;
+                }
+            }
+        }
+
+        function detonateCreeper(c) {
+            if (c.exploded) return;
+            c.exploded = true;
+            var radius = CREEPER_RADIUS;
+            var cx = Math.floor(c.x / TILE);
+            var cy = Math.floor(c.y / TILE);
+            var pts = 0;
+            var destroyedBlocks = [];
+            for (var r = cy - radius; r <= cy + radius; r++) {
+                for (var cc = cx - radius; cc <= cx + radius; cc++) {
+                    var dist = Math.sqrt((cc - cx) * (cc - cx) + (r - cy) * (r - cy));
+                    if (dist > radius) continue;
+                    var cell = getCell(r, cc);
+                    if (!cell || cell.t === E || cell.t === BEDROCK) continue;
+                    var bPts = BDEF[cell.t].pts || 0;
+                    pts += bPts;
+                    
+                    if (cell.t === BONUS_BOX) {
+                        var aType = ((r + cc) % 2 === 0) ? 'pig' : 'sheep';
+                        var creeperSource = null;
+                        if (c.userName) {
+                            creeperSource = userPicks.find(function (u) { return u.userName === c.userName; });
+                        }
+                        spawnBonusBalls(cc * TILE + TILE / 2, r * TILE + TILE / 2, creeperSource || pick, aType);
+                    }
+                    
+                    destroyedBlocks.push({ t: cell.t, wx: cc * TILE + TILE / 2, wy: r * TILE + TILE / 2 });
+                    cell.t = E; cell.hp = 0; cell.cr = 0;
+                }
+            }
+            if (pts > 0) {
+                var isOwnerAction = c.userName && (c.userName === ownerName || (pick && c.userName === pick.userName));
+                if (isOwnerAction && pick.active) {
+                    score += pts;
+                    if (ownerName && persistentScores[ownerName]) {
+                        persistentScores[ownerName].score += pts;
+                    }
+                }
+                spawnText(c.x, c.y, '+' + pts, '#00ff00');
+                if (c.userName) {
+                    var player = userPicks.find(function (u) { return u.userName === c.userName; });
+                    if (player) player.score = (player.score || 0) + pts;
+                    if (!persistentScores[c.userName]) persistentScores[c.userName] = { score: 0, avatar: c.userAvatarUrl || '' };
+                    persistentScores[c.userName].score += pts;
+                }
+            }
+            var debrisPerBlock = 1;
+            var maxDebris = 20;
+            var spawned = 0;
+            for (var bi = 0; bi < destroyedBlocks.length && spawned < maxDebris; bi++) {
+                var blk = destroyedBlocks[bi];
+                var finalOwner = getMotherPickaxe(c);
+
+                debris.push({
+                    x: blk.wx, y: blk.wy,
+                    vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 4,
+                    t: blk.t, size: 8 + Math.random() * 6,
+                    life: 1, age: 0, followFrames: 60,
+                    ang: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.3,
+                    owner: finalOwner
+                });
+                spawned++;
+            }
+            explosions.push({ x: c.x, y: c.y, frame: 0, timer: 0, mega: false, nuke: false });
+            // Danificar mobs próximos
+            var blastR = radius * TILE;
+            for (var zi = zombies.length - 1; zi >= 0; zi--) {
+                var zz = zombies[zi];
+                if (zz.state === 'dead') continue;
+                var zdx = zz.x - c.x, zdy = zz.y - c.y;
+                var zd = Math.sqrt(zdx * zdx + zdy * zdy);
+                if (zd < blastR) {
+                    zz.hp -= 3;
+                    zz.hurtTimer = 10;
+                    zz.animTimer = 0;
+                    spawnText(zz.x, zz.y - 40, '-3', '#00ff00');
+                    if (zz.hp <= 0) {
+                        zz.state = 'dead'; zz.animTimer = 0; zz.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += zz.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += zz.pts;
+                            }
+                        }
+                        spawnText(zz.x, zz.y - 60, '+' + zz.pts, '#ffdd44');
+                        if (c.userName) addCycleScore(c.userName, zz.pts, 'kill');
+                    }
+                }
+            }
+            for (var bi = bats.length - 1; bi >= 0; bi--) {
+                var bb = bats[bi];
+                if (bb.state === 'dead') continue;
+                var bdx = bb.x - c.x, bdy = bb.y - c.y;
+                var bd = Math.sqrt(bdx * bdx + bdy * bdy);
+                if (bd < blastR) {
+                    bb.hp -= 2;
+                    bb.hurtTimer = 8;
+                    bb.anim = 0;
+                    spawnText(bb.x, bb.y - 30, '-2', '#00ff00');
+                    if (bb.hp <= 0) {
+                        bb.state = 'dead'; bb.anim = 0; bb.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += bb.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += bb.pts;
+                            }
+                        }
+                        if (c.userName) {
+                            if (!persistentScores[c.userName]) persistentScores[c.userName] = { score: 0, avatar: '' };
+                            persistentScores[c.userName].score += bb.pts;
+                            addCycleScore(c.userName, bb.pts, 'kill');
+                        }
+                    }
+                }
+            }
+            for (var si = spiders.length - 1; si >= 0; si--) {
+                var ss = spiders[si];
+                if (ss.state === 'dead') continue;
+                var sdx = ss.x - c.x, sdy = ss.y - c.y;
+                var sd = Math.sqrt(sdx * sdx + sdy * sdy);
+                if (sd < blastR) {
+                    ss.hp -= 2;
+                    ss.state = 'hurt'; ss.hurtTimer = 10; ss.animTimer = 0;
+                    if (ss.hp <= 0) {
+                        ss.state = 'dead'; ss.animTimer = 0; ss.deadTimer = 0;
+                        if (isOwnerAction && pick.active) {
+                            score += ss.pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += ss.pts;
+                            }
+                        }
+                        if (c.userName) {
+                            if (!persistentScores[c.userName]) persistentScores[c.userName] = { score: 0, avatar: '' };
+                            persistentScores[c.userName].score += ss.pts;
+                            addCycleScore(c.userName, ss.pts, 'kill');
+                        }
+                    }
+                }
+            }
+            // Damage Wither Skeletons in blast radius
+            for (var wsi = witherSkeletons.length - 1; wsi >= 0; wsi--) {
+                var ws = witherSkeletons[wsi];
+                var wdx = ws.x - c.x, wdy = ws.y - c.y;
+                var wd = Math.sqrt(wdx * wdx + wdy * wdy);
+                if (wd < blastR) {
+                    ws.hp -= 1;
+                    if (wd > 0) { ws.vx = (wdx / wd) * 6; ws.vy = (wdy / wd) * 6 - 4; }
+                    spawnText(ws.x, ws.y - 40, '-1', '#ff4444');
+                    if (ws.hp <= 0) {
+                        playWitherDeath();
+                        if (typeof spawnParts === 'function') {
+                            spawnParts(ws.x, ws.y, '#555555', 10);
+                            spawnParts(ws.x, ws.y, '#aaaaaa', 10);
+                        }
+                        witherSkeletons.splice(wsi, 1);
+                        spawnText(ws.x, ws.y, '💀 DEAD', '#ffffff');
+                        if (c.userName) addCycleScore(c.userName, 50, 'kill');
+                    } else {
+                        playWitherHurt();
+                    }
+                }
+            }
+            shakeAmt = Math.max(shakeAmt, 8);
+            if (_audioStarted) sfxTNT();
+        }
+
+
+        // encontra posição Y segura (espaço vazio) para spawnar TNT
+        function findSafeTNTSpawn(bx, sy, hs) {
+            var tryY = sy - TILE;
+            // tenta até 5 posições acima para achar espaço livre
+            for (var attempt = 0; attempt < 5; attempt++) {
+                var r0 = Math.floor((tryY - hs) / TILE);
+                var r1 = Math.floor((tryY + hs) / TILE);
+                var c0 = Math.floor((bx - hs) / TILE);
+                var c1 = Math.floor((bx + hs) / TILE);
+                var blocked = false;
+                for (var rr = r0; rr <= r1; rr++) {
+                    for (var cc = c0; cc <= c1; cc++) {
+                        var cell = getCell(rr, cc);
+                        if (cell && cell.t !== E && cell.t !== BEDROCK) { blocked = true; break; }
+                    }
+                    if (blocked) break;
+                }
+                if (!blocked) return tryY;
+                tryY -= TILE;
+            }
+            return tryY; // fallback: bem acima
+        }
+
+        var _tntSpawnCount = 0; // sequential counter for staggered fuses
+
+        function activateTNT(tx, ty, userName, avatarUrl) {
+            if (tntBlocks.length > 50) return;
+            var sx = tx !== undefined ? tx : pick.x;
+            var sy = ty !== undefined ? ty : pick.y;
+            var bx = sx + (Math.random() - 0.5) * TILE * 2;
+            var hs = TILE * 0.5;
+            bx = Math.max(hs + 2, Math.min(COLS * TILE - hs - 2, bx));
+            var by = findSafeTNTSpawn(bx, sy, hs);
+            _tntSpawnCount++;
+            var b = {
+                x: bx,
+                y: by,
+                vx: tx !== undefined ? (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 5,
+                vy: -3 - Math.random() * 3,
+                ang: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 0.2,
+                blinkTimer: -(_tntSpawnCount % 8) * 15 - Math.floor(Math.random() * 10),
+                fuse: 100, mega: false,
+                userName: userName, userAvatarUrl: avatarUrl
+            };
+            tntBlocks.push(b);
+        }
+
+        function isMegaSpamming(userName) {
+            if (!userName || userName === '@Player') return false;
+            var now = Date.now();
+            if (!megaSpamTracker[userName]) {
+                megaSpamTracker[userName] = { count: 0, windowStart: 0, cooldownEnd: 0 };
+            }
+            var tracker = megaSpamTracker[userName];
+
+            // Se estiver em cooldown
+            if (now < tracker.cooldownEnd) return true;
+
+            // Se a janela de 10s expirou, reseta
+            if (now - tracker.windowStart > 10000) {
+                tracker.windowStart = now;
+                tracker.count = 1;
+            } else {
+                tracker.count++;
+                if (tracker.count >= 5) {
+                    tracker.cooldownEnd = now + 10000;
+                    tracker.windowStart = 0;
+                    tracker.count = 0;
+                    // O 5º disparo ainda é permitido, o próximo será bloqueado pelo cooldownEnd
+                }
+            }
+            return false;
+        }
+
+        function activateMegaTNT(tx, ty, userName, avatarUrl, ignoreSpam) {
+            if (!ignoreSpam && isMegaSpamming(userName)) {
+                // Opcional: Avisar no console ou com texto flutuante se quiser
+                // spawnText(tx||pick.x, (ty||pick.y)-60, 'MEGA COOLDOWN!', '#ffaa00');
+                return;
+            }
+            if (tntBlocks.length > 50) return;
+            var sx = tx !== undefined ? tx : pick.x;
+            var sy = ty !== undefined ? ty : pick.y;
+            var bx = sx + (Math.random() - 0.5) * TILE * 2;
+            var hs = TILE * 0.9;
+            bx = Math.max(hs + 2, Math.min(COLS * TILE - hs - 2, bx));
+            var by = findSafeTNTSpawn(bx, sy, hs);
+            _tntSpawnCount++;
+            var b = {
+                x: bx,
+                y: by,
+                vx: tx !== undefined ? (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 5,
+                vy: -3 - Math.random() * 3,
+                ang: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 0.2,
+                blinkTimer: -(_tntSpawnCount % 6) * 20 - Math.floor(Math.random() * 15),
+                fuse: 160, mega: true,
+                userName: userName, userAvatarUrl: avatarUrl
+            };
+            tntBlocks.push(b);
+        }
+
+        function activateHeartTNT(tx, ty, userName, avatarUrl) {
+            if (tntBlocks.length > 50) return;
+            var sx = tx !== undefined ? tx : pick.x;
+            var sy = ty !== undefined ? ty : pick.y;
+            var bx = sx; // sem spread horizontal para ser mais leve
+            var hs = TILE * 0.5;
+            bx = Math.max(hs + 2, Math.min(COLS * TILE - hs - 2, bx));
+            var by = findSafeTNTSpawn(bx, sy, hs);
+            _tntSpawnCount++;
+            var b = {
+                x: bx,
+                y: by,
+                vx: 0, // sem velocidade horizontal
+                vy: -2 - Math.random() * 2, // velocidade vertical menor
+                ang: 0,
+                spin: 0,
+                blinkTimer: -(_tntSpawnCount % 8) * 15 - Math.floor(Math.random() * 10),
+                fuse: 100,
+                heart: true,
+                userName: userName,
+                userAvatarUrl: avatarUrl
+            };
+            tntBlocks.push(b);
+        }
+
+        function activateCreeper(tx, ty, userName) {
+            if (creepers.length > 150) return;
+            var sx = tx !== undefined ? tx : pick.x;
+            var sy = ty !== undefined ? ty : pick.y;
+
+            // Visual Effect: Circle on avatar (same as nuke style feedback)
+            var uNameL = (userName || '').toLowerCase();
+            var uPick = userPicks.find(function (up) { return (up.userName || '').toLowerCase() === uNameL; }) ||
+                ((ownerName && ownerName.toLowerCase() === uNameL) ? pick : null);
+
+            if (uPick) {
+                var effectExists = _creeperSpawnEffects.some(function (e) { return e.userName === uNameL && e.life > 35; });
+                if (!effectExists) {
+                    var avSize = 48;
+                    var avY = uPick.y - PICK_HALF - 44;
+                    _creeperSpawnEffects.push({
+                        x: uPick.x - 10 - avSize / 2,
+                        y: avY,
+                        life: 45,
+                        maxLife: 45,
+                        userName: uNameL
+                    });
+                }
+            }
+
+            var bx = sx + (Math.random() - 0.5) * TILE * 3; // spread de 3 tiles
+            var hs = TILE; // half-size do creeper (2xTILE)
+            bx = Math.max(hs + 2, Math.min(COLS * TILE - hs - 2, bx));
+            var by = findSafeTNTSpawn ? findSafeTNTSpawn(bx, sy, hs) : sy - TILE * 2;
+            creepers.push({
+                x: bx,
+                y: by,
+                vx: (Math.random() - 0.5) * 6,
+                vy: -3 - Math.random() * 3,
+                ang: 0,
+                spin: (Math.random() - 0.5) * 0.1,
+                fuse: 120 + Math.random() * 60, // variação: entre 2s e 3s (120-180 frames)
+                exploded: false,
+                userName: userName
+            });
+        }
+
+        function triggerCreeperRain(x, y, userName, total) {
+            var spawned = 0;
+            var batchSize = 30;
+            function nextBatch() {
+                var toSpawn = Math.min(batchSize, total - spawned);
+                for (var i = 0; i < toSpawn; i++) {
+                    activateCreeper(x + (Math.random() - 0.5) * TILE * 6, y - Math.random() * TILE * 4, userName);
+                }
+                spawned += toSpawn;
+                if (spawned < total) {
+                    setTimeout(nextBatch, 1500);
+                }
+            }
+            nextBatch();
+        }
+
+        function safeUpdate(id, text, color) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            if (text !== undefined) el.textContent = text;
+            if (color !== undefined) el.style.color = color;
+        }
+
+        function updateDoublePickHUD() {
+            var el = document.getElementById('skillDoublePick');
+            if (!el) return;
+            if (doublePickActive) {
+                el.style.display = 'block';
+                el.textContent = '⚒️ DOUBLE: ' + Math.ceil(doublePickTimer / 60) + 's';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
+
+        // ── Picaretas disponíveis ──────────────────────────────────────────────────────────
+        var PICKAXES = [
+            { name: 'Wood', img: 'pickaxe/wooden_pickaxe.png', damage: 0.5, color: '#c8a464' },
+            { name: 'Stone', img: 'pickaxe/stone_pickaxe.png', damage: 1.0, color: '#aaaaaa' },
+            { name: 'Copper', img: 'pickaxe/copper_pickaxe.png', damage: 1.1, color: '#e77c56' },
+            { name: 'Gold', img: 'pickaxe/golden_pickaxe.png', damage: 1.2, color: '#ffe066' },
+            { name: 'Iron', img: 'pickaxe/iron_pickaxe.png', damage: 1.5, color: '#d8d8d8' },
+            { name: 'Diamond', img: 'pickaxe/diamond_pickaxe.png', damage: 2.5, color: '#44ddff' },
+            { name: 'Netherite', img: 'pickaxe/netherite_pickaxe.png', damage: 3.5, color: '#554444' }
+        ];
+        var MARIO_PICKAXE = { name: 'Mario', img: 'mario/mario.png', damage: 5.0, color: '#ff0000' };
+        MARIO_PICKAXE.imgObj = new Image();
+        MARIO_PICKAXE.imgObj.src = MARIO_PICKAXE.img;
+        MARIO_PICKAXE.imgObj.onload = function () { MARIO_PICKAXE.headMask = MARIO_PICKAXE.imgObj; };
+        var HOMER_PICKAXE = { name: 'Homer', img: 'homer/homer.png', damage: 5.0, color: '#ffdd00' };
+        HOMER_PICKAXE.imgObj = new Image();
+        HOMER_PICKAXE.imgObj.src = HOMER_PICKAXE.img;
+        HOMER_PICKAXE.imgObj.onload = function () { HOMER_PICKAXE.headMask = HOMER_PICKAXE.imgObj; };
+        function createPickaxeHeadMask(img) {
+            var canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            try {
+                var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                var data = imageData.data;
+                var pixelsChanged = 0;
+                for (var i = 0; i < data.length; i += 4) {
+                    var r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+                    if (a < 10) continue;
+
+                    // Minecraft handle colors: #8a5a3c, #533725, #b37b57
+                    var handleColors = [[138, 90, 60], [83, 55, 37], [179, 123, 87]];
+                    var isHandle = false;
+                    for (var j = 0; j < handleColors.length; j++) {
+                        var d = Math.abs(r - handleColors[j][0]) + Math.abs(g - handleColors[j][1]) + Math.abs(b - handleColors[j][2]);
+                        if (d < 60) { isHandle = true; break; }
+                    }
+                    // Secondary check for any brownish pixels that aren't the head color
+                    if (!isHandle && r > g && g > b && r < 200 && (r / g) > 1.2 && (g / b) > 1.1) {
+                        isHandle = true;
+                    }
+
+                    if (isHandle) {
+                        data[i + 3] = 0;
+                        pixelsChanged++;
+                    }
+                }
+                ctx.putImageData(imageData, 0, 0);
+                console.log('[Masker] Created mask for pickaxe. Handle pixels removed:', pixelsChanged);
+            } catch (e) {
+                console.error('[Masker] Failed to create mask (CORS?):', e);
+            }
+            return canvas;
+        }
+
+        PICKAXES.forEach(function (p) {
+            p.imgObj = new Image();
+            p.imgObj.onload = function () {
+                // If it's the wooden pickaxe, we skip masking or it would disappear
+                if (p.name.toLowerCase() === 'wood') {
+                    p.headMask = p.imgObj; // Mask is the whole thing for wood
+                } else {
+                    p.headMask = createPickaxeHeadMask(p.imgObj);
+                }
+            };
+            p.imgObj.src = p.img;
+        });
+
+
+        var PICK_UPGRADE_MS = 2 * 60 * 1000; // 2 minutes per tier
+
+        var currentPickaxe = PICKAXES[0];
+        var ownerJoinTime = Date.now();
+        var PICK_SIZE = 80;
+        var pickaxeChangeInterval = 10;
+
+        function getPlayerInventory(userName) {
+            var totalLevel = (persistentScores[userName] && persistentScores[userName].giftsCount) || 0;
+            var inventory = [];
+            for (var i = 0; i < 5; i++) {
+                var startLevel = i * 7;
+                if (totalLevel >= startLevel) {
+                    var tier = Math.min(totalLevel - startLevel, 6);
+                    inventory.push(PICKAXES[tier]);
+                } else break;
+            }
+            return inventory;
+        }
+
+        function getPickaxeForGifts(userName) {
+            var inv = getPlayerInventory(userName);
+            return inv[0] || PICKAXES[0];
+        }
+
+        function syncCompanions(p, inventory) {
+            if (!p.companions) p.companions = [];
+            // Precisamos de inventory.length - 1 companheiros (a primeira picareta é do jogador)
+            var baseCount = Math.max(0, inventory.length - 1);
+            var goldExtra = (p.goldSwordsTimer > 0) ? 5 : 0;
+            var diamondExtra = (p.diamondSwordsTimer > 0) ? 5 : 0;
+            var swordExtra = (p.activeSwords ? p.activeSwords.length : 0);
+            var needed = baseCount + goldExtra + diamondExtra + swordExtra;
+
+            // Remove se houver demais
+            if (p.companions.length > needed) {
+                p.companions.length = needed;
+            }
+
+            // Adiciona se estiver faltando
+            while (p.companions.length < needed) {
+                p.companions.push({
+                    x: p.x, y: p.y - 40, vx: 0, vy: 0, ang: 0, spin: 0,
+                    userName: p.userName, userAvatarUrl: p.userAvatarUrl,
+                    isCompanion: true, companionIdx: p.companions.length + 1, owner: p,
+                    stuck: false, stuckTimer: 0
+                });
+            }
+
+            // Atualiza todos os companheiros para garantir o tipo correto (Espada Ouro, Diamante ou Picareta normal)
+            for (var i = 0; i < p.companions.length; i++) {
+                var c = p.companions[i];
+                var compIdx = i + 1;
+
+                var isExtraGold = (compIdx > baseCount && compIdx <= baseCount + goldExtra);
+                var isExtraDiamond = (compIdx > baseCount + goldExtra && compIdx <= baseCount + goldExtra + diamondExtra);
+
+                c.isGoldSword = isExtraGold;
+                c.isDiamondSword = isExtraDiamond;
+
+                if (isExtraGold) {
+                    c.pickaxe = {
+                        name: 'Gold',
+                        color: '#ffd700',
+                        damage: 1.5, // Dano base de ouro + bônus
+                        imgObj: SWORD_ASSETS['Gold']
+                    };
+                    c.bigTimer = p.goldSwordsTimer;
+                } else if (isExtraDiamond) {
+                    c.pickaxe = {
+                        name: 'Diamond',
+                        color: '#00ffff',
+                        damage: 3.0, // Dano base de diamante + bônus
+                        imgObj: SWORD_ASSETS['Diamond']
+                    };
+                    c.bigTimer = p.diamondSwordsTimer;
+                    c.isExtraSword = false;
+                } else if (compIdx > baseCount + goldExtra + diamondExtra) {
+                    var sIdx = compIdx - (baseCount + goldExtra + diamondExtra) - 1;
+                    var sData = p.activeSwords[sIdx];
+                    c.pickaxe = {
+                        name: sData.type,
+                        color: sData.color,
+                        damage: sData.damage,
+                        imgObj: SWORD_ASSETS[sData.type]
+                    };
+                    c.bigTimer = sData.timer;
+                    c.isExtraSword = true;
+                    c.swordType = sData.type;
+                } else {
+                    c.pickaxe = inventory[compIdx];
+                    c.bigTimer = p.bigTimer || 0;
+                    c.isExtraSword = false;
+                }
+                c.swordTimer = p.swordTimer || 0;
+                // Sincroniza userName/Avatar caso mudem
+                c.userName = p.userName;
+                c.userAvatarUrl = p.userAvatarUrl;
+            }
+            p.extraPicksCount = baseCount;
+        }
+
+        function updateAllPickaxes() {
+            var mainUser = (ownerName || '@player').toLowerCase();
+            var mainInv = getPlayerInventory(mainUser);
+
+            if (pick.pickaxe !== mainInv[0]) {
+                pick.pickaxe = mainInv[0];
+                currentPickaxe = mainInv[0] || PICKAXES[0];
+                safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color);
+                if (_audioStarted) sfxPickaxeChange();
+            }
+            syncCompanions(pick, mainInv);
+
+            for (var i = 0; i < userPicks.length; i++) {
+                var up = userPicks[i];
+                var inv = getPlayerInventory(up.userName);
+                if (up.pickaxe !== inv[0]) {
+                    up.pickaxe = inv[0];
+                }
+                syncCompanions(up, inv);
+            }
+        }
+
+        // ── Config from localStorage (no PHP needed) ──
+        (function () {
+            var cfg = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            pickaxeChangeInterval = cfg.pickaxe_change_interval || 10;
+            if (cfg.owner_name) {
+                ownerName = cfg.owner_name.replace(/^@@+/, '@');
+                if (ownerName && ownerName[0] !== '@') ownerName = '@' + ownerName;
+            }
+            updateAllPickaxes();
+            setInterval(updateAllPickaxes, 1000);
+        })();
+
+        // ── Mapa infinito ──────────────────────────────────────────────────────────────────
+        var worldMap = {};
+        var topRow = 0;
+        var botRow = 0;
+
+        var CLEARING_INTERVAL = 25; // every 25m
+        var CLEARING_HEIGHT = 8;    // max height of clearing
+        var clearedZones = {};      // track which clearings already spawned zombies
+        var clearingShapes = {};    // cached organic shapes per zone
+
+        // ── Mini-clearings (small grottos between main clearings with chests) ──
+        var MINI_CLEARING_HEIGHT = 6;
+        var MINI_CLEARING_OFFSET = 14; // rows after zone start (between clearings)
+        var miniClearingShapes = {};
+        var miniClearedZones = {};
+
+        function getMiniClearingShape(zone) {
+            if (miniClearingShapes[zone]) return miniClearingShapes[zone];
+            var seed = zone * 4391 + 773;
+            var shape = {};
+            var centerCol = 4 + Math.floor(seededRand(seed) * (COLS - 8));
+            for (var lr = 0; lr < MINI_CLEARING_HEIGHT; lr++) {
+                var vertFactor = 1 - Math.pow((lr - MINI_CLEARING_HEIGHT / 2) / (MINI_CLEARING_HEIGHT / 2), 2);
+                var maxWidth = Math.floor(2 + vertFactor * (COLS - 7));
+                var halfW = Math.max(1, Math.floor(maxWidth / 2));
+                var wobble = Math.floor(seededRand(seed + lr * 67) * 2) - 1;
+                var noiseL = Math.floor(seededRand(seed + lr * 17) * 2);
+                var noiseR = Math.floor(seededRand(seed + lr * 23) * 2);
+                var rc = Math.max(3, Math.min(COLS - 4, centerCol + wobble));
+                shape[lr] = {
+                    left: Math.max(1, rc - halfW + noiseL),
+                    right: Math.min(COLS - 2, rc + halfW - noiseR)
+                };
+            }
+            miniClearingShapes[zone] = shape;
+            return shape;
+        }
+
+        function isMiniClearingCell(r, c) {
+            if (isMegaClearingRow(r)) return false;
+            if (r < CLEARING_INTERVAL + CLEARING_HEIGHT) return false;
+            var zone = Math.floor(r / CLEARING_INTERVAL);
+            var zoneStart = zone * CLEARING_INTERVAL;
+            var miniStart = zoneStart + MINI_CLEARING_OFFSET;
+            var localRow = r - miniStart;
+            if (localRow < 0 || localRow >= MINI_CLEARING_HEIGHT) return false;
+            // Skip if near mega-clearing
+            for (var cr = miniStart - 5; cr <= miniStart + MINI_CLEARING_HEIGHT + 5; cr++) {
+                if (isMegaClearingRow(cr)) return false;
+            }
+            var shape = getMiniClearingShape(zone);
+            var b = shape[localRow];
+            if (!b) return false;
+            return c >= b.left && c <= b.right;
+        }
+
+        // ── Mega Clearings (every 400 rows, 200 rows tall, wall-to-wall) ──
+        var MEGA_CLEARING_INTERVAL = 400; // space between mega-clearing starts
+        var MEGA_CLEARING_HEIGHT = 200;
+        var MEGA_CLEARING_FIRST = 200;    // first mega-clearing starts at row 200
+        var megaClearedZones = {};
+        var MAX_BATS_MEGA = 60; // increased for more action in clearings
+
+        // ── Water Table (underground water level) ──
+        var WATER_DRAG = 0.91;
+        var QUEEN_SCALE = 4.0;
+        var QUEEN_HP = 50;
+        var QUEEN_COUNT = 3;
+
+        // ── Zombie Boss Gate (alternates with Queen Gate) ──
+        var ZBOSS_SCALE = 3.5;
+        var ZBOSS_HP = 40;
+        var ZBOSS_COUNT = 4;
+        var MAX_ZOMBIES_MEGA = 15;
+
+        // ── Dragon & Boss Timer State ──
+        var dragonFrames = [];
+        var dragonActive = false;
+        var dragonX = 0;
+        var dragonY = 0;
+        var dragonFrameIdx = 0;
+        var dragonFrameTimer = 0;
+        var dragonPhase = 'behind'; // 'behind' (R->L) ou 'front' (L->R)
+        var bossTimerStartTime = 0;
+        var isBossFightActive = false;
+        var isDragonLeaving = false;
+        var currentBossY = 0;
+        var activeFireballs = [];
+        var dragonFireTimer = 0;
+        var BOSS_TIMEOUT_MS = 1 * 60 * 1000; // 1 minuto
+
+        var dragonRoarSounds = [];
+        var dragonFlapSounds = [];
+        var dragonRoarTimer = 0;
+        var dragonFlapTimer = 0;
+        var dragonFlapIdx = 0;
+
+        function loadDragonAssets() {
+            var base = 'dragon/Dragon.png/19c6a73862b342ecb815b3e2a4a583caxA9mvwh9CttJHnIZ-';
+            for (var i = 0; i < 100; i++) {
+                var img = new Image();
+                img.src = base + i + '.png';
+                dragonFrames.push(img);
+            }
+            // Sons do Dragão
+            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(new Audio('sons/dragon_idle' + i + '.ogg'));
+            for (var i = 1; i <= 6; i++) dragonFlapSounds.push(new Audio('sons/dragon_flap' + i + '.ogg'));
+        }
+        loadDragonAssets();
+
+        // ── Crystal types for clearings ──
+        var CRYSTAL_TYPES = [
+            'Black_crystal', 'Blue_crystal', 'Dark_red_ crystal', 'Green_crystal',
+            'Pink_crystal', 'Red_crystal', 'Violet_crystal', 'White_crystal',
+            'Yellow_crystal', 'Yellow-green_crystal'
+        ];
+        var crystalSprites = {};
+        CRYSTAL_TYPES.forEach(function (ct) {
+            crystalSprites[ct] = [];
+            for (var i = 1; i <= 4; i++) {
+                var img = new Image();
+                img.src = 'cristals/' + ct + i + '.png';
+                crystalSprites[ct].push(img);
+            }
+        });
+        var clearingCrystals = {}; // zone -> crystal type
+        // Array of crystal decorations growing INTO the empty space
+        // Each: { x, y, variant, rotation, scale, type, zone }
+        var crystalDecoList = [];
+        var torchList = []; // { x, y, wallDir, zone }
+        var MAX_TORCHES = 50;
+
+        // Seeded random for deterministic clearing shapes
+        function seededRand(seed) {
+            var x = Math.sin(seed * 9301 + 49297) * 49297;
+            return x - Math.floor(x);
+        }
+
+        // Generate organic clearing shape for a zone
+        function getClearingShape(zone) {
+            if (clearingShapes[zone]) return clearingShapes[zone];
+            var shape = {}; // shape[localRow] = { left: col, right: col }
+            var seed = zone * 137;
+            // Center column varies per row for organic feel
+            var centerCol = 4 + Math.floor(seededRand(seed) * (COLS - 8));
+            for (var lr = 0; lr < CLEARING_HEIGHT; lr++) {
+                // Width narrows at top and bottom (ellipse-like)
+                var vertFactor = 1 - Math.pow((lr - CLEARING_HEIGHT / 2) / (CLEARING_HEIGHT / 2), 2);
+                var maxWidth = Math.floor(3 + vertFactor * (COLS - 6));
+                // Wobble the center per row
+                var wobble = Math.floor(seededRand(seed + lr * 31) * 3) - 1;
+                var rowCenter = Math.max(3, Math.min(COLS - 4, centerCol + wobble));
+                var halfW = Math.max(1, Math.floor(maxWidth / 2));
+                // Add noise to edges
+                var noiseL = Math.floor(seededRand(seed + lr * 17) * 2);
+                var noiseR = Math.floor(seededRand(seed + lr * 23) * 2);
+                var left = Math.max(1, rowCenter - halfW + noiseL);
+                var right = Math.min(COLS - 2, rowCenter + halfW - noiseR);
+                shape[lr] = { left: left, right: right };
+            }
+            clearingShapes[zone] = shape;
+            return shape;
+        }
+
+        function isClearingCell(r, c) {
+            // Skip if inside a mega-clearing (mega takes priority)
+            if (isMegaClearingRow(r)) return false;
+            if (r < CLEARING_INTERVAL) return false;
+            var zone = Math.floor(r / CLEARING_INTERVAL);
+            var zoneStart = zone * CLEARING_INTERVAL;
+            var zoneEnd = zoneStart + CLEARING_HEIGHT;
+            // Skip if this clearing overlaps or is near a mega-clearing (10 row buffer)
+            for (var cr = zoneStart - 10; cr <= zoneEnd + 10; cr++) {
+                if (isMegaClearingRow(cr)) return false;
+            }
+            var localRow = r - zoneStart;
+            if (localRow < 0 || localRow >= CLEARING_HEIGHT) return false;
+            var shape = getClearingShape(zone);
+            var bounds = shape[localRow];
+            if (!bounds) return false;
+            return c >= bounds.left && c <= bounds.right;
+        }
+
+        function isMegaClearingRow(r) {
+            if (r < MEGA_CLEARING_FIRST) return false;
+            var offset = r - MEGA_CLEARING_FIRST;
+            var pos = offset % MEGA_CLEARING_INTERVAL;
+            return pos >= 0 && pos < MEGA_CLEARING_HEIGHT;
+        }
+
+        function getMegaZone(r) {
+            if (r < MEGA_CLEARING_FIRST) return -1;
+            return Math.floor((r - MEGA_CLEARING_FIRST) / MEGA_CLEARING_INTERVAL);
+        }
+
+        function getMegaStart(megaZone) {
+            return MEGA_CLEARING_FIRST + megaZone * MEGA_CLEARING_INTERVAL;
+        }
+
+        function isMegaClearingCell(r, c) {
+            if (c === 0 || c === COLS - 1) return false;
+            if (r < MEGA_CLEARING_FIRST) return false;
+            var offset = r - MEGA_CLEARING_FIRST;
+            var megaZone = Math.floor(offset / MEGA_CLEARING_INTERVAL);
+            var localRow = offset - megaZone * MEGA_CLEARING_INTERVAL;
+            if (localRow < 0 || localRow >= MEGA_CLEARING_HEIGHT) return false;
+
+            var seed = megaZone * 9973 + 1237;
+            var EDGE_DEPTH = 8;
+
+            // Top organic edge
+            if (localRow < EDGE_DEPTH) {
+                var topFactor = localRow / EDGE_DEPTH;
+                var noise = seededRand(seed + localRow * 31 + c * 17);
+                var noise2 = seededRand(seed + localRow * 47 + c * 23 + 500);
+                var threshold = (1 - topFactor) * 0.65 + noise2 * 0.15;
+                var wallDist = Math.min(c - 1, COLS - 2 - c) / (COLS / 2);
+                threshold += (1 - wallDist) * 0.25;
+                if (noise < threshold) return false;
+                return true;
+            }
+
+            // Bottom organic edge
+            if (localRow >= MEGA_CLEARING_HEIGHT - EDGE_DEPTH) {
+                var botFactor = (MEGA_CLEARING_HEIGHT - 1 - localRow) / EDGE_DEPTH;
+                var noise3 = seededRand(seed + localRow * 41 + c * 29 + 1000);
+                var noise4 = seededRand(seed + localRow * 53 + c * 37 + 1500);
+                var threshold2 = (1 - botFactor) * 0.65 + noise4 * 0.15;
+                var wallDist2 = Math.min(c - 1, COLS - 2 - c) / (COLS / 2);
+                threshold2 += (1 - wallDist2) * 0.25;
+                if (noise3 < threshold2) return false;
+                return true;
+            }
+
+            // Middle: fully open
+            return true;
+        }
+
+        function genRow(r) {
+            var row = [];
+            var depth = r;
+            var zone = Math.floor(r / CLEARING_INTERVAL);
+            var zoneStart = zone * CLEARING_INTERVAL;
+            var isNearClearing = (r >= zoneStart - 1 && r <= zoneStart + CLEARING_HEIGHT);
+
+            for (var c = 0; c < COLS; c++) {
+                var t;
+                if (depth < 2) { t = E; }
+                else if (isMegaClearingCell(r, c)) { t = E; }
+                else if (isClearingCell(r, c)) { t = E; }
+                else if (isMiniClearingCell(r, c)) { t = E; }
+                else { t = pickBlock(depth); }
+                row[c] = { t: t, hp: (t === E ? 0 : BDEF[t].hp), cr: 0 };
+            }
+
+            // Crystal decorations disabled for cleaner look
+            if (false && isNearClearing && zone >= 1) {
+                if (!clearingCrystals[zone]) {
+                    clearingCrystals[zone] = CRYSTAL_TYPES[Math.floor(seededRand(zone * 53) * CRYSTAL_TYPES.length)];
+                }
+                var ct = clearingCrystals[zone];
+                for (var c = 1; c < COLS - 1; c++) {
+                    var isEmpty = row[c].t === E && isClearingCell(r, c);
+                    if (!isEmpty) continue;
+                    // Check which adjacent sides have solid blocks — generate crystals for each wall
+                    var walls = [];
+                    if (!isClearingCell(r, c - 1)) walls.push({ dir: 'left', wr: r, wc: c - 1 });
+                    if (!isClearingCell(r, c + 1)) walls.push({ dir: 'right', wr: r, wc: c + 1 });
+                    if (!isClearingCell(r - 1, c)) walls.push({ dir: 'up', wr: r - 1, wc: c });
+                    if (!isClearingCell(r + 1, c)) walls.push({ dir: 'down', wr: r + 1, wc: c });
+                    if (walls.length === 0) continue;
+                    var seed = r * 1000 + c;
+                    for (var wi = 0; wi < walls.length; wi++) {
+                        var w = walls[wi];
+                        var baseRot, baseAX = c * TILE + TILE / 2, baseAY = r * TILE + TILE / 2;
+                        if (w.dir === 'up') { baseRot = 0; baseAY = r * TILE + TILE * 0.05; }
+                        else if (w.dir === 'down') { baseRot = Math.PI; baseAY = r * TILE + TILE * 0.95; }
+                        else if (w.dir === 'left') { baseRot = Math.PI * 0.5; baseAX = c * TILE + TILE * 0.05; }
+                        else { baseRot = -Math.PI * 0.5; baseAX = c * TILE + TILE * 0.95; }
+                        // 5-8 crystals per wall edge for dense coverage
+                        var count = 5 + Math.floor(seededRand(seed * 43 + wi * 71) * 4);
+                        for (var ci = 0; ci < count; ci++) {
+                            var cs = seed * 100 + wi * 50 + ci;
+                            // Spread along the wall edge
+                            var spread, offPerp;
+                            if (w.dir === 'up' || w.dir === 'down') {
+                                spread = (seededRand(cs * 61) - 0.5) * TILE * 0.9;
+                                offPerp = (seededRand(cs * 73) - 0.5) * TILE * 0.15;
+                            } else {
+                                spread = (seededRand(cs * 61) - 0.5) * TILE * 0.9;
+                                offPerp = (seededRand(cs * 73) - 0.5) * TILE * 0.15;
+                            }
+                            var cx, cy;
+                            if (w.dir === 'up' || w.dir === 'down') {
+                                cx = baseAX + spread; cy = baseAY + offPerp;
+                            } else {
+                                cx = baseAX + offPerp; cy = baseAY + spread;
+                            }
+                            var cRot = baseRot + (seededRand(cs * 97) - 0.5) * 0.6;
+                            var cScale = 0.45 + seededRand(cs * 31) * 0.55;
+                            crystalDecoList.push({
+                                x: cx, y: cy,
+                                variant: Math.floor(seededRand(cs * 13) * 2),
+                                rotation: cRot,
+                                scale: cScale,
+                                type: ct,
+                                zone: zone,
+                                wallRow: w.wr, wallCol: w.wc
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Spawn zombies inside the clearing (last empty row)
+            var lastEmptyRow = zone * CLEARING_INTERVAL + CLEARING_HEIGHT - 1;
+            // Skip if clearing is eliminated (near mega-clearing)
+            var clearingEliminated = false;
+            var czStart = zone * CLEARING_INTERVAL;
+            var czEnd = czStart + CLEARING_HEIGHT;
+            for (var czr = czStart - 10; czr <= czEnd + 10; czr++) {
+                if (isMegaClearingRow(czr)) { clearingEliminated = true; break; }
+            }
+            if (r === lastEmptyRow && zone >= 1 && !clearedZones[zone] && !clearingEliminated) {
+                clearedZones[zone] = true;
+                if (typeof zombies !== 'undefined' && zombies) {
+                    var shape = getClearingShape(zone);
+                    var bounds = shape[CLEARING_HEIGHT - 1];
+                    var numZ = Math.min(MAX_ZOMBIES, 5 + Math.floor(zone));
+                    for (var zi = 0; zi < numZ; zi++) {
+                        var minC = (bounds ? bounds.left + 1 : 2);
+                        var maxC = (bounds ? bounds.right - 1 : COLS - 3);
+                        if (minC > maxC) minC = maxC;
+                        var zCol = minC + Math.floor(seededRand(zone * 100 + zi * 7) * (maxC - minC + 1));
+                        var zx = zCol * TILE + TILE / 2;
+                        // Spawn at bottom of clearing space — zombie feet on the floor below
+                        var zy = (lastEmptyRow + 1) * TILE;
+                        spawnZombie(zx, zy);
+                    }
+                }
+                // Spawn bats flying inside the clearing — first one is the Mother
+                if (typeof bats !== 'undefined' && bats) {
+                    var batShape = getClearingShape(zone);
+                    var numBats = Math.min(MAX_BATS - bats.length, 3 + Math.floor(zone * 0.5));
+                    for (var bi = 0; bi < numBats; bi++) {
+                        var midRow = Math.floor(CLEARING_HEIGHT * 0.3 + seededRand(zone * 200 + bi * 13) * CLEARING_HEIGHT * 0.4);
+                        var batBounds = batShape[midRow];
+                        if (!batBounds) continue;
+                        var batCol = batBounds.left + 1 + Math.floor(seededRand(zone * 300 + bi * 17) * (batBounds.right - batBounds.left - 1));
+                        var bx = batCol * TILE + TILE / 2;
+                        var by = (zone * CLEARING_INTERVAL + midRow) * TILE + TILE / 2;
+                        spawnBat(bx, by, zone, bi === 0);
+                    }
+                }
+            }
+
+            // Torches disabled for cleaner look
+            if (false && isNearClearing && zone >= 1) {
+                var tLocalRow = r - zone * CLEARING_INTERVAL;
+                if (tLocalRow >= 1 && tLocalRow < CLEARING_HEIGHT - 1 && tLocalRow % 3 === 1) {
+                    var tShape = getClearingShape(zone);
+                    var tb = tShape[tLocalRow];
+                    if (tb && torchList.length < MAX_TORCHES) {
+                        torchList.push({ x: tb.left * TILE + TILE * 0.3, y: r * TILE + TILE * 0.3, wallDir: 'left', zone: zone, wallCol: tb.left - 1, wallRow: r });
+                        torchList.push({ x: (tb.right + 1) * TILE - TILE * 0.3, y: r * TILE + TILE * 0.3, wallDir: 'right', zone: zone, wallCol: tb.right + 1, wallRow: r });
+                    }
+                }
+            }
+
+            // Mini-clearing crystals disabled for cleaner look
+            var miniStart = zone * CLEARING_INTERVAL + MINI_CLEARING_OFFSET;
+            var isMiniRow = (r >= miniStart && r < miniStart + MINI_CLEARING_HEIGHT);
+            if (false && isMiniRow && zone >= 1) {
+                var mct = clearingCrystals[zone] || CRYSTAL_TYPES[Math.floor(seededRand(zone * 53) * CRYSTAL_TYPES.length)];
+                for (var c = 1; c < COLS - 1; c++) {
+                    if (row[c].t !== E || !isMiniClearingCell(r, c)) continue;
+                    var mwalls = [];
+                    if (!isMiniClearingCell(r, c - 1)) mwalls.push({ dir: 'left', wr: r, wc: c - 1 });
+                    if (!isMiniClearingCell(r, c + 1)) mwalls.push({ dir: 'right', wr: r, wc: c + 1 });
+                    if (!isMiniClearingCell(r - 1, c)) mwalls.push({ dir: 'up', wr: r - 1, wc: c });
+                    if (!isMiniClearingCell(r + 1, c)) mwalls.push({ dir: 'down', wr: r + 1, wc: c });
+                    if (mwalls.length === 0) continue;
+                    var mseed = r * 1000 + c + 30000;
+                    for (var mwi = 0; mwi < mwalls.length; mwi++) {
+                        var mw = mwalls[mwi];
+                        var mBaseRot, mBaseAX = c * TILE + TILE / 2, mBaseAY = r * TILE + TILE / 2;
+                        if (mw.dir === 'up') { mBaseRot = 0; mBaseAY = r * TILE + TILE * 0.05; }
+                        else if (mw.dir === 'down') { mBaseRot = Math.PI; mBaseAY = r * TILE + TILE * 0.95; }
+                        else if (mw.dir === 'left') { mBaseRot = Math.PI * 0.5; mBaseAX = c * TILE + TILE * 0.05; }
+                        else { mBaseRot = -Math.PI * 0.5; mBaseAX = c * TILE + TILE * 0.95; }
+                        var mcount = 8 + Math.floor(seededRand(mseed * 43 + mwi * 71) * 5);
+                        for (var mci = 0; mci < mcount; mci++) {
+                            var mcs = mseed * 100 + mwi * 50 + mci;
+                            var mspread = (seededRand(mcs * 61) - 0.5) * TILE * 0.8;
+                            var moffPerp = (seededRand(mcs * 73) - 0.5) * TILE * 0.12;
+                            var mcx, mcy;
+                            if (mw.dir === 'up' || mw.dir === 'down') { mcx = mBaseAX + mspread; mcy = mBaseAY + moffPerp; }
+                            else { mcx = mBaseAX + moffPerp; mcy = mBaseAY + mspread; }
+                            crystalDecoList.push({
+                                x: mcx, y: mcy,
+                                variant: Math.floor(seededRand(mcs * 13) * 2),
+                                rotation: mBaseRot + (seededRand(mcs * 97) - 0.5) * 0.5,
+                                scale: 0.55 + seededRand(mcs * 31) * 0.5,
+                                type: mct,
+                                zone: zone,
+                                wallRow: mw.wr, wallCol: mw.wc
+                            });
+                        }
+                    }
+                }
+            }
+
+            // ── Mini-clearing: spawn collectible item pile ──
+            var miniStart2 = zone * CLEARING_INTERVAL + MINI_CLEARING_OFFSET;
+            var miniLastRow = miniStart2 + MINI_CLEARING_HEIGHT - 1;
+            if (r === miniLastRow && zone >= 1 && !miniClearedZones[zone]) {
+                var miniEliminated = false;
+                for (var mcr = miniStart2 - 5; mcr <= miniStart2 + MINI_CLEARING_HEIGHT + 5; mcr++) {
+                    if (isMegaClearingRow(mcr)) { miniEliminated = true; break; }
+                }
+                if (!miniEliminated) {
+                    miniClearedZones[zone] = true;
+                    var mShape = getMiniClearingShape(zone);
+                    var mb = mShape[0];
+                    if (mb) {
+                        var cx = Math.floor((mb.left + mb.right) / 2) * TILE + TILE / 2;
+                        var cy = miniStart2 * TILE + TILE / 2;
+                        // Spawn spider webs as decoration
+                        var numWebs = 3 + Math.floor(seededRand(zone * 555) * 4);
+                        for (var wi = 0; wi < numWebs; wi++) {
+                            var wx = cx + (seededRand(zone * 600 + wi * 19) - 0.5) * (mb.right - mb.left) * TILE * 0.8;
+                            var wy = cy + (seededRand(zone * 650 + wi * 23) - 0.5) * TILE * 1.5;
+                            if (!spiderWebs) spiderWebs = [];
+                            spiderWebs.push({ x: wx, y: wy, size: 20 + seededRand(zone * 700 + wi) * 30, alpha: 0.15 + seededRand(zone * 750 + wi) * 0.2 });
+                        }
+                    }
+                    // Spawn spiders in mini-clearing — first one is Mother
+                    if (typeof spiders !== 'undefined' && mb) {
+                        var numSp = Math.min(MAX_SPIDERS - spiders.length, 1 + Math.floor(zone * 0.2));
+                        for (var spi = 0; spi < numSp; spi++) {
+                            var spx = cx + (seededRand(zone * 1100 + spi * 31) - 0.5) * (mb.right - mb.left) * TILE * 0.5;
+                            var spy = miniStart2 * TILE + TILE;
+                            spawnSpider(spx, spy, spi === 0);
+                        }
+                    }
+                }
+            }
+
+            // ── Mega-clearing: spawn waves of flyers when player enters ──
+            // (spawning is handled in update loop, not here, to avoid premature spawn)
+
+            return row;
+        }
+
+        // ── Sistema de raridade por profundidade ──
+        // Cada entrada: [tipo, peso] — peso maior = mais comum
+        // A cada 10m de profundidade, blocos mais valiosos vão aparecendo
+        function pickBlock(depth) {
+            // Rare bonus box — 0.3% chance after depth 15
+            if (depth > 15 && Math.random() < 0.003) return BONUS_BOX;
+            var table = [];
+            // Camada 2-4: superfície
+            if (depth < 5) {
+                table = [[GRASS, 30], [DIRT, 50], [STONE, 10], [ANDESITE, 5], [DIORITE, 3], [GRANITE, 2]];
+            }
+            // Camada 5-9: raso
+            else if (depth < 10) {
+                table = [[DIRT, 30], [STONE, 25], [ANDESITE, 12], [DIORITE, 10], [GRANITE, 10], [COBBLE, 8], [COAL, 5]];
+            }
+            // Camada 10-19: minérios básicos
+            else if (depth < 20) {
+                table = [[STONE, 22], [COBBLE, 15], [ANDESITE, 8], [GRANITE, 8], [DIORITE, 5],
+                [COAL, 15], [COPPER, 12], [IRON, 10], [LAPIS, 3], [GOLD, 2]];
+            }
+            // Camada 20-29: transição
+            else if (depth < 30) {
+                table = [[STONE, 15], [COBBLE, 12], [MOSSY, 8],
+                [COAL, 8], [COPPER, 10], [IRON, 15], [LAPIS, 8], [GOLD, 10], [REDSTONE, 8], [DIAMOND, 4], [EMERALD, 2]];
+            }
+            // Camada 30-39: profundo
+            else if (depth < 40) {
+                table = [[STONE, 10], [COBBLE, 8], [MOSSY, 8], [OBSIDIAN, 5],
+                [IRON, 10], [GOLD, 14], [REDSTONE, 14], [LAPIS, 8], [DIAMOND, 12], [EMERALD, 8], [COPPER, 3]];
+            }
+            // Camada 40-49: muito profundo
+            else if (depth < 50) {
+                table = [[STONE, 6], [OBSIDIAN, 12], [MOSSY, 5],
+                [GOLD, 10], [REDSTONE, 15], [DIAMOND, 18], [EMERALD, 15], [LAPIS, 6], [IRON, 5], [COPPER, 3], [COBBLE, 5]];
+            }
+            // 50+: abismo — progressivamente mais valioso a cada 10m
+            else {
+                var tier = Math.min(10, Math.floor((depth - 50) / 10)); // 0-10
+                var stoneW = Math.max(2, 8 - tier);
+                var obsW = 10 + tier;
+                var diaW = 15 + tier * 2;
+                var emeW = 12 + tier * 2;
+                var redW = 10 + tier;
+                var goldW = Math.max(2, 8 - tier);
+                var lapisW = Math.max(1, 5 - Math.floor(tier / 2));
+                table = [[STONE, stoneW], [OBSIDIAN, obsW], [MOSSY, 3],
+                [REDSTONE, redW], [DIAMOND, diaW], [EMERALD, emeW], [GOLD, goldW], [LAPIS, lapisW]];
+            }
+            // Roleta ponderada
+            var total = 0;
+            for (var i = 0; i < table.length; i++) total += table[i][1];
+            var roll = Math.random() * total;
+            var acc = 0;
+            for (var i = 0; i < table.length; i++) {
+                acc += table[i][1];
+                if (roll < acc) return table[i][0];
+            }
+            return table[table.length - 1][0];
+        }
+
+        function ensureRows(fromRow, toRow) {
+            for (var r = fromRow; r <= toRow; r++) {
+                if (!worldMap[r]) worldMap[r] = genRow(r);
+            }
+        }
+
+        function getCell(r, c) {
+            if (c < 0 || c >= COLS) return null;
+            if (!worldMap[r]) worldMap[r] = genRow(r);
+            return worldMap[r][c];
+        }
+
+        // ── Câmera ──────────────────────────────────────────────────────────────────────
+        var camY = 0;
+        var camTarget = null;       // pick being followed by camera
+        var camLeaderY = 0;         // y of current deepest pick
+        var camLeaderTimer = 0;     // frames the leader has been deepest
+        var CAM_SWITCH_FRAMES = 300; // 5 seconds at 60fps
+        var chromaKey = false;      // green screen mode (toggle with O)
+
+        // ── Física ────────────────────────────────────────────────────────────────────
+        var PICK_HALF = 28;
+
+        var _S = TILE / 16;
+        var PICK_COLL = [
+            { lx: (5 - 8) * _S, ly: (0 - 8) * _S, role: 'tip' },
+            { lx: (11 - 8) * _S, ly: (0 - 8) * _S, role: 'head' },
+            { lx: (14 - 8) * _S, ly: (1 - 8) * _S, role: 'head' },
+            { lx: (15 - 8) * _S, ly: (5 - 8) * _S, role: 'head' },
+            { lx: (15 - 8) * _S, ly: (10 - 8) * _S, role: 'diag' },
+            { lx: (6 - 8) * _S, ly: (8 - 8) * _S, role: 'diag' },
+            { lx: (0 - 8) * _S, ly: (15 - 8) * _S, role: 'tail' },
+            { lx: (1 - 8) * _S, ly: (15 - 8) * _S, role: 'tail' }
+        ];
+
+        ownerName = ''; // loaded from config
+        if (ownerName) pick.userName = ownerName;
+        // Ensure pick always has a userName for offline play
+        if (!pick.userName) pick.userName = '@Player';
+
+        function spawnPick() {
+            var savedUser = pick.userName;
+            var savedAvatar = pick.userAvatarUrl;
+            var savedStormTimer = pick.stormTimer || 0;
+            pick.x = TILE * 2 + Math.random() * (canvas.width - TILE * 4);
+            pick.y = camY + TILE * 2;
+            pick.vx = (Math.random() - 0.5) * 12;
+            pick.vy = -2 - Math.random() * 8;
+            pick.ang = Math.random() * Math.PI * 2;
+            pick.spin = (Math.random() - 0.5) * 0.4;
+            pick.stuck = false;
+            pick.stuckTimer = 0;
+            pick.userName = savedUser;
+            pick.userAvatarUrl = savedAvatar;
+            pick.stormTimer = savedStormTimer;
+        }
+
+        function collPoints(p) {
+            var obj = p || pick, cos = Math.cos(obj.ang), sin = Math.sin(obj.ang);
+            return PICK_COLL.map(function (c) {
+                return { x: obj.x + c.lx * cos - c.ly * sin, y: obj.y + c.lx * sin + c.ly * cos, role: c.role };
+            });
+        }
+        function tipPos() { var pts = collPoints(); return pts[0]; }
+        function tailPos() { var pts = collPoints(); return pts[4]; }
+
+        // ── Estado ───────────────────────────────────────────────────────────────────
+        var maxDepth = 0;
+        var parts = [], texts = [], debris = [];
+        var announcements = [];
+        // persistentScores movido para o topo do script
+
+        // ── Cycle Scoring (every 200m) ──
+        // _cycleScores movido para o topo do script
+        var _currentCycle = 0;
+        var _cycleOverlay = null; // { timer, top3 }
+        var _cycleOverlayTimer = 0;
+
+        // ── Controle de geração de heartTNT no início ──
+        var _gameStartTime = Date.now();
+        var _ignoreLikesUntil = _gameStartTime + 3000; // ignora likes por 3s após iniciar
+
+        function _saveCycleScores() {
+            try { localStorage.setItem('pd_cycle_scores', JSON.stringify({ cycle: _currentCycle, scores: _cycleScores })); } catch (e) { }
+        }
+        function _loadCycleScores() {
+            try {
+                var d = JSON.parse(localStorage.getItem('pd_cycle_scores') || '{}');
+                if (d.cycle !== undefined) { _currentCycle = d.cycle; _cycleScores = d.scores || {}; }
+                // Normaliza campos para upgrades
+                Object.keys(_cycleScores).forEach(function (k) {
+                    if (_cycleScores[k].likes === undefined) _cycleScores[k].likes = 0;
+                    if (_cycleScores[k].kills === undefined) _cycleScores[k].kills = 0;
+                    if (_cycleScores[k].items === undefined) _cycleScores[k].items = 0;
+                    if (_cycleScores[k].balls === undefined) _cycleScores[k].balls = 0;
+                    if (_cycleScores[k].sheep === undefined) _cycleScores[k].sheep = 0;
+                    if (_cycleScores[k].pig === undefined) _cycleScores[k].pig = 0;
+                });
+            } catch (e) { }
+        }
+        _loadCycleScores();
+
+        function showCoinBanner(userName, coins) {
+            var uPick = userPicks.find(function (up) { return up.userName === userName; });
+            var tx = uPick ? uPick.x : canvas.width / 2;
+            var ty = uPick ? uPick.y : camY + 100;
+            if (typeof spawnText === 'function') spawnText(tx, ty - 50, '🪙 +' + coins + ' COINS!', '#ffdd44');
+        }
+
+        function addCycleScore(userName, pts, type) {
+            if (!userName || userName === 'Esqueleto Wither') return;
+            if (!_cycleScores[userName]) _cycleScores[userName] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, sheep: 0, pig: 0, pending: 0, avatar: '' };
+
+            // Inimigos e ovos bônus são acumulados como 'pending' para animação no ranking
+            var isPendingType = (type === 'kill' || type === 'sheep' || type === 'pig' || type === 'ball');
+
+            if (isPendingType) {
+                _cycleScores[userName].pending = (_cycleScores[userName].pending || 0) + pts;
+                if (type === 'kill') _cycleScores[userName].kills = (_cycleScores[userName].kills || 0) + 1;
+                if (type === 'sheep') {
+                    _cycleScores[userName].sheep = (_cycleScores[userName].sheep || 0) + 1;
+                    if (_cycleScores[userName].sheep % 10 === 0) {
+                        if (!persistentScores[userName]) persistentScores[userName] = { score: 0, likes: 0, giftsValue: 0, pendingScore: 0 };
+                        persistentScores[userName].coins = (persistentScores[userName].coins || 0) + 1;
+                        showCoinBanner(userName, 1);
+                        updateLeaderboard();
+                    }
+                }
+                if (type === 'pig') {
+                    _cycleScores[userName].pig = (_cycleScores[userName].pig || 0) + 1;
+                    if (_cycleScores[userName].pig % 10 === 0) {
+                        if (!persistentScores[userName]) persistentScores[userName] = { score: 0, likes: 0, giftsValue: 0, pendingScore: 0 };
+                        persistentScores[userName].coins = (persistentScores[userName].coins || 0) + 1;
+                        showCoinBanner(userName, 1);
+                        updateLeaderboard();
+                    }
+                }
+                if (type === 'ball') _cycleScores[userName].balls = (_cycleScores[userName].balls || 0) + 1;
+
+                if (!persistentScores[userName]) persistentScores[userName] = { score: 0, likes: 0, giftsValue: 0, pendingScore: 0 };
+                persistentScores[userName].pendingScore = (persistentScores[userName].pendingScore || 0) + pts;
+            } else {
+                _cycleScores[userName].score += pts;
+                if (type === 'item') _cycleScores[userName].items++; // Items não são pending, somam direto
+                if (persistentScores[userName]) {
+                    persistentScores[userName].score = (persistentScores[userName].score || 0) + pts;
+                }
+            }
+            if (persistentScores[userName] && persistentScores[userName].avatar) _cycleScores[userName].avatar = persistentScores[userName].avatar;
+        }
+
+        function triggerCycleEnd(cycle) {
+            var allPlayers = Object.keys(_cycleScores)
+                .filter(function (n) { return n !== 'Esqueleto Wither'; })
+                .map(function (n) {
+                    var cs = _cycleScores[n];
+                    var pTier = currentPickaxe;
+                    if (ownerName && n === ownerName) { pTier = currentPickaxe; }
+                    else {
+                        for (var j = 0; j < userPicks.length; j++) {
+                            if (userPicks[j].userName === n) { pTier = userPicks[j].pickaxe || PICKAXES[0]; break; }
+                        }
+                    }
+                    var av = cs.avatar || (persistentScores[n] ? persistentScores[n].avatar : '');
+                    var giftsTotal = (persistentScores[n] && persistentScores[n].giftsValue !== undefined) ? persistentScores[n].giftsValue : 0;
+
+                    return {
+                        name: n,
+                        baseScore: Math.floor(cs.score || 0),
+                        pending: Math.floor(cs.pending || 0),
+                        totalScore: Math.floor((cs.score || 0) + (cs.pending || 0)),
+                        kills: cs.kills || 0,
+                        pig: cs.pig || 0,
+                        sheep: cs.sheep || 0,
+                        items: cs.items || 0,
+                        balls: cs.balls || 0,
+                        likes: cs.likes || 0,
+                        giftsValue: giftsTotal,
+                        userAvatarUrl: av,
+                        pickaxe: pTier
+                    };
+                }).sort(function (a, b) { return b.totalScore - a.totalScore; });
+
+            var top3 = allPlayers.slice(0, 3);
+            var others = allPlayers.slice(3, 8);
+
+            if (top3.length === 0) return;
+
+            var podiumHTML = '';
+            var medals = ['🥇', '🥈', '🥉'];
+            var classes = ['first', 'second', 'third'];
+
+            top3.forEach(function (p, i) {
+                if (!p) return;
+                var medalIcon = medals[i];
+                var stepClass = classes[i];
+                var avatar = p.userAvatarUrl || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>';
+
+                var statsHTML = '';
+                var totalCoinsEarned = Math.floor((p.sheep || 0) / 10) + Math.floor((p.pig || 0) / 10);
+                if (totalCoinsEarned > 0) statsHTML += `<div class="podium-stat-badge" id="stat_coin_${i}">🪙 ${totalCoinsEarned}</div>`;
+                if (p.kills > 0) statsHTML += `<div class="podium-stat-badge" id="stat_kills_${i}"><img src="slime/Slime.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.kills}</div>`;
+                if (p.balls > 0) statsHTML += `<div class="podium-stat-badge" id="stat_balls_${i}"><img src="items/xp_orb.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.balls}</div>`;
+                if (p.pig > 0) statsHTML += `<div class="podium-stat-badge" id="stat_pig_${i}"><img src="pig/pig%20kid.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.pig}</div>`;
+                if (p.sheep > 0) statsHTML += `<div class="podium-stat-badge" id="stat_sheep_${i}"><img src="animais%20bonus/ovelha/Ovelha%20kid.png" style="width:18px;height:18px;vertical-align:middle;"> ${p.sheep}</div>`;
+                if (p.giftsValue > 0) statsHTML += `<div class="podium-stat-badge">🎁 ${p.giftsValue}</div>`;
+                if (p.likes > 0) statsHTML += `<div class="podium-stat-badge">❤️ ${p.likes}</div>`;
+
+                podiumHTML += '<div class="podium-step ' + stepClass + '" id="podium_step_' + i + '">' +
+                    '<div class="podium-info">' +
+                    '<div class="podium-avatar-wrapper">' +
+                    '<img src="' + avatar + '" class="podium-avatar" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23333%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>\'">' +
+                    '<div class="podium-medal" style="color:' + (stepClass === 'first' ? '#ffd700' : (stepClass === 'second' ? '#c0c0c0' : '#cd7f32')) + '">' + medalIcon + '</div>' +
+                    (p.pending > 0 ? '<div class="podium-bonus-tag" id="bonus_tag_' + i + '">+' + p.pending + '⚡</div>' : '') +
+                    '</div>' +
+                    '<div class="podium-name">' + p.name.replace(/^@/, '') + '</div>' +
+                    '<div class="podium-score" id="podium_score_' + i + '">' + Math.floor(p.baseScore) + ' PTS</div>' +
+                    '<div class="podium-stats">' + statsHTML + '</div>' +
+                    '</div>' +
+                    '<div class="podium-base">' + (i + 1) + '</div>' +
+                    '</div>';
+            });
+
+            document.getElementById('podiumContainer').innerHTML = podiumHTML;
+
+            // Ranking estendido (processado imediatamente)
+            var extendedHTML = others.map(function (p, i) {
+                var pickColor = p.pickaxe ? p.pickaxe.color : '#555';
+                var fallbackAvatar = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23222%22/><text y=%22.7em%22 font-size=%2280%22 x=%2210%22>👤</text></svg>';
+                return '<div class="extended-item" style="border-left-color: ' + pickColor + '">' +
+                    '<span class="ext-rank">#' + (i + 4) + '</span>' +
+                    '<img src="' + (p.userAvatarUrl || fallbackAvatar) + '" class="ext-avatar" onerror="this.src=\'' + fallbackAvatar + '\'" />' +
+                    '<span class="ext-name">' + p.name.replace(/^@/, '') + '</span>' +
+                    '<span class="ext-score">' + Math.floor(p.totalScore) + ' PTS</span>' +
+                    '</div>';
+            }).join('');
+            document.getElementById('rankingListExtended').innerHTML = extendedHTML;
+
+            var overlay = document.getElementById('cycleRankingOverlay');
+            overlay.classList.add('active');
+
+            _cycleOverlay = { timer: 900, top3: top3, cycle: cycle, confetti: [] };
+            _cycleOverlayTimer = 0;
+
+            // Iniciar animação de bônus sequencial após 2.5 segundos
+            setTimeout(function () {
+                top3.forEach(function (p, i) {
+                    var scoreEl = document.getElementById('podium_score_' + i);
+                    var bonusEl = document.getElementById('bonus_tag_' + i);
+                    if (!scoreEl || !bonusEl) return;
+
+                    // Fila de bônus para este jogador
+                    var queue = [];
+                    var totalCoinsEarned = Math.floor((p.sheep || 0) / 20) + Math.floor((p.pig || 0) / 20);
+                    if (totalCoinsEarned > 0) queue.push({ count: totalCoinsEarned, icon: '🪙', ptsPer: 0, color: '#ffd700', statId: 'stat_coin_' + i, isCoin: true });
+                    if (p.kills > 0) queue.push({ count: p.kills, icon: '<img src="slime/Slime.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 50, color: '#ff4444', statId: 'stat_kills_' + i });
+                    if (p.balls > 0) queue.push({ count: p.balls, icon: '<img src="items/xp_orb.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 80, color: '#00ffff', statId: 'stat_balls_' + i });
+                    if (p.pig > 0) queue.push({ count: p.pig, icon: '<img src="pig/pig%20kid.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 120, color: '#ffaaaa', statId: 'stat_pig_' + i });
+                    if (p.sheep > 0) queue.push({ count: p.sheep, icon: '<img src="animais%20bonus/ovelha/Ovelha%20kid.png" style="width:24px;height:24px;vertical-align:middle;">', ptsPer: 180, color: '#ffffff', statId: 'stat_sheep_' + i });
+
+                    if (queue.length === 0) {
+                        if (p.pending > 0) { // Fallback para qualquer outro pending
+                            queue.push({ count: 1, icon: '⚡', ptsPer: p.pending, color: '#ffdd44' });
+                        } else return;
+                    }
+
+                    var currentScore = p.baseScore;
+                    var qIdx = 0;
+
+                    function processNext() {
+                        if (qIdx >= queue.length) {
+                            bonusEl.style.display = 'none';
+                            scoreEl.style.color = '#00ff88';
+                            scoreEl.style.transform = 'scale(1.2)';
+                            if (_audioStarted) sfxSkillActivate();
+                            setTimeout(function () { scoreEl.style.transform = 'scale(1)'; }, 300);
+                            return;
+                        }
+
+                        var item = queue[qIdx];
+                        var countLeft = item.count;
+                        var startScore = currentScore;
+                        var duration = 800 + (item.count * 100);
+                        if (duration > 2000) duration = 2000;
+
+                        var startTime = null;
+                        var lastSoundTime = 0;
+
+                        bonusEl.style.background = item.color;
+                        bonusEl.style.color = '#000';
+                        bonusEl.classList.add('animating-to-score');
+
+                        function animate(timestamp) {
+                            if (!startTime) startTime = timestamp;
+                            var progress = timestamp - startTime;
+                            var perc = Math.min(progress / duration, 1);
+
+                            var added = Math.floor(item.count * item.ptsPer * perc);
+                            var currentItemCount = Math.ceil(item.count * (1 - perc));
+
+                            scoreEl.textContent = Math.floor(startScore + added) + ' PTS';
+                            bonusEl.innerHTML = item.icon + ' ' + currentItemCount;
+
+                            // Sincroniza o badge estático
+                            if (item.statId) {
+                                var sBadge = document.getElementById(item.statId);
+                                if (sBadge) {
+                                    if (currentItemCount <= 0) sBadge.style.opacity = '0.3';
+                                    sBadge.innerHTML = item.icon + ' ' + currentItemCount;
+                                }
+                            }
+
+                            if (progress - lastSoundTime > 180 && progress < duration) {
+                                if (_audioStarted) {
+                                    if (item.isCoin) sfxCoin();
+                                    else if (item.icon && item.icon.indexOf('pig') !== -1) sfxPig(true);
+                                    else if (item.icon && item.icon.indexOf('Ovelha') !== -1) sfxSheep(true);
+                                    else sfxPop();
+                                }
+                                lastSoundTime = progress;
+                            }
+
+                            if (progress < duration) {
+                                requestAnimationFrame(animate);
+                            } else {
+                                currentScore = Math.floor(startScore + (item.count * item.ptsPer));
+                                qIdx++;
+                                setTimeout(processNext, 300); // Pausa entre tipos de bônus
+                            }
+                        }
+                        requestAnimationFrame(animate);
+                    }
+                    processNext();
+                });
+            }, 2500);
+
+            // Efetiva os pontos no persistentScores para TODOS os jogadores do ciclo (incluindo 4º lugar em diante)
+            Object.keys(_cycleScores).forEach(function (n) {
+                var cs = _cycleScores[n];
+                if (persistentScores[n]) {
+                    // Adiciona o bônus pendente ao score total persistente
+                    persistentScores[n].score = (persistentScores[n].score || 0) + (cs.pending || 0);
+                    persistentScores[n].pendingScore = 0; // Limpa o acumulado pendente
+                    
+
+                }
+            });
+
+            // Salva no localStorage para não perder em caso de refresh
+            localStorage.setItem('pd_persistent_scores', JSON.stringify(persistentScores));
+
+            // Limpa o estado do ciclo atual
+            _cycleScores = {};
+            localStorage.removeItem('pd_cycle_scores');
+
+            _cycleScores = {};
+        }
+
+        var _uiHiddenForOverlay = false;
+        var _cachedCmdBox = null;
+        var _cachedLeaderboard = null;
+
+        function drawCycleOverlay() {
+            if (!_cachedCmdBox) _cachedCmdBox = document.getElementById('commandBox');
+            if (!_cachedLeaderboard) _cachedLeaderboard = document.getElementById('leaderboard');
+
+            if (!_cycleOverlay || _cycleOverlay.timer <= 0) {
+                if (_cycleOverlay || _uiHiddenForOverlay) {
+                    _cycleOverlay = null;
+                    _uiHiddenForOverlay = false;
+                    document.getElementById('cycleRankingOverlay').classList.remove('active');
+                    if (_cachedCmdBox) { _cachedCmdBox.style.opacity = '1'; _cachedCmdBox.style.pointerEvents = 'auto'; }
+                    if (_cachedLeaderboard) { _cachedLeaderboard.style.opacity = '1'; _cachedLeaderboard.style.pointerEvents = 'auto'; }
+                }
+                return;
+            }
+
+            if (!_uiHiddenForOverlay) {
+                _uiHiddenForOverlay = true;
+                if (_cachedCmdBox) { _cachedCmdBox.style.opacity = '0'; _cachedCmdBox.style.pointerEvents = 'none'; }
+                if (_cachedLeaderboard) { _cachedLeaderboard.style.opacity = '0'; _cachedLeaderboard.style.pointerEvents = 'none'; }
+            }
+            _cycleOverlay.timer--;
+            _cycleOverlayTimer++;
+
+            // O restante do desenho (confetti) permanece no canvas se desejado,
+            // ou podemos remover para economizar frames. O podium agora é DOM.
+            var W = canvas.width, H = canvas.height;
+            var fadeIn = Math.min(1, _cycleOverlayTimer / 40);
+            var fadeOut = Math.min(1, _cycleOverlay.timer / 40);
+            var alpha = Math.min(fadeIn, fadeOut);
+
+            // Confetti no canvas (leve)
+            var conf = _cycleOverlay.confetti;
+            if (_cycleOverlayTimer % 2 === 0 && _cycleOverlay.timer > 80 && conf.length < 50) {
+                var cc = ['#ff4466', '#44dd66', '#4488ff', '#ffdd44'];
+                conf.push({ x: Math.random() * W, y: -10, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 2, r: 0, w: 5, h: 8, c: cc[Math.floor(Math.random() * cc.length)], spin: Math.random() * 0.2, life: 1 });
+            }
+            for (var ci = conf.length - 1; ci >= 0; ci--) {
+                var c = conf[ci];
+                c.x += c.vx; c.y += c.vy; c.r += c.spin;
+                c.life -= 0.005;
+                if (c.life <= 0 || c.y > H + 20) { conf.splice(ci, 1); continue; }
+                ctx.save();
+                ctx.translate(c.x, c.y); ctx.rotate(c.r);
+                ctx.globalAlpha = alpha * c.life;
+                ctx.fillStyle = c.c;
+                ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+                ctx.restore();
+            }
+        }
+
+
+        // Helper: rounded rectangle path
+        function _roundRect(c, x, y, w, h, r) {
+            c.beginPath();
+            c.moveTo(x + r, y);
+            c.lineTo(x + w - r, y);
+            c.quadraticCurveTo(x + w, y, x + w, y + r);
+            c.lineTo(x + w, y + h - r);
+            c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            c.lineTo(x + r, y + h);
+            c.quadraticCurveTo(x, y + h, x, y + h - r);
+            c.lineTo(x, y + r);
+            c.quadraticCurveTo(x, y, x + r, y);
+            c.closePath();
+        }
+
+        var extraPicks = [];
+        // userPicks movido para o topo do script
+        var lastActivity = {};  // { userName: timestamp }
+        var INACTIVE_MS = 30 * 1000; // 30 seconds
+        var doublePickActive = false;
+        var doublePickTimer = 0;
+        var DOUBLE_PICK_DURATION = 600;
+
+        var SWORD_DURATION = 900; // 15 seconds
+        var SWORD_COOLDOWN = 0;
+        var swordActive = false;
+        var swordTimer = 0;
+
+        // ── Tormenta (combo powerup) ──
+        var TORMENTA_COMBO_THRESHOLD = 25;
+        var TORMENTA_DURATION = 480;
+        var TORMENTA_RADIUS = 200;
+        var tormentaActive = false;
+        var tormentaTimer = 0;
+        var tormentaPick = null;
+        var STORM_DURATION = 600;
+        var stormActive = false;
+        var stormTimer = 0;
+
+        // ── Spin Skill ──────────────────────────────────────────────────────────────
+        var SPIN_CHARGE = 30;       // 0.5s charge-up
+        var SPIN_DASH = 39;         // ~0.65s dash duration
+        var SPIN_COOLDOWN = 300;    // 5s cooldown per direction
+        var SPIN_SPEED = 13;        // dash velocity
+        var SPIN_DMG_MULT = 4;      // damage multiplier during dash
+        var SPIN_MAX_QUEUE = 4;     // max queued spins per player
+        var spinCooldowns = {};     // { userName_direction: framesLeft }
+        var spinQueues = {};        // { userName: [{ direction, dir }] }
+        var activeSpins = [];       // { pick, dir, phase, timer, origSpin }
+
+        // ── New Combat Skills State ──
+        var thorCooldown = 600;     // 10 seconds at 60fps
+        var nukeCooldown = 600;      // 10 seconds at 60fps
+        var cloneCooldown = 600;    // 10 seconds at 60fps
+        var stormCooldown = 900;    // 15 seconds at 60fps
+        var blackholeCooldown = 600; // 10 seconds at 60fps
+        var bigCooldown = 600;     // 10 seconds at 60fps
+        var creeperCooldown = 600; // 10 seconds at 60fps
+
+        var BIG_DURATION = 900;     // 15 seconds at 60fps
+        var BIG_SCALE = 2.3;
+        var BLACKHOLE_RADIUS = 400;   // suction radius in pixels
+        var BLACKHOLE_DURATION = 360; // 6 seconds at 60fps
+        var activeBlackHoles = [];    // { x, y, timer, userName }
+
+        var skillCooldowns = {};    // { userName_skillName: framesLeft }
+        var activeThorAttacks = []; // { userName, x, y, hitsLeft, timer, lastX, lastY }
+        var _thorBeams = [];        // { sx, sy, tx, ty, life }
+        var _thorFlashes = [];
+        var _nukeActive = false;
+        var _nukeTimer = 0;         // flash effect for nuke
+        var _nukeLocation = { x: 0, y: 0 };
+
+
+        var score = 0;
+        var items = [];
+        var explosions = [];
+        var tntBlocks = [];
+        var creepers = []; // array de creepers explosivos
+        var _creeperSpawnEffects = []; // { x, y, life, maxLife }
+
+
+        // ── Mineral piles in mini-clearings ──
+        var MINERAL_PILE_DEFS = [
+            { t: COAL, weight: 30, min: 120, max: 200 },
+            { t: COPPER, weight: 20, min: 100, max: 160 },
+            { t: IRON, weight: 18, min: 80, max: 140 },
+            { t: LAPIS, weight: 12, min: 60, max: 120 },
+            { t: GOLD, weight: 10, min: 60, max: 100 },
+            { t: REDSTONE, weight: 8, min: 40, max: 100 },
+            { t: DIAMOND, weight: 3, min: 40, max: 80 },
+            { t: EMERALD, weight: 2, min: 20, max: 60 }
+        ];
+        var tntFuseSounds = {};
+        var shakeAmt = 0;
+        var shakeDec = 0.88;
+
+        function restart() {
+            // Preserve player score from persistentScores before reset
+            var playerKey = ownerName || (pick ? pick.userName : null);
+            // If still no key, try to get from localStorage
+            if (!playerKey) {
+                var savedTT = localStorage.getItem('pd_tiktok_username');
+                if (savedTT) playerKey = '@' + savedTT.toLowerCase();
+            }
+            var preservedScore = 0;
+            if (playerKey && persistentScores[playerKey]) {
+                preservedScore = persistentScores[playerKey].score || 0;
+            }
+
+            score = 0; maxDepth = 0; parts = []; texts = []; debris = []; announcements = [];
+            var ov = document.getElementById('announceOverlay'); if (ov) ov.innerHTML = '';
+            worldMap = {}; explosions = []; tntBlocks = []; items = []; zombies = []; bats = []; spiders = []; spiderWebs = []; fallingBlocks = []; bonusBalls = []; collectBoxes = []; clearedZones = {}; clearingShapes = {}; crystalDecoList = []; torchList = []; clearingCrystals = {}; megaClearedZones = {};
+            miniClearedZones = {};
+            extraPicks = []; userPicks = []; lastActivity = {};
+            camTarget = null; camLeaderTimer = 0; camY = 0;
+            doublePickActive = false; doublePickTimer = 0; updateDoublePickHUD();
+            stormActive = false; stormTimer = 0;
+            tormentaActive = false; tormentaTimer = 0; tormentaPick = null;
+            activeSpins = []; spinCooldowns = {}; spinQueues = {};
+            isBossFightActive = false; dragonActive = false; isDragonLeaving = false; activeFireballs = [];
+            dragonRoarSounds.forEach(function (s) { s.pause(); s.currentTime = 0; });
+            dragonFlapSounds.forEach(function (s) { s.pause(); s.currentTime = 0; });
+            var btDisp = document.getElementById('bossTimerDisplay'); if (btDisp) btDisp.style.display = 'none';
+            bgChunks = {}; bgTick = 0;
+            document.getElementById('depthDisplay').textContent = 'Depth: 0m';
+            // Show preserved score from persistentScores (daily total)
+            var displayScore = preservedScore;
+            document.getElementById('scoreDisplay').textContent = '⛏ ' + displayScore;
+            ensureRows(0, VIS + 4);
+            spawnPick();
+            // Preserve owner on main pick after restart
+            if (ownerName) {
+                pick.userName = ownerName;
+                pick.userAvatarUrl = pick.userAvatarUrl || '';
+            }
+        }
+
+        function activateDoublePick() {
+            if (doublePickActive) return;
+            doublePickActive = true;
+            doublePickTimer = DOUBLE_PICK_DURATION;
+            if (pick) extraPicks.push({
+                x: pick.x, y: pick.y - 20, vx: pick.vx - 3, vy: pick.vy - 2,
+                ang: pick.ang, spin: 0.1, stuck: false, stuckTimer: 0,
+                owner: pick, isCompanion: true
+            });
+            if (_audioStarted) sfxSkillActivate();
+            updateDoublePickHUD();
+        }
+
+        function activateStorm(p) {
+            if (!p) return;
+            var userName = p.userName || ownerName || '@owner';
+            var cdKey = userName + '_storm';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+            if (p.stormTimer > 0) return;
+
+            skillCooldowns[cdKey] = stormCooldown;
+            p.stormTimer = STORM_DURATION;
+            p.vx = (Math.random() - 0.5) * 20;
+            p.vy = -15;
+            p.stuck = false;
+
+            if (p === pick) {
+                stormActive = true;
+                stormTimer = STORM_DURATION;
+            }
+
+            spawnText(p.x, p.y - 40, '🏓 PING PONG!', '#00ff88');
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        function activateSword(p) {
+            if (!p) return;
+            var userName = p.userName || ownerName || '@owner';
+            var cdKey = userName + '_sword';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+            if (p.swordTimer > 0) return;
+
+            skillCooldowns[cdKey] = SWORD_DURATION + SWORD_COOLDOWN;
+            p.swordTimer = SWORD_DURATION;
+
+            // Replicar para companheiros
+            if (p.companions) {
+                p.companions.forEach(function (c) { c.swordTimer = SWORD_DURATION; });
+            }
+
+            if (p === pick) {
+                swordActive = true;
+                swordTimer = SWORD_DURATION;
+            }
+            spawnText(p.x, p.y - 40, '⚔️ SWORD MODE!', '#ff4444');
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        const GOLD_SWORD_DURATION = 600000; // 10 minutes
+        function activateGoldSwords(userName) {
+            userName = (userName || '').replace(/^@@+/, '@');
+            var p = null;
+            if (pick && pick.userName === userName) p = pick;
+            if (!p) p = userPicks.find(function (u) { return u.userName === userName; });
+            if (!p) return;
+
+            if (!p.goldSwordsTimer || p.goldSwordsTimer <= 0) {
+                p.goldSwordsTimer = GOLD_SWORD_DURATION;
+            } else {
+                p.goldSwordsTimer += GOLD_SWORD_DURATION;
+            }
+
+            // Sync inventory to trigger syncCompanions
+            var inv = getPlayerInventory(p.userName);
+            syncCompanions(p, inv);
+
+            spawnText(p.x, p.y - 60, '✨ GOLD SWORDS! +10m', '#ffd700');
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        function activateDiamondSwords(userName) {
+            userName = (userName || '').replace(/^@@+/, '@');
+            var p = null;
+            if (pick && pick.userName === userName) p = pick;
+            if (!p) p = userPicks.find(function (u) { return u.userName === userName; });
+            if (!p) return;
+
+            if (!p.diamondSwordsTimer || p.diamondSwordsTimer <= 0) {
+                p.diamondSwordsTimer = GOLD_SWORD_DURATION;
+            } else {
+                p.diamondSwordsTimer += GOLD_SWORD_DURATION;
+            }
+
+            var inv = getPlayerInventory(p.userName);
+            syncCompanions(p, inv);
+
+            spawnText(p.x, p.y - 60, '💎 DIAMOND SWORDS! +10m', '#00ffff');
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        function activateBig(userName) {
+            userName = (userName || '').replace(/^@@+/, '@');
+            var cdKey = userName + '_big';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+            // Find the pick
+            var p = null;
+            if (pick && pick.userName === userName) p = pick;
+            if (!p) p = userPicks.find(function (u) { return u.userName === userName; });
+            if (!p) p = pick;
+            if (!p) return;
+            skillCooldowns[cdKey] = bigCooldown;
+            p.bigTimer = BIG_DURATION;
+            p._safetyTimer = 60; // 1 second of insta-destroy to open space
+
+            // Replicar para companheiros
+            if (p.companions) {
+                p.companions.forEach(function (c) {
+                    c.bigTimer = BIG_DURATION;
+                    c._safetyTimer = 60;
+                });
+            }
+
+            spawnText(p.x, p.y - 40, '🍄 BIG MODE!', '#44aaff');
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        function applyPhysics(p, r) {
+            if (!p) return false;
+            if (p._spinLock) return false; // skip physics during spin dash
+            // Big mode — increase collision radius
+            if (p.bigTimer > 0) r = Math.floor(r * BIG_SCALE);
+
+            // Fire Storm Ping-Pong Mode - Skill OR Combo 25
+            var hasPingPong = ((p.stormTimer || 0) > 0);
+
+            p.vy += GRAVITY;
+            // Splash effect when entering water (no drag/buoyancy — pickaxe passes through)
+            var _inWater = isInWater(p.x, p.y);
+            if (_inWater && !p._wasInWater) {
+                // Spawn splash particles
+                for (var si = 0; si < 2; si++) {
+                    parts.push({
+                        x: p.x + (Math.random() - 0.5) * 20,
+                        y: p.y,
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: -2 - Math.random() * 3,
+                        life: 1, dec: 0.04,
+                        c: 'rgba(100,180,255,0.7)',
+                        r: 2 + Math.random() * 3
+                    });
+                }
+            }
+            p._wasInWater = _inWater;
+
+            // Clamp velocidade para evitar tunneling
+            var maxV = TILE * 0.8;
+            if (hasPingPong) maxV = TILE * 1.5; // allow higher speed for ping pong
+            if (p.vx > maxV) p.vx = maxV; else if (p.vx < -maxV) p.vx = -maxV;
+            if (p.vy > maxV) p.vy = maxV; else if (p.vy < -maxV) p.vy = -maxV;
+            var speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            var pPickaxe = p.pickaxe || currentPickaxe;
+            var dmgBase = 0.35 * (pPickaxe ? pPickaxe.damage : 1);
+            var hitAny = false;
+
+            // Eixo X
+            p.x += p.vx;
+            var c0 = Math.floor((p.x - r) / TILE), c1 = Math.floor((p.x + r) / TILE);
+            var r0 = Math.floor((p.y - r) / TILE), r1 = Math.floor((p.y + r) / TILE);
+            for (var row = r0; row <= r1; row++) {
+                for (var col = c0; col <= c1; col++) {
+                    var cell = getCell(row, col);
+                    if (cell && cell.t !== E) {
+                        if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
+                            hitBlock(col, row, 100, p); // Safety destruction (no bounce)
+                        } else {
+                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
+                            if (p.bigTimer > 0) dmg *= 5; // Extra dmg in big mode
+                            hitBlock(col, row, dmg, p);
+                            var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
+                            if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
+                            else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
+                            hitAny = true; break;
+                        }
+                    }
+                }
+                if (hitAny) break;
+            }
+
+            // Eixo Y
+            p.y += p.vy;
+            c0 = Math.floor((p.x - r) / TILE); c1 = Math.floor((p.x + r) / TILE);
+            r0 = Math.floor((p.y - r) / TILE); r1 = Math.floor((p.y + r) / TILE);
+            var hitY = false;
+            for (var row = r0; row <= r1; row++) {
+                for (var col = c0; col <= c1; col++) {
+                    var cell = getCell(row, col);
+                    if (cell && cell.t !== E) {
+                        if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
+                            hitBlock(col, row, 100, p); // Safety destruction (no bounce)
+                        } else {
+                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
+                            if (p.bigTimer > 0) dmg *= 5; // Extra dmg in big mode
+                            hitBlock(col, row, dmg, p);
+                            var bMult = hasPingPong ? 1.0 : BOUNCE;
+                            if (p.vy > 0) {
+                                p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
+                                if (!hasPingPong) {
+                                    if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
+                                }
+                                // Force continuous bounce on Bedrock to prevent parking
+                                if (cell.t === BEDROCK) {
+                                    p.vy = Math.min(p.vy, -12);
+                                    p.vx += (Math.random() - 0.5) * 4;
+                                }
+                            } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
+                            hitAny = true; hitY = true; break;
+                        }
+                    }
+                }
+                if (hitY) break;
+            }
+
+            var ceiling = camY;
+            if (p.y - r < ceiling) { p.y = ceiling + r; p.vy = Math.abs(p.vy) * (hasPingPong ? 1.0 : BOUNCE); }
+
+            // ── Robust boundary system — prevent escaping the map ──
+            var wallL = r + 1;              // invisible left wall
+            var wallR = COLS * TILE - r - 1; // invisible right wall
+            var floor = camY + canvas.height + 600; // max fall distance below camera
+
+            // Left wall
+            if (p.x < wallL) { p.x = wallL; p.vx = Math.abs(p.vx) * BOUNCE; }
+            // Right wall
+            if (p.x > wallR) { p.x = wallR; p.vx = -Math.abs(p.vx) * BOUNCE; }
+            // Floor — teleport back if fell too far
+            if (p.y > floor) {
+                p.x = TILE * 2 + Math.random() * ((COLS - 4) * TILE);
+                p.y = camY + canvas.height * 0.3;
+                p.vx = (Math.random() - 0.5) * 4;
+                p.vy = -3;
+                p.stuck = false; p.stuckTimer = 0;
+            }
+            // NaN/Infinity safety
+            if (!isFinite(p.x) || !isFinite(p.y)) {
+                p.x = TILE * 2 + Math.random() * ((COLS - 4) * TILE);
+                p.y = camY + canvas.height * 0.3;
+                p.vx = 0; p.vy = 0;
+            }
+
+            // ── Boss Gate barrier: block passage until all bosses are dead ──
+            var pRow = Math.floor(p.y / TILE);
+            if (isMegaClearingRow(pRow)) {
+                var gMz = getMegaZone(pRow);
+                if (gMz >= 0 && megaClearedZones[gMz] && !megaClearedZones[gMz + '_gateOpen']) {
+                    var gateRow = getMegaStart(gMz) + MEGA_CLEARING_HEIGHT - 10;
+                    var gateY = gateRow * TILE;
+                    if (p.y + r > gateY && p.vy > 0) {
+                        p.y = gateY - r - 1;
+                        p.vy = -Math.abs(p.vy) * 0.6 - 2;
+                        p.vx += (Math.random() - 0.5) * 3;
+                        hitAny = true;
+                    }
+                }
+            }
+
+            p.ang += p.spin;
+            if (hitAny) p.spin = p.spin * 0.9 + (Math.random() - 0.5) * 0.12; else p.spin *= 0.995;
+            if (hitAny && p.combo > 0) { p.comboArmor = 120; }
+            if (p.comboTimer > 0) { p.comboTimer--; } else if (!p.comboArmor || p.comboArmor <= 0) { resetCombo(p); }
+            if (p.comboArmor > 0) p.comboArmor--;
+            return hitAny;
+        }
+
+        function updateCompanion(c, owner) {
+            var dx = owner.x - c.x;
+            var dy = (owner.y - 80) - c.y;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+
+            // Teleporte de segurança apenas se sumir da tela (muito longe)
+            if (dist > 1200) {
+                c.x = owner.x;
+                c.y = owner.y - 100;
+                c.vx = owner.vx;
+                c.vy = owner.vy;
+            }
+
+            // ZONA MORTA E DRIFT ORGÂNICO
+            // Se estiver a menos de 150px, o companheiro é 100% livre (gravidade pura)
+            if (dist > 150) {
+                var force = 0.0012; // Força mínima para não parecer elástico
+                var sway = Math.sin(Date.now() * 0.001 + c.companionIdx) * 0.15;
+                c.vx += (dx * force) + sway;
+                c.vy += (dy * force);
+            }
+
+            // Aplica física real (gravidade, colisões, mineração)
+            var miningRadius = 24;
+            if (c.isGoldSword || c.isDiamondSword) miningRadius = 40; // Maior alcance para espadas gigantes
+            applyPhysics(c, miningRadius);
+
+            // Sincroniza timers de skill
+            c.swordTimer = owner.swordTimer;
+            c.bigTimer = c.isGoldSword ? owner.goldSwordsTimer : (c.isDiamondSword ? owner.diamondSwordsTimer : owner.bigTimer);
+            c._safetyTimer = owner._safetyTimer;
+
+            // Rotação suave e natural
+            c.ang += (c.vx * 0.03) + (Math.sin(Date.now() * 0.002) * 0.01);
+        }
+
+        function updateUserPicks() {
+            var fallLimit = camY + canvas.height + 800;
+            var now = Date.now();
+            var INACTIVE_TIMEOUT = 300000; // 5 minutos (300.000 ms)
+
+            for (var i = userPicks.length - 1; i >= 0; i--) {
+                var up = userPicks[i];
+
+                // Otimização: Remoção de jogadores inativos
+                var lastAct = lastActivity[up.userName] || 0;
+                if (now - lastAct > INACTIVE_TIMEOUT) {
+                    userPicks.splice(i, 1);
+                    continue;
+                }
+
+                // Proteção anti-queda infinita
+                if (!isFinite(up.y) || !isFinite(up.x) || up.y > fallLimit) {
+                    up.x = canvas.width * 0.3 + Math.random() * canvas.width * 0.4;
+                    up.y = camY + canvas.height * 0.3;
+                    up.vx = (Math.random() - 0.5) * 4; up.vy = -3;
+                    up.stuck = false; up.stuckTimer = 0;
+                    spawnText(up.x, up.y - 20, '🛡️', '#00ff88');
+                    continue;
+                }
+                if (up.stuck) {
+                    up.stuckTimer++;
+                    if (up.stuckTimer > 200) { userPicks.splice(i, 1); continue; }
+                    continue;
+                }
+                applyPhysics(up, 28);
+                if (up.goldSwordsTimer > 0) {
+                    up.goldSwordsTimer -= 16.6;
+                    if (up.goldSwordsTimer <= 0) {
+                        up.goldSwordsTimer = 0;
+                        syncCompanions(up, getPlayerInventory(up.userName));
+                    }
+                }
+                if (up.diamondSwordsTimer > 0) {
+                    up.diamondSwordsTimer -= 16.6;
+                    if (up.diamondSwordsTimer <= 0) {
+                        up.diamondSwordsTimer = 0;
+                        syncCompanions(up, getPlayerInventory(up.userName));
+                    }
+                }
+                if (up.activeSwords && up.activeSwords.length > 0) {
+                    var changed = false;
+                    for (var si = up.activeSwords.length - 1; si >= 0; si--) {
+                        up.activeSwords[si].timer -= 16.6;
+                        if (up.activeSwords[si].timer <= 0) {
+                            up.activeSwords.splice(si, 1);
+                            changed = true;
+                        }
+                    }
+                    if (changed) syncCompanions(up, getPlayerInventory(up.userName));
+                }
+                if (up.companions) {
+                    for (var ci = 0; ci < up.companions.length; ci++) {
+                        updateCompanion(up.companions[ci], up);
+                    }
+                }
+                if (up.isStorm) {
+                    up.life--;
+                    if (up.life < 0) userPicks.splice(i, 1);
+                }
+            }
+        }
+
+        function updateExtraPicks() {
+            if (doublePickActive) {
+                doublePickTimer--;
+                if (doublePickTimer <= 0) {
+                    doublePickActive = false;
+                    // Only remove non-clone extra picks (old doublePick system)
+                    for (var di = extraPicks.length - 1; di >= 0; di--) {
+                        if (!extraPicks[di].cloneOwner) extraPicks.splice(di, 1);
+                    }
+                }
+                updateDoublePickHUD();
+            }
+            var fallLimitEx = camY + canvas.height + 800;
+            for (var i = extraPicks.length - 1; i >= 0; i--) {
+                var ep = extraPicks[i];
+                // Proteção anti-queda infinita
+                if (!isFinite(ep.y) || !isFinite(ep.x) || ep.y > fallLimitEx) {
+                    if (ep.cloneOwner) {
+                        // Teleporta clone de volta ao centro da tela
+                        ep.x = canvas.width * 0.3 + Math.random() * canvas.width * 0.4;
+                        ep.y = camY + canvas.height * 0.3;
+                        ep.vx = (Math.random() - 0.5) * 3; ep.vy = -2;
+                    } else {
+                        extraPicks.splice(i, 1);
+                    }
+                    continue;
+                }
+                // Clone timer countdown
+                if (ep.cloneOwner) {
+                    ep.cloneTimer--;
+                    if (ep.cloneTimer <= 0) {
+                        extraPicks.splice(i, 1);
+                        continue;
+                    }
+                }
+                applyPhysics(ep, 28);
+            }
+        }
+
+        function spawnItem(x, y, blockType, source) {
+            var blockTypeStr = String(blockType);
+            var isSword = blockTypeStr.indexOf('sword_') === 0;
+            if (!ITEM_DEFS[blockType] && !isSword) return;
+            // If source is a clone, redirect item to the owner's main pick
+            var target = source || pick;
+            if (target.cloneOwner) {
+                var ownerPick = (ownerName && target.cloneOwner === ownerName) ? pick : userPicks.find(function (u) { return u.userName === target.cloneOwner; });
+                if (ownerPick) target = ownerPick;
+            }
+            items.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 10,
+                vy: -4 - Math.random() * 6,
+                t: blockType, wait: 25,
+                ang: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 0.2,
+                owner: target,
+                isSword: isSword
+            });
+        }
+
+        function getAllActivePicks() {
+            var base = [pick].concat(userPicks, extraPicks);
+            var all = [];
+            for (var i = 0; i < base.length; i++) {
+                var p = base[i];
+                if (!p || p.stuck) continue;
+                all.push(p);
+                if (p.companions) {
+                    for (var j = 0; j < p.companions.length; j++) {
+                        all.push(p.companions[j]);
+                    }
+                }
+            }
+            return all;
+        }
+
+        function updateItems() {
+            for (var i = items.length - 1; i >= 0; i--) {
+                var it = items[i];
+                if (!it || !isFinite(it.x) || !isFinite(it.y) || Math.abs(it.y - camY) > 5000) { items.splice(i, 1); continue; }
+                // Grotto items: stay still until a player gets close
+                if (it.isGrotta && it.wait > 100) {
+                    it.ang += it.spin;
+                    // Check proximity to any pick (including companions)
+                    var allP = getAllActivePicks();
+                    for (var pi = 0; pi < allP.length; pi++) {
+                        var pp = allP[pi];
+                        if (!pp) continue;
+                        var gdx = pp.x - it.x, gdy = pp.y - it.y;
+                        if (Math.sqrt(gdx * gdx + gdy * gdy) < TILE * 3) {
+                            it.owner = pp;
+                            it.wait = 5; // instant pickup
+                            it.vy = -2 - Math.random() * 1.5;
+                            it.vx = (Math.random() - 0.5) * 3;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                if (it.wait > 0) {
+                    it.wait--; it.vx *= 0.96; it.vy += 0.3;
+                    // Items float in water
+                    if (isInWater(it.x, it.y)) { it.vx *= 0.9; it.vy *= 0.8; it.vy -= 0.35; }
+                    it.x += it.vx; it.y += it.vy; continue;
+                }
+                var target = it.owner || pick;
+                var dx = target.x - it.x, dy = target.y - it.y;
+                var dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 45) {
+                    var target = it.owner || pick;
+                    if (it.isSword) {
+                        var type = it.t.split('_')[1];
+                        var swordDef = SWORD_LOOT_TABLE.find(function (s) { return s.type === type; });
+                        if (target.activeSwords === undefined) target.activeSwords = [];
+                        target.activeSwords.push({
+                            type: type,
+                            timer: 30 * 1000,
+                            id: Date.now() + Math.random(),
+                            damage: swordDef ? swordDef.damage : 1.5,
+                            color: swordDef ? swordDef.color : '#fff'
+                        });
+                        syncCompanions(target, getPlayerInventory(target.userName));
+                        spawnText(it.x, it.y, '⚔️ ' + type.toUpperCase() + ' SWORD!', swordDef ? swordDef.color : '#fff');
+                    } else {
+                        var pts = (BDEF[it.t] ? BDEF[it.t].pts : 0) || 0;
+                        var isOwnerTarget = (target === pick);
+                        if (isOwnerTarget && pick.active) {
+                            score += pts;
+                            if (ownerName && persistentScores[ownerName]) {
+                                persistentScores[ownerName].score += pts;
+                            }
+                        }
+                        spawnText(it.x, it.y, '+' + pts, (BDEF[it.t] ? BDEF[it.t].glow : '#fff'));
+                        var tName = target.userName;
+                        if (tName) {
+                            if (!persistentScores[tName]) persistentScores[tName] = { score: 0, avatar: target.userAvatarUrl || '' };
+                            persistentScores[tName].score += pts;
+                            if (target !== pick) target.score = (target.score || 0) + pts;
+                            addCycleScore(tName, pts, 'item');
+                        }
+                    }
+                    if (_audioStarted) sfxSkillActivate();
+                    items.splice(i, 1); continue;
+                }
+                var force = 1.2;
+                it.vx = it.vx * 0.92 + (dx / dist) * force;
+                it.vy = it.vy * 0.92 + (dy / dist) * force;
+                it.x += it.vx; it.y += it.vy;
+                it.ang += it.spin;
+
+                // Sword Drop rendering (inside update loop for simplicity, or separate draw function)
+                if (it.isSword) {
+                    var sType = it.t.split('_')[1];
+                    var sImg = SWORD_ASSETS[sType];
+                    if (sImg && sImg.complete) {
+                        ctx.save();
+                        ctx.translate(it.x, it.y - camY);
+                        ctx.rotate(it.ang);
+                        ctx.drawImage(sImg, -16, -16, 32, 32);
+                        ctx.restore();
+                    }
+                }
+            }
+        }
+
+        function spawnParts(x, y, color, n) {
+            if (parts.length > MAX_PARTS) return;
+            var count = Math.min(n, 1); // cap particles for performance
+            for (var i = 0; i < count; i++) {
+                var a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 4;
+                parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, dec: 0.025 + Math.random() * 0.03, r: 2 + Math.random() * 4, c: color });
+            }
+        }
+
+        function getMotherPickaxe(p) {
+            if (!p) return pick;
+            var safety = 0;
+            var curr = p;
+            while (curr && curr.owner && safety < 3) {
+                curr = curr.owner;
+                safety++;
+            }
+            if (curr && curr.cloneOwner) {
+                var name = curr.cloneOwner;
+                var mother = (ownerName && name === ownerName) ? pick : userPicks.find(function (u) { return u.userName === name; });
+                if (mother) return mother;
+            }
+            return curr || pick;
+        }
+
+        function spawnDebris(bx, by, blockType, source) {
+            if (debris.length > MAX_DEBRIS) return;
+            var target = getMotherPickaxe(source);
+            var n = 1 + Math.floor(Math.random() * 2);
+            for (var i = 0; i < n; i++) {
+                var ox = (Math.random() - 0.5) * TILE * 0.6, oy = (Math.random() - 0.5) * TILE * 0.6;
+                var dx = (target ? target.x : bx) - (bx + ox), dy = (target ? target.y : by) - (by + oy);
+                var dist = Math.sqrt(dx * dx + dy * dy) || 1, spd = 1.5 + Math.random() * 2.5;
+                debris.push({
+                    x: bx + ox, y: by + oy,
+                    vx: (dx / dist) * spd + (Math.random() - 0.5) * 2,
+                    vy: (dy / dist) * spd + (Math.random() - 0.5) * 2,
+                    t: blockType, size: 10 + Math.random() * 8,
+                    life: 1, age: 0,
+                    followFrames: (target && target !== pick) ? 60 : (20 + Math.floor(Math.random() * 30)),
+                    ang: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 0.2,
+                    owner: target
+                });
+            }
+        }
+
+        // Only show important announcements — skip all small/medium texts for performance
+        var _importantTexts = /JOINED|MEGA|SUPER BURST|TORMENTA|THOR|NUKE|CLONE|BLACK HOLE|PASSAGE|ZOMBIE|COMBO|BOSS|ARMY|SHOCK|SPIN|PING|ACTIVATED|NICE|GREAT|AMAZING|FANTASTIC|LEGENDARY|CHAMPION|HERO|LEGEND|BONUS|BIG MODE|\+500/i;
+        function spawnText(x, y, txt, color) {
+            if (!_importantTexts.test(txt)) return;
+            if (texts.length > MAX_TEXTS) return;
+            texts.push({ x: x, y: y, txt: txt, c: color, life: 1, vy: -1.4 });
+        }
+
+        // ── Combo System ──────────────────────────────────────────────────────────
+        var COMBO_LABELS = [
+            '', '', '', '', '',
+            '⭐ NICE x5!',
+            '', '', '', '',
+            '🌟 GREAT x10!',
+            '', '', '', '',
+            '✨ AMAZING x15!',
+            '', '', '', '',
+            '🎉 FANTASTIC x20!',
+            '', '', '', '',
+            '🏆 LEGENDARY x25!'
+        ];
+        var COMBO_COLORS = {
+            5: '#ffaa00',
+            10: '#ff44ff',
+            15: '#44ddff',
+            20: '#ffdd00',
+            25: '#00ffcc'
+        };
+
+        function getComboLabel(count) {
+            if (count >= 25 && count % 5 === 0) return '🏆 LEGENDARY x' + count + '!';
+            if (count < COMBO_LABELS.length) return COMBO_LABELS[count];
+            if (count % 5 === 0) return '🏆 COMBO x' + count + '!';
+            return '';
+        }
+        function getComboColor(count) {
+            if (count >= 25) return '#00ffcc';
+            var tier = Math.floor(count / 5) * 5;
+            return COMBO_COLORS[tier] || '#ffaa00';
+        }
+        function getComboBonus(count) {
+            var tier = Math.floor(count / 5);
+            return tier * tier * 50;
+        }
+        function registerComboHit(p, enemyX, enemyY) {
+            if (!p) return;
+            if (p.userName) addCycleScore(p.userName, 0, 'kill');
+            p.combo = (p.combo || 0) + 1;
+            p.comboTimer = 300; // 5 seconds to keep combo alive
+            var c = p.combo;
+            if (c >= TORMENTA_COMBO_THRESHOLD) {
+                activateTormenta(p);
+                return;
+            }
+            if (c % 5 === 0 && c >= 5) {
+                var label = getComboLabel(c);
+                var color = getComboColor(c);
+                var bonus = getComboBonus(c);
+                if (p !== pick || pick.active) score += bonus;
+                if (p.userName) {
+                    if (!persistentScores[p.userName]) persistentScores[p.userName] = { score: 0, avatar: p.userAvatarUrl || '' };
+                    if (p !== pick || pick.active) persistentScores[p.userName].score += bonus;
+                }
+                showComboPopup(label, color, p.userName || '', p.userAvatarUrl || '');
+                sfxCombo(c);
+            }
+        }
+        function resetCombo(p) {
+            if (p && p.combo > 0) p.combo = 0;
+        }
+        function showComboPopup(label, color, userName, avatarUrl) {
+            var overlay = document.getElementById('announceOverlay');
+            var card = document.createElement('div');
+            card.className = 'announce-card';
+            var avatarHtml = '';
+            if (avatarUrl) {
+                avatarHtml = '<img class="announce-avatar" src="' + avatarUrl + '" style="border-color:' + color + ';" />';
+            }
+            card.innerHTML =
+                avatarHtml +
+                '<div class="announce-title" style="color:' + color + ';text-shadow:0 0 15px ' + color + ',0 1px 4px #000;font-size:clamp(16px,6vw,28px);">' + label + '</div>' +
+                (userName ? '<div class="announce-name" style="color:' + color + ';opacity:0.7;">' + userName + '</div>' : '');
+            overlay.appendChild(card);
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 400);
+            }, 1000);
+        }
+        function sfxCombo(count) {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            var tier = Math.min(Math.floor(count / 5), 5);
+            var baseFreq = 440 + tier * 110;
+            for (var i = 0; i <= tier; i++) {
+                playNote(baseFreq * Math.pow(1.25, i), 'sine', 0.12 - i * 0.01, 0.01, 0.15, t + i * 0.06);
+            }
+            playNote(baseFreq * 0.5, 'triangle', 0.15, 0.005, 0.1, t);
+        }
+
+        // ── Tormenta Powerup ────────────────────────────────────────────────────
+        function activateTormenta(p) {
+            // Activate fire aura that kills enemies in radius
+            tormentaActive = true;
+            tormentaTimer = TORMENTA_DURATION;
+            tormentaPick = p;
+            p.combo = 0;
+            // Also activate ping-pong bounce mode
+            p.stormTimer = TORMENTA_DURATION;
+            p.vx = (Math.random() - 0.5) * 25;
+            p.vy = -18;
+            p.stuck = false;
+            if (p === pick) {
+                stormActive = true;
+                stormTimer = TORMENTA_DURATION;
+            }
+            showTormentaPopup();
+            sfxTormenta();
+        }
+        function showTormentaPopup() {
+            var overlay = document.getElementById('announceOverlay');
+            var card = document.createElement('div');
+            card.className = 'announce-card';
+            card.innerHTML =
+                '<div style="font-size:20px;">🌈</div>' +
+                '<div class="announce-title" style="color:#ff44ff;text-shadow:0 0 15px #ff44ff,0 0 30px #ff88ff,0 1px 4px #000;font-size:clamp(18px,8vw,32px);">SUPER BURST!</div>' +
+                '<div class="announce-pts" style="color:#ffcc00;text-shadow:0 0 8px #ffaa00,0 1px 3px #000;">UNSTOPPABLE!</div>';
+            overlay.appendChild(card);
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 600);
+            }, 2000);
+        }
+        function showDepthWarning(meters) {
+            var warnings = [
+                { text: '⭐ 200m... GREAT START!', color: '#ffaa00' },
+                { text: '🌟 400m... KEEP GOING!', color: '#ffdd44' },
+                { text: '🎯 600m... ON FIRE!', color: '#ff8844' },
+                { text: '🚀 800m... UNSTOPPABLE!', color: '#44ddff' },
+                { text: '🏆 1000m... CHAMPION!', color: '#ffdd00' },
+                { text: '💎 1200m... DIAMOND HUNTER!', color: '#44ccff' },
+                { text: '🌈 1400m... RAINBOW DEPTHS!', color: '#ff44ff' },
+                { text: '⚡ 1600m... LIGHTNING FAST!', color: '#00ffcc' },
+                { text: '🎪 1800m... PARTY TIME!', color: '#ff88ff' },
+                { text: '🎉 2000m... INCREDIBLE!', color: '#ffaa44' },
+                { text: '🧲 2200m... MAGNETIC!', color: '#44aaff' },
+                { text: '🎸 2400m... ROCK STAR!', color: '#ff4488' },
+                { text: '🌊 2600m... DEEP DIVER!', color: '#4488ff' },
+                { text: '🔮 2800m... MYSTIC MINER!', color: '#bb44ff' },
+                { text: '👑 3000m... ROYALTY!', color: '#ffdd00' },
+                { text: '🎯 3200m... SHARPSHOOTER!', color: '#00ffaa' },
+                { text: '❄️ 3400m... ICE BREAKER!', color: '#88ddff' },
+                { text: '🌸 3600m... BLOSSOM!', color: '#ff88aa' },
+                { text: '🎵 3800m... RHYTHM MASTER!', color: '#ffaa00' },
+                { text: '☄️ 4000m... METEOR!', color: '#ff6644' },
+                { text: '🌀 4200m... WHIRLWIND!', color: '#44ffaa' },
+                { text: '🎭 4400m... SHOWTIME!', color: '#ff44dd' },
+                { text: '🌋 4600m... VOLCANIC!', color: '#ff5500' },
+                { text: '🕹️ 4800m... PRO GAMER!', color: '#44ff88' },
+                { text: '🏅 5000m... HALFWAY HERO!', color: '#ffcc00' },
+                { text: '🎆 5200m... FIREWORKS!', color: '#ff88cc' },
+                { text: '🌟 5400m... SUPERSTAR!', color: '#ffdd44' },
+                { text: '🐬 5600m... DEEP SEA!', color: '#44aaff' },
+                { text: '💫 5800m... COSMIC!', color: '#cc88ff' },
+                { text: '🌍 6000m... WORLD RECORD!', color: '#44ff44' },
+                { text: '⚡ 6200m... ELECTRIFYING!', color: '#00ddff' },
+                { text: '🎪 6400m... SPECTACULAR!', color: '#ffaa88' },
+                { text: '🔮 6600m... ENCHANTED!', color: '#cc44ff' },
+                { text: '🌺 6800m... TROPICAL!', color: '#ff6688' },
+                { text: '🏆 7000m... LEGEND!', color: '#ffdd00' },
+                { text: '🎯 7200m... BULLSEYE!', color: '#44ffcc' },
+                { text: '❄️ 7400m... FROZEN GLORY!', color: '#66ccff' },
+                { text: '🌈 7600m... PRISMATIC!', color: '#ff88ff' },
+                { text: '🎸 7800m... ENCORE!', color: '#ff4488' },
+                { text: '🔥 8000m... BLAZING!', color: '#ff8844' },
+                { text: '🌀 8200m... VORTEX!', color: '#22ffcc' },
+                { text: '👑 8400m... EMPEROR!', color: '#ffcc44' },
+                { text: '🐉 8600m... DRAGON SLAYER!', color: '#ff4488' },
+                { text: '☄️ 8800m... SUPERNOVA!', color: '#ffcc00' },
+                { text: '🌌 9000m... GALACTIC!', color: '#8888ff' },
+                { text: '💎 9200m... DIAMOND SOUL!', color: '#44ddff' },
+                { text: '🎵 9400m... SYMPHONY!', color: '#aabbff' },
+                { text: '🌸 9600m... ETERNAL BLOOM!', color: '#ff88aa' },
+                { text: '🏅 9800m... ALMOST THERE!', color: '#ffdd44' },
+                { text: '🏆 10000m... YOU ARE THE GREATEST!', color: '#ffffff' }
+            ];
+            var idx = Math.min(Math.floor(meters / 200) - 1, warnings.length - 1);
+            var w = warnings[idx] || { text: '🌟 ' + meters + 'm... BEYOND AMAZING!', color: '#ffdd44' };
+            var overlay = document.getElementById('announceOverlay');
+            var card = document.createElement('div');
+            card.className = 'announce-card';
+            card.innerHTML =
+                '<div class="announce-title" style="color:' + w.color + ';text-shadow:0 0 15px ' + w.color + ',0 1px 4px #000;font-size:clamp(16px,7vw,28px);">' + w.text + '</div>' +
+                '<div class="announce-pts" style="color:#ccc;text-shadow:0 1px 3px #000;">— ' + meters + ' meters deep —</div>';
+            overlay.appendChild(card);
+            shakeAmt = Math.max(shakeAmt, 12);
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+            }, 2500);
+        }
+
+        function sfxEvilLaugh() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            // Happy fanfare — ascending cheerful notes
+            var notes = [330, 392, 440, 523, 587, 659, 784];
+            for (var i = 0; i < notes.length; i++) {
+                playNote(notes[i], 'sine', 0.1, 0.01, 0.15, t + i * 0.08);
+                playNote(notes[i] * 1.5, 'triangle', 0.04, 0.01, 0.1, t + i * 0.08 + 0.02);
+            }
+        }
+
+        function sfxTormenta() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            var sub = ac.createOscillator(), subG = ac.createGain();
+            sub.type = 'sine'; sub.frequency.setValueAtTime(40, t);
+            sub.frequency.exponentialRampToValueAtTime(20, t + 1.5);
+            subG.gain.setValueAtTime(0.0001, t);
+            subG.gain.linearRampToValueAtTime(0.6, t + 0.05);
+            subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.6);
+            for (var i = 0; i < 6; i++) {
+                playNote(220 * Math.pow(1.5, i), 'sawtooth', 0.08, 0.01, 0.2, t + i * 0.08);
+            }
+            var nLen = Math.ceil(ac.sampleRate * 0.8);
+            var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / nLen, 1.2);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.4, t);
+            ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
+        }
+        function updateTormenta() {
+            if (!tormentaActive) return;
+            tormentaTimer--;
+            if (tormentaTimer <= 0) { tormentaActive = false; tormentaPick = null; return; }
+            var p = tormentaPick;
+            if (!p) { tormentaActive = false; return; }
+            if (tormentaTimer % 2 === 0) {
+                for (var fi = 0; fi < 3; fi++) {
+                    var angle = Math.random() * Math.PI * 2;
+                    var dist = Math.random() * 30;
+                    parts.push({
+                        x: p.x + Math.cos(angle) * dist,
+                        y: p.y + Math.sin(angle) * dist,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: -2 - Math.random() * 3,
+                        life: 1, dec: 0.04,
+                        c: Math.random() < 0.5 ? '#ff4400' : (Math.random() < 0.5 ? '#ff8800' : '#ffcc00'),
+                        r: 3 + Math.random() * 4
+                    });
+                }
+            }
+            if (tormentaTimer % 6 === 0) {
+                var killR = TORMENTA_RADIUS;
+                for (var bi = bats.length - 1; bi >= 0; bi--) {
+                    var b = bats[bi];
+                    if (b.state === 'dead' || b.isQueen || b.isBlaze || b.isGhast) continue;
+                    var dx = p.x - b.x, dy = p.y - b.y;
+                    if (dx * dx + dy * dy < killR * killR) {
+                        b.hp = 0; b.state = 'dead'; b.anim = 0; b.deadTimer = 0;
+                        spawnText(b.x, b.y - 20, '+' + b.pts, '#ff8800');
+                        sfxBatDeath();
+                        for (var k = 0; k < 5; k++) {
+                            parts.push({ x: b.x, y: b.y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, dec: 0.06, c: '#ff4400', r: 4 + Math.random() * 3 });
+                        }
+                    }
+                }
+                for (var zi = zombies.length - 1; zi >= 0; zi--) {
+                    var z = zombies[zi];
+                    if (z.state === 'dead' || z.isZBoss) continue;
+                    var zdx = p.x - z.x, zdy = p.y - z.y;
+                    if (zdx * zdx + zdy * zdy < killR * killR) {
+                        z.hp = 0; z.state = 'dead'; z.animTimer = 0; z.deadTimer = 0;
+                        spawnText(z.x, z.y - 20, '+' + z.pts, '#ff8800');
+                        sfxZombieDeath();
+                        for (var k2 = 0; k2 < 5; k2++) {
+                            parts.push({ x: z.x, y: z.y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, dec: 0.06, c: '#ff4400', r: 4 + Math.random() * 3 });
+                        }
+                    }
+                }
+                // Kill spiders in radius
+                for (var spi = spiders.length - 1; spi >= 0; spi--) {
+                    var sp = spiders[spi];
+                    if (sp.state === 'dead' || sp.isMother) continue;
+                    var spdx = p.x - sp.x, spdy = p.y - sp.y;
+                    if (spdx * spdx + spdy * spdy < killR * killR) {
+                        sp.hp = 0; sp.state = 'dead'; sp.animTimer = 0; sp.deadTimer = 0;
+                        if (p !== pick || pick.active) score += sp.pts;
+                        if (p.userName) {
+                            if (!persistentScores[p.userName]) persistentScores[p.userName] = { score: 0, avatar: p.userAvatarUrl || '' };
+                            if (p !== pick || pick.active) persistentScores[p.userName].score += sp.pts;
+                        }
+                        sfxZombieDeath();
+                    }
+                }
+            }
+        }
+        function drawTormentaAura(p) {
+            if (!tormentaActive || !p) return;
+            ctx.save();
+            var pulse = 0.6 + Math.sin(tormentaTimer * 0.15) * 0.2;
+            ctx.globalAlpha = 0.15 * pulse;
+            ctx.fillStyle = '#ff4400';
+            ctx.beginPath(); ctx.arc(p.x, p.y, TORMENTA_RADIUS * pulse, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#ff6600';
+            ctx.beginPath(); ctx.arc(p.x, p.y, 35, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+        }
+
+        // ── Falling Blocks System ──
+        var fallingBlocks = [];
+        var MAX_FALLING_BLOCKS = 30;
+
+        function _isAnchored(r, c) {
+            // Edge columns are anchored (invisible wall)
+            if (c < 0 || c >= COLS) return true;
+            var cell = getCell(r, c);
+            if (!cell || cell.t === E) return false;
+            if (cell.t === BEDROCK) return true;
+            // Has solid ground below = anchored
+            var below = getCell(r + 1, c);
+            if (below && below.t !== E) return true;
+            return false;
+        }
+
+        function checkFallingBlocks(col, row, source) {
+            // Flood-fill from destroyed block: find all connected non-anchored blocks
+            // Scan 10x10 area for candidate blocks
+            var R = 5;
+            var candidates = [];
+            var candSet = {};
+            for (var dr = -R; dr <= R; dr++) {
+                for (var dc = -R; dc <= R; dc++) {
+                    var nr = row + dr, nc = col + dc;
+                    if (nr === row && nc === col) continue;
+                    var cell = getCell(nr, nc);
+                    if (!cell || cell.t === E || cell.t === BEDROCK) continue;
+                    var key = nr + ',' + nc;
+                    candidates.push({ r: nr, c: nc });
+                    candSet[key] = true;
+                }
+            }
+            if (!candidates.length) return;
+
+            // For each candidate, BFS through connected blocks to see if group reaches an anchor
+            var visited = {};
+            var groups = []; // groups of blocks that share connectivity
+
+            for (var i = 0; i < candidates.length; i++) {
+                var ck = candidates[i].r + ',' + candidates[i].c;
+                if (visited[ck]) continue;
+
+                // BFS from this block
+                var queue = [{ r: candidates[i].r, c: candidates[i].c }];
+                var group = [];
+                var anchored = false;
+                var head = 0;
+
+                while (head < queue.length) {
+                    var cur = queue[head++];
+                    var curKey = cur.r + ',' + cur.c;
+                    if (visited[curKey]) continue;
+                    visited[curKey] = true;
+
+                    var cc = getCell(cur.r, cur.c);
+                    if (!cc || cc.t === E) continue;
+                    if (cc.t === BEDROCK || cur.c < 0 || cur.c >= COLS) { anchored = true; continue; }
+
+                    // Check if this block is anchored (has solid ground below that's outside our candidate set)
+                    var belowCell = getCell(cur.r + 1, cur.c);
+                    var belowKey = (cur.r + 1) + ',' + cur.c;
+                    if (belowCell && belowCell.t !== E && !candSet[belowKey]) {
+                        anchored = true; continue;
+                    }
+                    // Also anchored if below is bedrock
+                    if (belowCell && belowCell.t === BEDROCK) { anchored = true; continue; }
+
+                    group.push({ r: cur.r, c: cur.c, t: cc.t });
+
+                    // Expand to 4 neighbors (up/down/left/right)
+                    var dirs = [{ r: -1, c: 0 }, { r: 1, c: 0 }, { r: 0, c: -1 }, { r: 0, c: 1 }];
+                    for (var d = 0; d < dirs.length; d++) {
+                        var er = cur.r + dirs[d].r, ec = cur.c + dirs[d].c;
+                        var eKey = er + ',' + ec;
+                        if (visited[eKey]) continue;
+                        var eCell = getCell(er, ec);
+                        if (eCell && eCell.t !== E) {
+                            queue.push({ r: er, c: ec });
+                        }
+                    }
+                }
+
+                if (!anchored && group.length > 0) {
+                    groups.push(group);
+                }
+            }
+
+            // Convert unanchored groups to falling blocks
+            for (var g = 0; g < groups.length; g++) {
+                var grp = groups[g];
+                for (var j = 0; j < grp.length; j++) {
+                    var b = grp[j];
+                    var fc = getCell(b.r, b.c);
+                    if (!fc || fc.t === E) continue;
+                    if (fallingBlocks.length >= MAX_FALLING_BLOCKS) continue;
+                    var bt = fc.t;
+                    fallingBlocks.push({
+                        x: b.c * TILE + TILE / 2,
+                        y: b.r * TILE + TILE / 2,
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: -1,
+                        t: bt,
+                        size: TILE,
+                        ang: 0,
+                        spin: (Math.random() - 0.5) * 0.1,
+                        hp: BDEF[bt] ? BDEF[bt].hp : 1,
+                        bounces: 0,
+                        owner: source || pick
+                    });
+                    fc.t = E; fc.hp = 0; fc.cr = 0;
+                }
+            }
+        }
+
+        function updateFallingBlocks() {
+            for (var i = fallingBlocks.length - 1; i >= 0; i--) {
+                var fb = fallingBlocks[i];
+
+                // Culling anti-vazamento
+                if (!isFinite(fb.y) || fb.y > camY + canvas.height + 1500) {
+                    fallingBlocks.splice(i, 1);
+                    continue;
+                }
+
+                fb.vy += 0.25; // gravity
+                fb.x += fb.vx;
+                fb.y += fb.vy;
+                fb.ang += fb.spin;
+                fb.vx *= 0.99;
+                // Shrink slightly as it accumulates bounces
+                fb.size = TILE * (1 - fb.bounces * 0.08);
+
+                // Trail particles while falling
+                if (Math.random() < 0.15 && parts.length < MAX_PARTS) {
+                    var tc = BDEF[fb.t] ? BDEF[fb.t].glow : '#aaa';
+                    parts.push({ x: fb.x + (Math.random() - 0.5) * fb.size * 0.4, y: fb.y + (Math.random() - 0.5) * fb.size * 0.4, vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5, life: 0.6, dec: 0.04, r: 2 + Math.random() * 3, c: tc });
+                }
+
+                // Ground collision
+                var fRow = Math.floor((fb.y + fb.size * 0.4) / TILE);
+                var fCol = Math.floor(fb.x / TILE);
+                var ground = getCell(fRow, fCol);
+                if (ground && ground.t !== E) {
+                    fb.y = fRow * TILE - fb.size * 0.4;
+                    fb.bounces++;
+                    if (fb.bounces >= 3 || Math.abs(fb.vy) < 1) {
+                        // ── Enhanced destruction ──
+                        var def = BDEF[fb.t];
+                        var pts = def ? def.pts || 0 : 0;
+                        var glow = def ? def.glow : '#888';
+
+                        // Burst of particles (ring explosion)
+                        var pCount = 4;
+                        var part = { x: fb.x, y: fb.y, vx: (Math.random() - 0.5) * pCount, vy: (Math.random() - 0.5) * pCount - 2, life: 0.6, dec: 0.04, r: 4 + Math.random() * 4, c: '#aabbcc' };
+                        for (var sw = 0; sw < 6; sw++) {
+                            var sAng = (sw / 6) * Math.PI * 2;
+                            var sSpd = 4 + Math.random() * 2;
+                            if (parts.length < MAX_PARTS) {
+                                parts.push({ x: fb.x, y: fb.y, vx: Math.cos(sAng) * sSpd, vy: Math.sin(sAng) * sSpd, life: 0.8, dec: 0.04, r: 1.5 + Math.random() * 2, c: '#fff' });
+                            }
+                        }
+
+                        // Sound
+                        sfxBreak(fb.t);
+
+                        // ── Score & items attributed to owner ──
+                        var owner = fb.owner || pick;
+                        if (pick.active || owner !== pick) score += pts;
+                        if (owner && owner.userName) {
+                            var player = userPicks.find(function (u) { return u.userName === owner.userName; });
+                            if (player) player.score = (player.score || 0) + pts;
+                            if (!persistentScores[owner.userName]) persistentScores[owner.userName] = { score: 0, avatar: owner.userAvatarUrl || '' };
+                            if (pick.active || owner !== pick) persistentScores[owner.userName].score += pts;
+                            addCycleScore(owner.userName, pts, ITEM_DEFS[fb.t] ? 'item' : 'block');
+                        }
+
+                        // Spawn collectible item if block type has one
+                        if (ITEM_DEFS[fb.t]) {
+                            spawnItem(fb.x, fb.y, fb.t, owner);
+                        }
+
+                        fallingBlocks.splice(i, 1);
+                        continue;
+                    }
+                    fb.vy = -Math.abs(fb.vy) * 0.5; // bounce
+                    fb.vx += (Math.random() - 0.5) * 2;
+                    fb.spin += (Math.random() - 0.5) * 0.15;
+                    // Small dust puff on bounce
+                    if (parts.length < MAX_PARTS) {
+                        parts.push({ x: fb.x, y: fb.y + fb.size * 0.3, vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 2, life: 0.5, dec: 0.05, r: 2 + Math.random() * 3, c: '#c8b89a' });
+                    }
+                }
+
+                // Wall collision
+                var wCol = Math.floor((fb.x + (fb.vx > 0 ? fb.size * 0.4 : -fb.size * 0.4)) / TILE);
+                var wall = getCell(Math.floor(fb.y / TILE), wCol);
+                if (wall && wall.t !== E) {
+                    fb.vx = -fb.vx * 0.5;
+                    fb.spin += (Math.random() - 0.5) * 0.1;
+                }
+
+                // Remove if off screen
+                if (fb.y > camY + canvas.height + 400) {
+                    fallingBlocks.splice(i, 1);
+                }
+            }
+        }
+
+        function drawFallingBlocks() {
+            for (var i = 0; i < fallingBlocks.length; i++) {
+                var fb = fallingBlocks[i];
+                if (fb.y < camY - TILE * 2 || fb.y > camY + canvas.height + TILE * 2) continue;
+                var tex = BTEX[fb.t];
+                var half = fb.size / 2;
+                ctx.save();
+                ctx.translate(fb.x, fb.y);
+                ctx.rotate(fb.ang);
+                // Drop shadow
+                ctx.globalAlpha = 0.25;
+                ctx.fillStyle = '#000';
+                ctx.fillRect(-half + 3, -half + 3, fb.size, fb.size);
+                ctx.globalAlpha = 1;
+                // Block texture
+                if (tex && tex.complete && tex.naturalWidth > 0) {
+                    ctx.drawImage(tex, -half, -half, fb.size, fb.size);
+                } else {
+                    ctx.fillStyle = BDEF[fb.t] ? BDEF[fb.t].color : '#888';
+                    ctx.fillRect(-half, -half, fb.size, fb.size);
+                }
+                // Crack overlay based on bounces
+                if (fb.bounces > 0) {
+                    var crackStage = Math.min(fb.bounces, 2);
+                    var crackTex = DESTROY_TEX[Math.min(crackStage * 3, DESTROY_TEX.length - 1)];
+                    if (crackTex && crackTex.complete && crackTex.naturalWidth > 0) {
+                        ctx.globalAlpha = 0.5 + crackStage * 0.2;
+                        ctx.drawImage(crackTex, -half, -half, fb.size, fb.size);
+                        ctx.globalAlpha = 1;
+                    }
+                }
+                // Glow outline when about to break
+                if (fb.bounces >= 2) {
+                    ctx.strokeStyle = BDEF[fb.t] ? BDEF[fb.t].glow : '#ff0';
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.01) * 0.3;
+                    ctx.strokeRect(-half, -half, fb.size, fb.size);
+                    ctx.globalAlpha = 1;
+                }
+                ctx.restore();
+            }
+        }
+
+        // ── Bonus Ball System ─────────────────────────────────────────────────────
+        var bonusBalls = [];
+        var collectBoxes = [];
+        var BONUS_BALL_COLORS = ['#ff4466', '#44bbff', '#66ff66', '#ffaa22', '#dd44ff', '#ffff44', '#44ffdd', '#ff88cc'];
+        var BONUS_BALL_PTS = 50;
+        var BONUS_BALLS_PER_BOX = 8;
+        var COLLECT_BOX_WIDTH = 4; // in tiles
+
+        function _findSafeBoxRow(startRow) {
+            for (var r = startRow; r < startRow + 80; r++) {
+                if (isMegaClearingRow(r)) continue;
+                if (isClearingCell(r, Math.floor(COLS / 2))) continue;
+                if (isMiniClearingCell(r, Math.floor(COLS / 2))) continue;
+                var ok = true;
+                for (var dr = 0; dr < 3; dr++) {
+                    if (isMegaClearingRow(r + dr) || isClearingCell(r + dr, Math.floor(COLS / 2))) { ok = false; break; }
+                }
+                if (ok) {
+                    // Avoid overlapping with existing boxes
+                    for (var b = 0; b < collectBoxes.length; b++) {
+                        if (Math.abs(collectBoxes[b].row - r) < 15) { ok = false; break; }
+                    }
+                }
+                if (ok) return r;
+            }
+            return startRow + 30;
+        }
+
+        function spawnBonusBalls(x, y, owner, animalType) {
+            if (!animalType) {
+                lastBonusType = (lastBonusType === 'sheep' ? 'pig' : 'sheep');
+                animalType = lastBonusType;
+            }
+            var ow = owner || pick;
+            var owAvatar = ow.userAvatarUrl || '';
+            var owName = ow.userName || '@Player';
+            for (var i = 0; i < BONUS_BALLS_PER_BOX; i++) {
+                var ang = (i / BONUS_BALLS_PER_BOX) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+                var spd = 3 + Math.random() * 4;
+                bonusBalls.push({
+                    x: x, y: y,
+                    vx: Math.cos(ang) * spd,
+                    vy: -4 - Math.random() * 5,
+                    r: 24, color: BONUS_BALL_COLORS[i % BONUS_BALL_COLORS.length],
+                    owner: ow, ownerAvatar: owAvatar, ownerName: owName,
+                    collected: false, sparkle: Math.random() * Math.PI * 2,
+                    bounces: 0, energy: 0.7 + Math.random() * 0.3,
+                    sheepTimer: 180 + Math.random() * 900, // periodic sound
+                    animalType: animalType
+                });
+            }
+            var baseRow = Math.floor(y / TILE) + 20 + Math.floor(Math.random() * 30);
+            var boxRow = _findSafeBoxRow(baseRow);
+            var boxCol = 1 + Math.floor(Math.random() * (COLS - 2 - COLLECT_BOX_WIDTH));
+            collectBoxes.push({
+                col: boxCol, row: boxRow, w: COLLECT_BOX_WIDTH,
+                owner: ow, ownerName: owName, ownerAvatar: owAvatar,
+                life: 3600, maxLife: 3600, pulse: 0, collected: 0, shakeTimer: 0,
+                animalType: animalType
+            });
+            spawnText(x, y - 20, '🎁 ' + owName + ' BONUS!', '#ffdd44');
+        }
+
+        function updateBonusBalls() {
+            for (var b = collectBoxes.length - 1; b >= 0; b--) {
+                var box = collectBoxes[b];
+                box.pulse += 0.05;
+                if (box.shakeTimer > 0) box.shakeTimer--;
+            }
+
+            for (var i = bonusBalls.length - 1; i >= 0; i--) {
+                var ball = bonusBalls[i];
+                ball.vy += 0.18;
+                if (Math.random() < 0.02 && ball.bounces < 50) {
+                    ball.vy -= 2 + Math.random() * 3;
+                    ball.vx += (Math.random() - 0.5) * 3;
+                }
+                ball.x += ball.vx; ball.y += ball.vy;
+                ball.vx *= 0.995; ball.sparkle += 0.1;
+
+                if (ball.sheepTimer > 0) {
+                    ball.sheepTimer--;
+                    if (ball.sheepTimer <= 0) {
+                        if (ball.animalType === 'sheep') sfxSheep();
+                        else sfxPig();
+                        ball.sheepTimer = 400 + Math.random() * 1200;
+                    }
+                }
+
+                var bCol = Math.floor(ball.x / TILE);
+                var belowRow = Math.floor((ball.y + ball.r) / TILE);
+                var belowCell = getCell(belowRow, bCol);
+                if (belowCell && belowCell.t !== E) {
+                    ball.y = belowRow * TILE - ball.r;
+                    ball.vy = -Math.abs(ball.vy) * ball.energy;
+                    ball.vx += (Math.random() - 0.5) * 1.5;
+                    ball.bounces++;
+                    if (Math.abs(ball.vy) < 0.5) ball.vy = -2 - Math.random() * 2;
+                }
+                var aboveRow = Math.floor((ball.y - ball.r) / TILE);
+                var aboveCell = getCell(aboveRow, bCol);
+                if (aboveCell && aboveCell.t !== E) {
+                    ball.y = (aboveRow + 1) * TILE + ball.r;
+                    ball.vy = Math.abs(ball.vy) * 0.5;
+                }
+                var leftCol = Math.floor((ball.x - ball.r) / TILE);
+                var rightCol = Math.floor((ball.x + ball.r) / TILE);
+                var wallRow = Math.floor(ball.y / TILE);
+                var leftCell = getCell(wallRow, leftCol);
+                var rightCell = getCell(wallRow, rightCol);
+                if (leftCell && leftCell.t !== E) { ball.x = (leftCol + 1) * TILE + ball.r; ball.vx = Math.abs(ball.vx) * 0.7; }
+                if (rightCell && rightCell.t !== E) { ball.x = rightCol * TILE - ball.r; ball.vx = -Math.abs(ball.vx) * 0.7; }
+
+                // Screen boundaries
+                if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx) * 0.7; }
+                if (ball.x + ball.r > COLS * TILE) { ball.x = COLS * TILE - ball.r; ball.vx = -Math.abs(ball.vx) * 0.7; }
+
+                var allP = [pick].concat(userPicks, extraPicks);
+                for (var pi = 0; pi < allP.length; pi++) {
+                    var p = allP[pi];
+                    if (!p || p.stuck) continue;
+                    var dx = ball.x - p.x, dy = ball.y - p.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < ball.r + 14) {
+                        var nx = dx / (dist || 1), ny = dy / (dist || 1);
+                        ball.vx += nx * 4 + p.vx * 0.5;
+                        ball.vy += ny * 4 + p.vy * 0.3;
+                        if (parts.length < MAX_PARTS) parts.push({ x: ball.x, y: ball.y, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, life: 0.6, dec: 0.05, r: 3, c: ball.color });
+                    }
+                }
+                for (var j = i - 1; j >= 0; j--) {
+                    var other = bonusBalls[j];
+                    var bdx = ball.x - other.x, bdy = ball.y - other.y;
+                    var bDist = Math.sqrt(bdx * bdx + bdy * bdy);
+                    var minD = ball.r + other.r;
+                    if (bDist < minD && bDist > 0) {
+                        var bnx = bdx / bDist, bny = bdy / bDist;
+                        var overlap = minD - bDist;
+                        ball.x += bnx * overlap * 0.5; ball.y += bny * overlap * 0.5;
+                        other.x -= bnx * overlap * 0.5; other.y -= bny * overlap * 0.5;
+                        var relV = (ball.vx - other.vx) * bnx + (ball.vy - other.vy) * bny;
+                        if (relV > 0) { ball.vx -= bnx * relV * 0.5; ball.vy -= bny * relV * 0.5; other.vx += bnx * relV * 0.5; other.vy += bny * relV * 0.5; }
+                    }
+                }
+
+                for (var b = 0; b < collectBoxes.length; b++) {
+                    var box = collectBoxes[b];
+                    var boxX = box.col * TILE, boxY = box.row * TILE;
+                    var boxW = box.w * TILE, boxH = TILE * 2;
+                    if (ball.x > boxX && ball.x < boxX + boxW && ball.y > boxY && ball.y < boxY + boxH && ball.animalType === box.animalType) {
+                        var owner = ball.owner || pick;
+                        box.collected++;
+                        box.shakeTimer = 20;
+                        if (ball.animalType === 'sheep') sfxSheep(true);
+                        else sfxPig(true);
+                        if (owner.userName) {
+                            addCycleScore(owner.userName, BONUS_BALL_PTS, ball.animalType === 'sheep' ? 'sheep' : 'pig');
+                        } else if (owner === pick && pick.active && ownerName) {
+                            addCycleScore(ownerName, BONUS_BALL_PTS, ball.animalType === 'sheep' ? 'sheep' : 'pig');
+                        }
+                        spawnText(ball.x, ball.y - 10, '+' + BONUS_BALL_PTS, '#ffdd44');
+                        spawnText(boxX + boxW / 2, boxY - 16, '→ ' + (ball.ownerName || '?'), ball.color);
+                        for (var cp = 0; cp < 3; cp++) {
+                            var ca = (cp / 3) * Math.PI * 2;
+                            if (parts.length < MAX_PARTS) parts.push({ x: ball.x, y: ball.y, vx: Math.cos(ca) * 3, vy: Math.sin(ca) * 3, life: 1, dec: 0.03, r: 4, c: ball.color });
+                        }
+                        sfxPop();
+                        bonusBalls.splice(i, 1);
+                        break;
+                    }
+                }
+                if (bonusBalls[i] && (ball.y > camY + canvas.height + 800 || ball.x < -200 || ball.x > COLS * TILE + 200)) {
+                    bonusBalls.splice(i, 1);
+                }
+            }
+        }
+
+        function drawBonusBalls() {
+            var t = Date.now() * 0.003;
+            for (var b = 0; b < collectBoxes.length; b++) {
+                var box = collectBoxes[b];
+                var bx = box.col * TILE, by = box.row * TILE;
+                var bw = box.w * TILE, bh = TILE * 2;
+                if (by < camY - TILE * 3 || by > camY + canvas.height + TILE * 3) continue;
+                ctx.save();
+                if (box.shakeTimer > 0) {
+                    var sx = (Math.random() - 0.5) * box.shakeTimer * 0.8;
+                    var sy = (Math.random() - 0.5) * box.shakeTimer * 0.4;
+                    var sc = 1 + box.shakeTimer * 0.005;
+                    ctx.translate(bx + bw / 2 + sx, by + bh / 2 + sy);
+                    ctx.scale(sc, sc);
+                    ctx.translate(-(bx + bw / 2), -(by + bh / 2));
+                }
+                var gAlpha = 0.15 + Math.sin(box.pulse) * 0.1;
+                ctx.fillStyle = 'rgba(255,221,68,' + gAlpha + ')';
+                ctx.fillRect(bx - 6, by - 6, bw + 12, bh + 12);
+
+                var boxImg = (box.animalType === 'sheep') ? SHEEP_MOTHER_TEX : PIG_MOTHER_TEX;
+                if (boxImg.complete) {
+                    ctx.drawImage(boxImg, bx, by, bw, bh);
+                } else {
+                    ctx.fillStyle = '#ffcc22'; ctx.fillRect(bx, by, bw, bh);
+                    ctx.strokeStyle = '#aa7700'; ctx.lineWidth = 2;
+                    ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+                    ctx.fillStyle = '#fff'; ctx.font = (TILE * 0.8) + 'px sans-serif';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(box.animalType === 'sheep' ? '🐏' : '🐖', bx + bw / 2, by + bh / 2);
+                }
+                ctx.restore();
+            }
+            for (var i = 0; i < bonusBalls.length; i++) {
+                var ball = bonusBalls[i];
+                if (ball.y < camY - 30 || ball.y > camY + canvas.height + 30) continue;
+                ctx.save(); ctx.translate(ball.x, ball.y);
+                ctx.beginPath(); ctx.arc(0, 0, ball.r + 3, 0, Math.PI * 2);
+                ctx.fillStyle = ball.color;
+                ctx.globalAlpha = 0.25 + Math.sin(ball.sparkle) * 0.1;
+                ctx.fill(); ctx.globalAlpha = 1;
+
+                var ballImg = (ball.animalType === 'sheep') ? SHEEP_KID_TEX : PIG_KID_TEX;
+                if (ballImg.complete) {
+                    ctx.drawImage(ballImg, -ball.r, -ball.r, ball.r * 2, ball.r * 2);
+                } else {
+                    ctx.fillStyle = '#fff'; ctx.font = (ball.r * 1.5) + 'px Arial';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(ball.animalType === 'sheep' ? '🐑' : '🐷', 0, 0);
+                }
+                ctx.restore();
+            }
+        }
+
+        // ── Bonus Box in block generation ──
+        // sfxPop for bonus ball collection (reuse bubble pop)
+        function sfxPop() {
+            try {
+                var ac = getAC();
+                var o = ac.createOscillator(), g = ac.createGain();
+                o.type = 'sine'; o.frequency.value = 800 + Math.random() * 400;
+                g.gain.setValueAtTime(0.15, ac.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+                o.connect(g); g.connect(ac.destination);
+                o.start(); o.stop(ac.currentTime + 0.15);
+            } catch (e) { }
+        }
+
+        function hitBlock(col, row, force, source) {
+            var cell = getCell(row, col);
+            if (!cell || cell.t === E) return false;
+            var def = BDEF[cell.t];
+            if (cell.t === BEDROCK) return true;
+            cell.hp -= force;
+            cell.cr = Math.min(1, 1 - cell.hp / def.hp);
+            spawnParts(col * TILE + TILE / 2, row * TILE + TILE / 2, def.glow, 6);
+            spawnDebris(col * TILE + TILE / 2, row * TILE + TILE / 2, cell.t, source);
+            if (Math.random() < 0.18) sfxHit(cell.t);
+            if (cell.hp <= 0) {
+                var pts = def.pts || 0;
+                if (pick.active || (source && source !== pick)) score += pts;
+                // Bonus Box — spawn bonus balls!
+                if (cell.t === BONUS_BOX) {
+                    var aType = ((row + col) % 2 === 0) ? 'pig' : 'sheep';
+                    spawnBonusBalls(col * TILE + TILE / 2, row * TILE + TILE / 2, source || pick, aType);
+                    shakeAmt = 8;
+                } else if (ITEM_DEFS[cell.t]) {
+                    spawnItem(col * TILE + TILE / 2, row * TILE + TILE / 2, cell.t, source);
+                } else {
+                    spawnText(col * TILE + TILE / 2, row * TILE + TILE / 2, '+' + pts, def.glow);
+                    rollForSwordDrop(col * TILE + TILE / 2, row * TILE + TILE / 2, source);
+                }
+                if (source && source.userName) {
+                    var player = userPicks.find(function (u) { return u.userName === source.userName; });
+                    if (player) player.score = (player.score || 0) + pts;
+                    if (!persistentScores[source.userName]) persistentScores[source.userName] = { score: 0, avatar: source.userAvatarUrl || '' };
+                    if (pick.active || (source && source !== pick)) persistentScores[source.userName].score += pts;
+                    addCycleScore(source.userName, pts, ITEM_DEFS[cell.t] ? 'item' : 'block');
+                }
+                sfxBreak(cell.t);
+                cell.t = E; cell.cr = 0;
+                // Check neighbors for unsupported blocks → make them fall
+                checkFallingBlocks(col, row, source);
+                // Chance to spawn zombie — increases with depth
+                var zDepth = row;
+                var zChance = zDepth > 10 ? Math.min(0.04, 0.005 + zDepth * 0.0005) : 0;
+                if (Math.random() < zChance) spawnZombie(col * TILE + TILE / 2, row * TILE);
+            }
+            return true;
+        }
+
+        function update() {
+            if (!pick) return;
+            // Regra: se estiver sozinho (sem players e sem clones), mantém ativo
+            if (userPicks.length === 0 && extraPicks.length === 0) pick.active = true;
+
+            if (pick.active) {
+                if (pick.stuck) {
+                    pick.stuckTimer++;
+                    if (pick.stuckTimer > 100) spawnPick();
+                } else {
+                    applyPhysics(pick, 28);
+                }
+
+                // Atualiza companheiros da picareta principal
+                if (pick.companions) {
+                    for (var ci = 0; ci < pick.companions.length; ci++) {
+                        updateCompanion(pick.companions[ci], pick);
+                    }
+                }
+
+                if (pick.goldSwordsTimer > 0) {
+                    pick.goldSwordsTimer -= 16.6;
+                    if (pick.goldSwordsTimer <= 0) {
+                        pick.goldSwordsTimer = 0;
+                        syncCompanions(pick, getPlayerInventory(pick.userName));
+                    }
+                }
+                if (pick.diamondSwordsTimer > 0) {
+                    pick.diamondSwordsTimer -= 16.6;
+                    if (pick.diamondSwordsTimer <= 0) {
+                        pick.diamondSwordsTimer = 0;
+                        syncCompanions(pick, getPlayerInventory(pick.userName));
+                    }
+                }
+                if (pick.activeSwords && pick.activeSwords.length > 0) {
+                    var changedH = false;
+                    for (var sh = pick.activeSwords.length - 1; sh >= 0; sh--) {
+                        pick.activeSwords[sh].timer -= 16.6;
+                        if (pick.activeSwords[sh].timer <= 0) {
+                            pick.activeSwords.splice(sh, 1);
+                            changedH = true;
+                        }
+                    }
+                    if (changedH) syncCompanions(pick, getPlayerInventory(pick.userName));
+                }
+
+                // ── Proteção anti-queda infinita (Main Pick) ──
+                var fallLimit = camY + canvas.height + 800;
+                if (pick.y > fallLimit || !isFinite(pick.y) || !isFinite(pick.x)) {
+                    pick.x = canvas.width / 2;
+                    pick.y = camY + canvas.height * 0.3;
+                    pick.vx = 0; pick.vy = 0; pick.ang = 0; pick.spin = 0; pick.stuck = false; pick.stuckTimer = 0;
+                    spawnText(pick.x, pick.y, '🛡️ rescatado!', '#00ff88');
+                    shakeAmt = Math.max(shakeAmt, 5);
+                }
+
+                var speed = Math.sqrt(pick.vx * pick.vx + pick.vy * pick.vy);
+                if (speed < 0.3 && Math.abs(pick.spin) < 0.01 && !(pick.bigTimer > 0)) {
+                    pick.stuckTimer++; if (pick.stuckTimer > 200) pick.stuck = true;
+                } else { pick.stuckTimer = 0; }
+            }
+
+            // Otimização: Substituído concat/filter por loop direto para evitar Garbage Collection
+            var deepestPick = pick;
+            var deepestY = (pick && pick.active && !pick.stuck) ? pick.y : -999999;
+
+            for (var i = 0; i < userPicks.length; i++) {
+                var up = userPicks[i];
+                if (!up || up.stuck) continue;
+                if (up.y > deepestY) {
+                    deepestY = up.y;
+                    deepestPick = up;
+                }
+            }
+
+            var depth = Math.floor(Math.max(0, deepestY) / TILE);
+
+            // Otimização: Atualiza placar e profundidade apenas a cada 10 frames
+            uiUpdateTick++;
+            if (uiUpdateTick % 10 === 0) {
+                if (depth > maxDepth) {
+                    var oldMilestone = Math.floor(maxDepth / 200);
+                    var oldCycle = Math.floor(maxDepth / 400);
+                    maxDepth = depth;
+                    document.getElementById('depthDisplay').textContent = 'Depth: ' + maxDepth + 'm';
+                    var newMilestone = Math.floor(maxDepth / 200);
+                    var newCycle = Math.floor(maxDepth / 400);
+                    if (newMilestone > oldMilestone && newMilestone > 0) {
+                        showDepthWarning(newMilestone * 200);
+                        sfxEvilLaugh();
+                    }
+                    if (newCycle > oldCycle && newCycle > 0) {
+                        triggerCycleEnd(newCycle);
+                    }
+                }
+
+                var displayOwner = ownerName;
+                if (!displayOwner) {
+                    var savedTT = localStorage.getItem('pd_tiktok_username');
+                    if (savedTT) displayOwner = '@' + savedTT.toLowerCase();
+                }
+                var displayScore = (displayOwner && persistentScores[displayOwner]) ? persistentScores[displayOwner].score : score;
+                var pending = (displayOwner && persistentScores[displayOwner]) ? (persistentScores[displayOwner].pendingScore || 0) : 0;
+
+                // Point Drain for players at 0 HP
+                Object.keys(persistentScores).forEach(function (name) {
+                    var ps = persistentScores[name];
+                    if (ps.health <= 0 && ps.score > 0) {
+                        ps.score = Math.max(0, ps.score - 5); // Slow drain
+                        ps.lastPointLossTime = Date.now();
+                    }
+                });
+
+                var scoreStr = '⛏ ' + displayScore;
+                if (pending > 0) scoreStr += ' <small style="font-size:0.6em; color:#ffdd44; opacity:0.8;">+' + pending + '⚡</small>';
+                document.getElementById('scoreDisplay').innerHTML = scoreStr;
+            }
+
+            // ── Democratic Camera: follow the deepest player ──
+            if (!camTarget) camTarget = pick;
+            if (deepestPick === camTarget) {
+                camLeaderTimer = 0;
+            } else {
+                camLeaderTimer++;
+                if (camLeaderTimer >= CAM_SWITCH_FRAMES) {
+                    camTarget = deepestPick;
+                    camLeaderTimer = 0;
+                }
+            }
+            if (!camTarget || camTarget.stuck || (camTarget === pick && !pick.active)) {
+                camTarget = (userPicks.length > 0) ? userPicks[0] : pick;
+                camLeaderTimer = 0;
+            }
+
+            var followPick = camTarget || pick;
+            var targetCamY = followPick.y - canvas.height * 0.60;
+            if (targetCamY < 0) targetCamY = 0;
+            if (targetCamY > camY) { camY += (targetCamY - camY) * 0.08; }
+            var visBot = Math.ceil((camY + canvas.height) / TILE) + 4;
+            ensureRows(0, visBot);
+            var newTopRow = Math.max(0, Math.floor(camY / TILE) - 6);
+            for (var rr = topRow; rr < newTopRow; rr++) { delete worldMap[rr]; }
+            topRow = newTopRow;
+            updateUserPicks();
+            updateExtraPicks();
+            updateTNTBlocks();
+            updateCreepers();
+            updateFallingBlocks();
+            updateBonusBalls();
+            updateItems();
+            updateWitherSkeletons();
+
+            function getWitherTierDistribution() {
+                var tiers = [];
+                if (pick.active) {
+                    var t = (currentPickaxe && currentPickaxe.name) ? PICKAXES.findIndex(function (px) { return px.name === currentPickaxe.name; }) : 0;
+                    if (t < 0) t = 0;
+                    tiers.push(t);
+                }
+                for (var j = 0; j < userPicks.length; j++) {
+                    var up = userPicks[j];
+                    if (up.pickaxe) {
+                        var ut = (up.pickaxe && up.pickaxe.name) ? PICKAXES.findIndex(function (px) { return px.name === up.pickaxe.name; }) : 0;
+                        if (ut < 0) ut = 0;
+                        tiers.push(ut);
+                    }
+                }
+                if (tiers.length === 0) return [0];
+                return tiers;
+            }
+
+            // ── Wither Skeleton Spawning (Every 30m) ──
+            if (Math.floor(maxDepth / WITHER_SPAWN_INTERVAL) > Math.floor(lastWitherSpawnDepth / WITHER_SPAWN_INTERVAL)) {
+                lastWitherSpawnDepth = maxDepth;
+                var count = 2 + Math.floor(Math.random() * 2);
+                var fPick = camTarget || pick;
+                var dist = getWitherTierDistribution();
+                for (var wi = 0; wi < count; wi++) {
+                    var randomTier = dist[Math.floor(Math.random() * dist.length)];
+                    var pData = PICKAXES[randomTier] || PICKAXES[0];
+                    witherSkeletons.push({
+                        x: fPick.x + (Math.random() - 0.5) * canvas.width * 0.8,
+                        y: camY - 100,
+                        vx: (Math.random() - 0.5) * 6,
+                        vy: 2 + Math.random() * 4,
+                        hp: 2 + randomTier + (randomTier >= 5 ? 2 : 0),
+                        maxHp: 2 + randomTier + (randomTier >= 5 ? 2 : 0),
+                        ang: Math.random() * Math.PI * 2,
+                        spin: (Math.random() - 0.5) * 0.3,
+                        userName: 'Esqueleto Wither',
+                        pickaxe: { damage: pData.damage * 0.8, tier: randomTier, color: pData.color, name: pData.name },
+                        stuck: false,
+                        stuckTimer: 0
+                    });
+                }
+                spawnText(fPick.x, camY + 100, '💀 WITHER SKELETONS!', '#ffffff');
+            }
+
+            // ── Update Boss Timer & Dragon ──
+            if (isBossFightActive) {
+                var elapsed = Date.now() - bossTimerStartTime;
+                var remaining = Math.max(0, BOSS_TIMEOUT_MS - elapsed);
+                var mins = Math.floor(remaining / 60000);
+                var secs = Math.floor((remaining % 60000) / 1000);
+                document.getElementById('bossTimerDisplay').textContent = 'BOSS TIMER: ' +
+                    (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+
+                if (remaining <= 0 && !dragonActive) {
+                    dragonActive = true;
+                    isDragonLeaving = false;
+                    dragonPhase = 'behind';
+                    dragonX = canvas.width + 1200;
+                    dragonY = currentBossY - 300;
+                    document.getElementById('bossTimerDisplay').style.display = 'none';
+                    spawnText(canvas.width / 2, camY + 100, '🐉 DRAGON HAS AWAKENED!', '#ff0000');
+                }
+
+                // Movimentação
+                if (dragonPhase === 'behind') {
+                    dragonX -= 4.5; // Direita para Esquerda
+                    if (dragonX < -1200) {
+                        if (isDragonLeaving) {
+                            dragonActive = false;
+                        } else {
+                            dragonPhase = 'front';
+                            dragonX = -3000;
+                        }
+                    }
+                } else {
+                    dragonX += 12; // Esquerda para Direita (mais rápido na frente)
+                    if (dragonX > canvas.width + 4000) {
+                        if (isDragonLeaving) {
+                            dragonActive = false;
+                        } else {
+                            dragonPhase = 'behind';
+                            dragonX = canvas.width + 1200;
+                        }
+                    }
+                }
+
+                // Se o dragão sumiu, para todos os sons
+                if (!dragonActive) {
+                    dragonRoarSounds.forEach(function (s) { s.pause(); s.currentTime = 0; });
+                    dragonFlapSounds.forEach(function (s) { s.pause(); s.currentTime = 0; });
+                }
+
+                // Flutua em torno da altura do boss
+                var verticalOffset = (dragonPhase === 'front') ? -100 : -350;
+                dragonY = currentBossY + verticalOffset + Math.sin(Date.now() * 0.001) * 120;
+
+                dragonFrameTimer++;
+                if (dragonFrameTimer >= 3) {
+                    dragonFrameIdx = (dragonFrameIdx + 1) % 100;
+                    dragonFrameTimer = 0;
+                }
+
+                // Sons de Rugido (Aleatório)
+                dragonRoarTimer++;
+                if (dragonRoarTimer > 400 && Math.random() < 0.01) {
+                    if (_audioStarted) {
+                        var roar = dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)];
+                        roar.volume = (dragonPhase === 'front' ? 1.0 : 0.4);
+                        roar.play().catch(function (e) { });
+                    }
+                    dragonRoarTimer = 0;
+                }
+
+                // Sons de Bater de Asas (Contínuo)
+                dragonFlapTimer++;
+                if (dragonFlapTimer > 15) {
+                    if (_audioStarted) {
+                        var flap = dragonFlapSounds[dragonFlapIdx];
+                        flap.volume = (dragonPhase === 'front' ? 0.8 : 0.3);
+                        flap.play().catch(function (e) { });
+                    }
+                    dragonFlapIdx = (dragonFlapIdx + 1) % 6;
+                    dragonFlapTimer = 0;
+                }
+
+                // Dragon shoots fireballs (DESATIVADO)
+                /*
+                dragonFireTimer++;
+                if (dragonFireTimer > 100) { 
+                    var fx = (dragonPhase === 'front') ? dragonX + 1000 : dragonX - 200;
+                    activeFireballs.push({
+                        x: fx,
+                        y: dragonY + 100,
+                        vx: (dragonPhase === 'behind' ? -3 : 3) + (Math.random() - 0.5) * 4,
+                        vy: 8,
+                        life: 300
+                    });
+                    dragonFireTimer = 0;
+                }
+                */
+            }
+
+            // Update Fireballs
+            for (var fi = activeFireballs.length - 1; fi >= 0; fi--) {
+                var f = activeFireballs[fi];
+                f.x += f.vx;
+                f.y += f.vy;
+                f.life--;
+
+                // Colisão simples com jogadores
+                [pick].concat(userPicks).forEach(function (p) {
+                    if (p && !p.stuck) {
+                        var dx = p.x - f.x, dy = p.y - f.y;
+                        if (dx * dx + dy * dy < 1600) { // 40px radius
+                            p.vx += (dx / 40) * 15;
+                            p.vy -= 10;
+                            p.life = 0; // explode fireball
+                            spawnText(p.x, p.y - 20, '🔥', '#ff4400');
+                        }
+                    }
+                });
+
+                if (f.life <= 0 || f.y > camY + canvas.height + 200) {
+                    activeFireballs.splice(fi, 1);
+                }
+            }
+            updateExplosions();
+            updateStorm();
+            // Decrement bigTimer on all picks
+            var _allBigPicks = [pick].concat(userPicks);
+            for (var _bi = 0; _bi < _allBigPicks.length; _bi++) {
+                var _bp = _allBigPicks[_bi];
+                if (!_bp) continue;
+                if (_bp.bigTimer > 0) _bp.bigTimer--;
+                if (_bp._safetyTimer > 0) _bp._safetyTimer--;
+
+                // If Big and slow (potentially stuck), activate safety destruction briefly
+                var bSpd = Math.sqrt(_bp.vx * _bp.vx + _bp.vy * _bp.vy);
+                if (_bp.bigTimer > 0 && bSpd < 0.5 && Math.abs(_bp.spin) < 0.02) {
+                    _bp._stuckBigCount = (_bp._stuckBigCount || 0) + 1;
+                    if (_bp._stuckBigCount > 10) { _bp._safetyTimer = 40; _bp._stuckBigCount = 0; }
+                } else { _bp._stuckBigCount = 0; }
+            }
+            updateTormenta();
+            updateBlackHoles();
+            updateSpins();
+
+            // ── Mechanics updates ──
+            // Otimização: Iteração direta para reduzir criação de arrays
+            for (var skKey in skillCooldowns) {
+                if (skillCooldowns[skKey] > 0) {
+                    skillCooldowns[skKey]--;
+                } else {
+                    delete skillCooldowns[skKey]; // Limpa memória de chaves expiradas
+                }
+            }
+            // Process Chain Lightning Core
+            for (var ati = activeThorAttacks.length - 1; ati >= 0; ati--) {
+                var atk = activeThorAttacks[ati];
+                var player = (ownerName && atk.userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === atk.userName; });
+                if (player) { atk.x = player.x; atk.y = player.y; }
+
+                if (atk.timer > 0) atk.timer--;
+                if (atk.timer <= 0) {
+                    var targets = [];
+                    for (var b_i = 0; b_i < bats.length; b_i++) {
+                        var b = bats[b_i];
+                        if (b.state === 'dead' || b.y < camY - 200 || b.y > camY + canvas.height + 200) continue;
+                        var dist = Math.sqrt((b.x - atk.x) * (b.x - atk.x) + (b.y - atk.y) * (b.y - atk.y));
+                        if (dist <= 800) targets.push({ bat: b, dist: dist });
+                    }
+                    for (var sp_i = 0; sp_i < spiders.length; sp_i++) {
+                        var sp = spiders[sp_i];
+                        if (sp.state === 'dead' || sp.y < camY - 200 || sp.y > camY + canvas.height + 200) continue;
+                        var spDist = Math.sqrt((sp.x - atk.x) * (sp.x - atk.x) + (sp.y - atk.y) * (sp.y - atk.y));
+                        if (spDist <= 800) targets.push({ bat: sp, dist: spDist });
+                    }
+                    for (var z_i = 0; z_i < zombies.length; z_i++) {
+                        var z = zombies[z_i];
+                        if (z.state === 'dead' || z.y < camY - 200 || z.y > camY + canvas.height + 200) continue;
+                        var zDist = Math.sqrt((z.x - atk.x) * (z.x - atk.x) + (z.y - atk.y) * (z.y - atk.y));
+                        if (zDist <= 800) targets.push({ bat: z, dist: zDist });
+                    }
+                    for (var ws_i = 0; ws_i < witherSkeletons.length; ws_i++) {
+                        var ws = witherSkeletons[ws_i];
+                        if (ws.y < camY - 200 || ws.y > camY + canvas.height + 200) continue;
+                        var wsDist = Math.sqrt((ws.x - atk.x) * (ws.x - atk.x) + (ws.y - atk.y) * (ws.y - atk.y));
+                        if (wsDist <= 800) targets.push({ bat: ws, dist: wsDist });
+                    }
+
+                    if (targets.length > 0) {
+                        // Alternate: try to find a target that isn't the last one hit
+                        var bestTarget = null;
+                        if (targets.length > 1 && atk.lastBat) {
+                            var others = targets.filter(function (t) { return t.bat !== atk.lastBat; });
+                            others.sort(function (a, b) { return a.dist - b.dist; });
+                            bestTarget = others[0].bat;
+                        } else {
+                            targets.sort(function (a, b) { return a.dist - b.dist; });
+                            bestTarget = targets[0].bat;
+                        }
+
+                        if (bestTarget) {
+                            atk.lastBat = bestTarget;
+                            _thorBeams.push({ player: player || pick, enemy: bestTarget, life: 60 });
+                            shakeAmt = Math.max(shakeAmt, 8);
+                            if (typeof sfxTNT === 'function' && _audioStarted) sfxTNT();
+                            spawnParts(bestTarget.x, bestTarget.y, '#00ffff', 5);
+
+                            // Damage & Combo
+                            var isZ = (zombies.indexOf(bestTarget) !== -1);
+                            var dmgVal = isZ ? 3 : 1;
+                            bestTarget.hp -= dmgVal;
+                            bestTarget.hurtTimer = isZ ? 18 : 10;
+                            if (isZ) bestTarget.animTimer = 0; else bestTarget.anim = 0;
+
+                            bestTarget.state = 'hurt';
+
+                            if (player) registerComboHit(player, bestTarget.x, bestTarget.y);
+                            spawnText(bestTarget.x, bestTarget.y - 40, '-' + dmgVal + ' ⚡', '#00ffff');
+
+                            if (bestTarget.hp <= 0) {
+                                bestTarget.state = 'dead';
+                                if (isZ) bestTarget.animTimer = 0; else bestTarget.anim = 0;
+                                bestTarget.deadTimer = 0;
+                                // Wither Skeleton cleanup
+                                if (witherSkeletons.indexOf(bestTarget) !== -1) {
+                                    playWitherDeath();
+                                    if (typeof spawnParts === 'function') {
+                                        spawnParts(bestTarget.x, bestTarget.y, '#555555', 10);
+                                        spawnParts(bestTarget.x, bestTarget.y, '#aaaaaa', 10);
+                                    }
+                                    witherSkeletons.splice(witherSkeletons.indexOf(bestTarget), 1);
+                                    spawnText(bestTarget.x, bestTarget.y, '💀 DEAD', '#ffffff');
+                                }
+                                var pts = bestTarget.pts || 50;
+                                if (pick.active || (atk.userName && atk.userName !== ownerName)) score += pts;
+                                spawnText(bestTarget.x, bestTarget.y - 60, '+' + pts, '#00ff88');
+                                if (player) {
+                                    player.score = (player.score || 0) + pts;
+                                    if (!persistentScores[atk.userName]) persistentScores[atk.userName] = { score: 0, avatar: '', color: '#00ffff' };
+                                    if (pick.active || (atk.userName && atk.userName !== ownerName)) persistentScores[atk.userName].score += pts;
+                                    addCycleScore(atk.userName, pts, 'kill');
+                                }
+                            } else {
+                                if (witherSkeletons.indexOf(bestTarget) !== -1) playWitherHurt();
+                            }
+                            atk.hitsLeft--;
+                            atk.timer = 60; // 1 second delay
+                        }
+                    } else {
+                        atk.hitsLeft = 0; // stop if no more targets in range
+                    }
+                }
+                if (atk.hitsLeft <= 0) activeThorAttacks.splice(ati, 1);
+            }
+
+            for (var bi = _thorBeams.length - 1; bi >= 0; bi--) {
+                _thorBeams[bi].life--;
+                if (_thorBeams[bi].life <= 0) _thorBeams.splice(bi, 1);
+            }
+
+            if (_nukeActive) {
+                _nukeTimer--;
+                if (_nukeTimer <= 0) _nukeActive = false;
+            }
+
+            function applyBossBarrier(mz, mStart) {
+                var gateRow = mStart + MEGA_CLEARING_HEIGHT - 10;
+                console.log('Criando barreira Bedrock na linha', gateRow, 'para Zona', mz);
+                ensureRows(gateRow, gateRow + 3);
+                for (var gr = gateRow; gr < gateRow + 3; gr++) {
+                    if (!worldMap[gr]) worldMap[gr] = genRow(gr);
+                    for (var gc = 0; gc < COLS; gc++) {
+                        worldMap[gr][gc] = { t: BEDROCK, hp: 9999, cr: 0 };
+                    }
+                }
+            }
+
+            // Re-defining to fix potential loop variable conflict in future edits
+            function setMegaBarrier(mz, row) {
+                ensureRows(row, row + 3);
+                for (var r = row; r < row + 3; r++) {
+                    if (!worldMap[r]) worldMap[r] = genRow(r);
+                    for (var c = 0; c < COLS; c++) {
+                        worldMap[r][c] = { t: BEDROCK, hp: 9999, cr: 0 };
+                    }
+                }
+            }
+
+            updateZombies();
+            checkPickZombieCollisions();
+            updateSpiders();
+            checkPickSpiderCollisions();
+            updateBats();
+            // ── Mega-clearing: spawn flyers and bosses when followPick (deepest active) is near or in the zone ──
+            if (followPick) {
+                var pickRow = Math.floor(followPick.y / TILE);
+                // Trigger spawn in the first 100 rows of the clearing
+                if (isMegaClearingRow(pickRow)) {
+                    var mz = getMegaZone(pickRow);
+                    var localPos = (pickRow - getMegaStart(mz));
+                    var mStart = getMegaStart(mz >= 0 ? mz : 0);
+                    // Initial big spawn — only if entering the first half (100 rows)
+                    if (mz >= 0 && !megaClearedZones[mz] && localPos < 100) {
+                        megaClearedZones[mz] = true;
+                        megaClearedZones[mz + '_tick'] = 0;
+                        var bossTypeIdx = mz % 4; // 0=queen, 1=zombie, 2=blaze, 3=ghast
+                        var typeName = ['queen', 'zombie', 'blaze', 'ghast'][bossTypeIdx];
+                        console.log('Iniciando Arena:', typeName, 'Zona:', mz);
+                        megaClearedZones[mz + '_type'] = typeName;
+
+                        // Inicia o Timer do Boss
+                        isBossFightActive = true;
+                        bossTimerStartTime = Date.now();
+                        document.getElementById('bossTimerDisplay').style.display = 'block';
+                        dragonActive = false;
+                        dragonX = -800;
+                        activeFireballs = [];
+
+                        // Captura a posição Y da arena (aproximadamente o meio/chão)
+                        currentBossY = (mStart + MEGA_CLEARING_HEIGHT - 10) * TILE;
+
+                        if (typeName === 'zombie') {
+                            // ── ZOMBIE GATE: spawn bats (flying) + zombie bosses on brick floor ──
+                            // Spawn flying enemies in upper portion of clearing (above the floor)
+                            var zbRow = mStart + MEGA_CLEARING_HEIGHT - 10;
+                            var megaNum = Math.min(MAX_BATS_MEGA, 30 + Math.floor(mz * 5));
+                            for (var mi = 0; mi < megaNum; mi++) {
+                                var mx = (1 + Math.floor(seededRand(mz * 500 + mi * 11) * (COLS - 2))) * TILE + TILE / 2;
+                                var myRow = mStart + 10 + Math.floor(seededRand(mz * 600 + mi * 19) * (MEGA_CLEARING_HEIGHT - 40));
+                                var my = myRow * TILE + TILE / 2;
+                                // 40% chance of mother in initial burst
+                                spawnBat(mx, my, mz, mi % 2.5 < 1);
+                            }
+                            // Place Bedrock barrier floor (3 rows thick, wall-to-wall)
+                            setMegaBarrier(mz, zbRow);
+                            var zbFloorY = zbRow * TILE;
+                            megaClearedZones[mz + '_zbFloorRow'] = zbRow;
+                            var zbY = zbFloorY - ZOMBIE_SIZE * ZBOSS_SCALE * 0.5;
+                            var zbSpacing = ((COLS - 2) * TILE) / (ZBOSS_COUNT + 1);
+                            for (var zbi = 0; zbi < ZBOSS_COUNT; zbi++) {
+                                var zbX = TILE + zbSpacing * (zbi + 1);
+                                spawnZombieBoss(zbX, zbY, mz);
+                            }
+                            spawnText(canvas.width / 2, followPick.y - 60, '⚠️ JELLY ARENA!', '#44ff00');
+                        } else if (typeName === 'queen') {
+                            // ── QUEEN GATE: spawn bats + queens (original) ──
+                            var megaNum = Math.min(MAX_BATS_MEGA, 30 + Math.floor(mz * 5));
+                            for (var mi = 0; mi < megaNum; mi++) {
+                                var mx = (1 + Math.floor(seededRand(mz * 500 + mi * 11) * (COLS - 2))) * TILE + TILE / 2;
+                                var myRow = mStart + 10 + Math.floor(seededRand(mz * 600 + mi * 19) * (MEGA_CLEARING_HEIGHT - 30));
+                                var my = myRow * TILE + TILE / 2;
+                                // 40% chance of mother in initial burst
+                                spawnBat(mx, my, mz, mi % 2.5 < 1);
+                            }
+                            // Spawn Bedrock barrier for Queen
+                            var queenGateRow = mStart + MEGA_CLEARING_HEIGHT - 10;
+                            setMegaBarrier(mz, queenGateRow);
+                            // Spawn Queen Gate at the bottom
+                            var queenRow = mStart + MEGA_CLEARING_HEIGHT - 15;
+                            var queenY = queenRow * TILE + TILE / 2;
+                            var spacing = ((COLS - 2) * TILE) / (QUEEN_COUNT + 1);
+                            for (var qi = 0; qi < QUEEN_COUNT; qi++) {
+                                var queenX = TILE + spacing * (qi + 1);
+                                spawnQueen(queenX, queenY, mz, qi);
+                            }
+                            spawnText(canvas.width / 2, followPick.y - 60, '⚠️ QUEEN ARRIVAL!', '#ff00ff');
+                        } else if (typeName === 'blaze') {
+                            // ── BLAZE GATE: spawn fire flyers + blaze boss ──
+                            var megaNum = Math.min(MAX_BATS_MEGA, 30 + Math.floor(mz * 5));
+                            for (var mi = 0; mi < megaNum; mi++) {
+                                var mx = (1 + Math.floor(seededRand(mz * 500 + mi * 11) * (COLS - 2))) * TILE + TILE / 2;
+                                var myRow = mStart + 10 + Math.floor(seededRand(mz * 600 + mi * 19) * (MEGA_CLEARING_HEIGHT - 30));
+                                var my = myRow * TILE + TILE / 2;
+                                spawnBat(mx, my, mz, mi % 3 < 1);
+                            }
+                            // Spawn Bedrock barrier for Blaze
+                            console.log('Gerando Bedrock para Blaze (Zona ' + mz + ')');
+                            var blazeGateRow = mStart + MEGA_CLEARING_HEIGHT - 10;
+                            setMegaBarrier(mz, blazeGateRow);
+                            // Spawn Blaze Boss at the bottom
+                            var blazeRow = mStart + MEGA_CLEARING_HEIGHT - 15;
+                            var blazeY = blazeRow * TILE + TILE / 2;
+                            var spacing = ((COLS - 2) * TILE) / (QUEEN_COUNT + 1);
+                            for (var bi = 0; bi < QUEEN_COUNT; bi++) {
+                                var blazeX = TILE + spacing * (bi + 1);
+                                spawnBlazeBoss(blazeX, blazeY, mz, bi);
+                            }
+                            spawnText(canvas.width / 2, followPick.y - 60, '🔥 BLAZE INVASION!', '#ffaa00');
+                        } else if (typeName === 'ghast') {
+                            // ── GHAST GATE: spawn ghasts + ghast boss ──
+                            var megaNum = Math.min(MAX_BATS_MEGA, 30 + Math.floor(mz * 5));
+                            for (var mi = 0; mi < megaNum; mi++) {
+                                var mx = (1 + Math.floor(seededRand(mz * 500 + mi * 11) * (COLS - 2))) * TILE + TILE / 2;
+                                var myRow = mStart + 10 + Math.floor(seededRand(mz * 600 + mi * 19) * (MEGA_CLEARING_HEIGHT - 30));
+                                var my = myRow * TILE + TILE / 2;
+                                spawnGhast(mx, my, mz, mi % 4 < 1);
+                            }
+                            // Spawn Bedrock barrier for Ghast
+                            var ghastGateRow = mStart + MEGA_CLEARING_HEIGHT - 10;
+                            setMegaBarrier(mz, ghastGateRow);
+                            // Spawn Ghast Boss at the bottom
+                            var ghastRow = mStart + MEGA_CLEARING_HEIGHT - 15;
+                            var ghastY = ghastRow * TILE + TILE / 2;
+                            var spacing = ((COLS - 2) * TILE) / (QUEEN_COUNT + 1);
+                            for (var gi = 0; gi < QUEEN_COUNT; gi++) {
+                                var ghastX = TILE + spacing * (gi + 1);
+                                spawnGhastBoss(ghastX, ghastY, mz, gi);
+                            }
+                            spawnText(canvas.width / 2, followPick.y - 60, '👻 GHAST ASCENSION!', '#ffffff');
+                        }
+                    }
+                    // Check if all gate bosses for this zone are dead → passage opened
+                    if (megaClearedZones[mz] && !megaClearedZones[mz + '_gateOpen']) {
+                        var gateType = megaClearedZones[mz + '_type'];
+                        var aliveBosses = 0;
+                        if (gateType === 'zombie') {
+                            for (var zci = 0; zci < zombies.length; zci++) {
+                                if (zombies[zci].isZBoss && zombies[zci].zone === mz && zombies[zci].state !== 'dead') aliveBosses++;
+                            }
+                        } else if (gateType === 'blaze') {
+                            for (var bci = 0; bci < bats.length; bci++) {
+                                if (bats[bci].isBlaze && bats[bci].zone === mz && bats[bci].state !== 'dead') aliveBosses++;
+                            }
+                        } else if (gateType === 'ghast') {
+                            for (var gci = 0; gci < bats.length; gci++) {
+                                if (bats[gci].isGhast && (bats[gci].isMother || bats[gci].isZBoss || bats[gci].maxHp > 100) && bats[gci].zone === mz && bats[gci].state !== 'dead') aliveBosses++;
+                            }
+                        } else {
+                            // Default for Queen
+                            for (var qci = 0; qci < bats.length; qci++) {
+                                if (bats[qci].isQueen && bats[qci].zone === mz && bats[qci].state !== 'dead') aliveBosses++;
+                            }
+                        }
+                        if (aliveBosses === 0) {
+                            megaClearedZones[mz + '_gateOpen'] = true;
+
+                            // Finaliza Timer do Boss e prepara saída do Dragão
+                            isBossFightActive = false;
+                            isDragonLeaving = true;
+                            document.getElementById('bossTimerDisplay').style.display = 'none';
+                            activeFireballs = [];
+
+                            spawnText(canvas.width / 2, followPick.y - 80, '🎉 PASSAGE OPEN!', '#44ff44');
+                            shakeAmt = 25;
+                            // Destroy barrier blocks at gate row so pickaxes never stop
+                            var gateRow = getMegaStart(mz) + MEGA_CLEARING_HEIGHT - 10;
+                            for (var gr = gateRow - 2; gr <= gateRow + 5; gr++) {
+                                if (!worldMap[gr]) continue;
+                                for (var gc = 0; gc < COLS; gc++) {
+                                    if (worldMap[gr][gc] && worldMap[gr][gc].t !== E) {
+                                        worldMap[gr][gc].t = E; worldMap[gr][gc].hp = 0; worldMap[gr][gc].cr = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Continuous reinforcement every 120 frames (~2s) — only while gate is closed
+                    if (mz >= 0 && megaClearedZones[mz] && !megaClearedZones[mz + '_gateOpen']) {
+                        megaClearedZones[mz + '_tick'] = (megaClearedZones[mz + '_tick'] || 0) + 1;
+                        if (megaClearedZones[mz + '_tick'] % 60 === 0 && bats.length < MAX_BATS_MEGA * 0.8) {
+                            var rx = (1 + Math.floor(Math.random() * (COLS - 2))) * TILE + TILE / 2;
+                            // Spawn in a wider area around leader
+                            var ry = followPick.y + (Math.random() - 0.2) * 800;
+                            var ryRow = Math.floor(ry / TILE);
+                            // Clamp to mega-clearing bounds
+                            var mStartRow = getMegaStart(mz);
+                            if (ryRow < mStartRow + 5) ryRow = mStartRow + 5;
+                            if (ryRow > mStartRow + MEGA_CLEARING_HEIGHT - 10) ryRow = mStartRow + MEGA_CLEARING_HEIGHT - 10;
+                            ry = ryRow * TILE + TILE / 2;
+                            if (isMegaClearingRow(ryRow)) {
+                                spawnBat(rx, ry, mz, Math.random() < 0.25);
+                            }
+                        }
+                    }
+                }
+            }
+            checkPickBatCollisions();
+            shakeAmt *= shakeDec;
+            if (shakeAmt < 0.3) shakeAmt = 0;
+        }
+
+        function updateExplosions() {
+            for (var i = explosions.length - 1; i >= 0; i--) {
+                var ex = explosions[i];
+                if (ex.timer > 0) { ex.timer--; continue; }
+                ex.frame++;
+                if (ex.frame >= EXPLOSION_TEX.length) explosions.splice(i, 1);
+            }
+        }
+
+        function updateStorm() {
+            // Apply rainbow effects and count down per-player stormTimer
+            var allPicks = [pick].concat(userPicks, extraPicks);
+
+            for (var i = 0; i < allPicks.length; i++) {
+                var p = allPicks[i];
+                if (!p) continue;
+                if (!(p.stormTimer > 0) && !(p.swordTimer > 0)) continue;
+
+                if (p.stormTimer > 0) {
+                    p.stormTimer--;
+                    // Keep global HUD in sync with the main pick's timer
+                    if (p === pick) {
+                        stormActive = (p.stormTimer > 0);
+                        stormTimer = p.stormTimer;
+                    }
+
+                    if (_gameStarted && !p.stuck) {
+                        var hue = (p.stormTimer * 4 + i * 40) % 360;
+                        var rainbowColors = [
+                            'hsl(' + hue + ',100%,60%)',
+                            'hsl(' + ((hue + 60) % 360) + ',100%,60%)'
+                        ];
+                        for (var pi = 0; pi < 1; pi++) {
+                            var a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+                            var part = { x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1, life: 1, dec: 0.03, r: 2 + Math.random() * 3, c: rainbowColors[pi] };
+                            if (parts.length < MAX_PARTS) parts.push(part);
+                        }
+                    }
+                }
+
+                if (p.swordTimer > 0) {
+                    p.swordTimer--;
+                    if (p === pick) {
+                        swordActive = (p.swordTimer > 0);
+                        swordTimer = p.swordTimer;
+                    }
+                }
+            }
+        }
+
+        function updateFX() {
+            for (var i = parts.length - 1; i >= 0; i--) {
+                var p = parts[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life -= p.dec;
+                if (p.life <= 0) parts.splice(i, 1);
+            }
+            // Limit parts array to prevent memory leak
+            if (parts.length > MAX_PARTS) parts.splice(0, parts.length - MAX_PARTS);
+
+            for (var j = texts.length - 1; j >= 0; j--) {
+                var t = texts[j]; t.y += t.vy; t.life -= 0.018;
+                if (t.life <= 0) texts.splice(j, 1);
+            }
+            if (texts.length > MAX_TEXTS) texts.splice(0, texts.length - MAX_TEXTS);
+
+            for (var d = debris.length - 1; d >= 0; d--) {
+                var db = debris[d];
+                db.age++; db.ang += db.spin;
+
+                // Black hole debris: spiral toward center, shrink, spin faster
+                if (db._bhTarget) {
+                    var bht = db._bhTarget;
+                    var bdx = bht.x - db.x, bdy = bht.y - db.y;
+                    var bdist = Math.sqrt(bdx * bdx + bdy * bdy) || 1;
+                    // Pull toward center + perpendicular spiral
+                    var pullStr = 0.6;
+                    db.vx += (bdx / bdist) * pullStr + (bdy / bdist) * 1.5;
+                    db.vy += (bdy / bdist) * pullStr - (bdx / bdist) * 1.5;
+                    db.vx *= 0.92; db.vy *= 0.92;
+                    db.spin *= 1.04; // spin faster as it approaches
+                    db.size *= 0.985; // shrink
+                    db.x += db.vx; db.y += db.vy;
+                    db.life = Math.max(0, bdist / 300);
+                    if (bdist < 15 || db.size < 1) { debris.splice(d, 1); continue; }
+                    continue;
+                }
+
+                if (db.age < db.followFrames) {
+                    var dTarget = db.owner || pick;
+
+                    // Busca recursiva: se o alvo atual tem um dono, o alvo real é o dono
+                    var safetyCount = 0;
+                    while (dTarget && dTarget.owner && safetyCount < 3) {
+                        dTarget = dTarget.owner;
+                        safetyCount++;
+                    }
+                    // Se o alvo for um clone por nome, tenta localizar o objeto mãe
+                    if (dTarget && dTarget.cloneOwner) {
+                        var cOwner = dTarget.cloneOwner;
+                        var ownerPick = (ownerName && cOwner === ownerName) ? pick : userPicks.find(function (u) { return u.userName === cOwner; });
+                        if (ownerPick) dTarget = ownerPick;
+                    }
+
+                    var dx = (dTarget ? dTarget.x : db.x) - db.x, dy = (dTarget ? dTarget.y : db.y) - db.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                    db.vx += (dx / dist) * 0.18; db.vy += (dy / dist) * 0.18;
+                    var spd = Math.sqrt(db.vx * db.vx + db.vy * db.vy);
+                    if (spd > 5) { db.vx = db.vx / spd * 5; db.vy = db.vy / spd * 5; }
+                } else {
+                    db.vy += GRAVITY * 0.7; db.vx *= 0.97;
+                }
+                db.x += db.vx; db.y += db.vy;
+                var totalLife = db.followFrames === 0 ? 90 : db.followFrames + 50;
+                db.life = Math.max(0, 1 - db.age / totalLife);
+                if (db.life <= 0) debris.splice(d, 1);
+            }
+            if (debris.length > MAX_DEBRIS) debris.splice(0, debris.length - MAX_DEBRIS);
+
+            // Limit items array
+            if (items.length > MAX_ITEMS) items.splice(0, items.length - MAX_ITEMS);
+
+            shakeAmt *= shakeDec;
+            if (shakeAmt < 0.3) shakeAmt = 0;
+        }
+
+        // ── Background: Caverna com Cristais ──────────────────────────────────────────
+        var bgTick = 0;
+        var bgChunks = {};
+        var BG_CHUNK = 5;
+
+        function bgRng(seed) {
+            return function () { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
+        }
+
+        function bgPalette(depth) {
+            if (depth < 12) return { bg1: '#04081a', bg2: '#080e2a', crystals: ['#1a5aaa', '#2277ee', '#44aaff', '#88ccff', '#cceeff'], vein: '#3366cc', fog: '#1a3a8a' };
+            if (depth < 25) return { bg1: '#0d0420', bg2: '#1a0830', crystals: ['#771aaa', '#8844dd', '#bb66ff', '#ddaaff', '#f0ddff'], vein: '#7722bb', fog: '#3a1a6a' };
+            if (depth < 50) return { bg1: '#001a12', bg2: '#00281e', crystals: ['#007755', '#00bb88', '#33ffcc', '#88ffee', '#ccffee'], vein: '#00aa66', fog: '#004433' };
+            return { bg1: '#1a0800', bg2: '#2e0e00', crystals: ['#aa3300', '#ee5500', '#ff8833', '#ffbb77', '#ffeedd'], vein: '#cc4400', fog: '#441100' };
+        }
+
+        function getBgChunk(ci) {
+            if (bgChunks[ci]) return bgChunks[ci];
+            var rng = bgRng(ci * 6271 + 9337);
+            var chunkH = BG_CHUNK * TILE, chunkY = ci * chunkH, depth = ci * BG_CHUNK;
+            var pal = bgPalette(depth);
+            var items = [];
+            // cristais grandes de fundo
+            for (var i = 0; i < 6; i++) {
+                var x = TILE * 1.5 + rng() * (canvas.width - TILE * 3);
+                var y = chunkY + rng() * chunkH;
+                var h = 60 + rng() * 120, w = 10 + rng() * 18;
+                items.push({ type: 'crystal', x: x, y: y, h: h, w: w, col: pal.crystals[0 | rng() * pal.crystals.length], flip: rng() > 0.5, alpha: 0.12 + rng() * 0.14, phase: rng() * Math.PI * 2, spd: 0.006 + rng() * 0.01, layer: 0 });
+            }
+            // cristais médios
+            for (var i = 0; i < 9; i++) {
+                var x = TILE + rng() * (canvas.width - TILE * 2);
+                var y = chunkY + rng() * chunkH;
+                var h = 30 + rng() * 80, w = 6 + rng() * 13;
+                items.push({ type: 'crystal', x: x, y: y, h: h, w: w, col: pal.crystals[0 | rng() * pal.crystals.length], flip: rng() > 0.5, alpha: rng() * 0.28, phase: rng() * Math.PI * 2, spd: 0.01 + rng() * 0.018, layer: 1 });
+            }
+            // cristais pequenos brilhantes (frente)
+            for (var i = 0; i < 8; i++) {
+                var x = TILE + rng() * (canvas.width - TILE * 2);
+                var y = chunkY + rng() * chunkH;
+                var h = 12 + rng() * 35, w = 3 + rng() * 7;
+                items.push({ type: 'crystal', x: x, y: y, h: h, w: w, col: pal.crystals[0 | rng() * pal.crystals.length], flip: rng() > 0.5, alpha: 0.5 + rng() * 0.45, phase: rng() * Math.PI * 2, spd: 0.018 + rng() * 0.03, layer: 2 });
+            }
+            // veias de minério
+            for (var i = 0; i < 5; i++) {
+                var x1 = rng() * canvas.width, y1 = chunkY + rng() * chunkH;
+                var len = 40 + rng() * 120, ang = (rng() - 0.5) * 1.2;
+                items.push({ type: 'vein', x1: x1, y1: y1, x2: x1 + Math.cos(ang) * len, y2: y1 + Math.sin(ang) * len, col: pal.vein, w: 1 + rng() * 2.5, alpha: 0.08 + rng() * 0.25, phase: rng() * Math.PI * 2, spd: 0.005 + rng() * 0.02 });
+            }
+            // pontos de luz (orbs)
+            for (var i = 0; i < 4; i++) {
+                items.push({ type: 'orb', x: TILE + rng() * (canvas.width - TILE * 2), y: chunkY + rng() * chunkH, r: 18 + rng() * 45, col: pal.crystals[0 | rng() * pal.crystals.length], alpha: 0.06 + rng() * 0.1, phase: rng() * Math.PI * 2, spd: 0.007 + rng() * 0.015 });
+            }
+            bgChunks[ci] = { items: items, pal: pal };
+            return bgChunks[ci];
+        }
+
+        function drawCrystalShape(cx, x, sy, w, h, flip) {
+            cx.beginPath();
+            if (!flip) {
+                cx.moveTo(x, sy); cx.lineTo(x - w / 2, sy + h * 0.22);
+                cx.lineTo(x - w * 0.4, sy + h * 0.55); cx.lineTo(x - w / 2, sy + h * 0.78);
+                cx.lineTo(x, sy + h); cx.lineTo(x + w / 2, sy + h * 0.78);
+                cx.lineTo(x + w * 0.4, sy + h * 0.55); cx.lineTo(x + w / 2, sy + h * 0.22);
+            } else {
+                cx.moveTo(x, sy + h); cx.lineTo(x - w / 2, sy + h * 0.78);
+                cx.lineTo(x - w * 0.4, sy + h * 0.45); cx.lineTo(x - w / 2, sy + h * 0.22);
+                cx.lineTo(x, sy); cx.lineTo(x + w / 2, sy + h * 0.22);
+                cx.lineTo(x + w * 0.4, sy + h * 0.45); cx.lineTo(x + w / 2, sy + h * 0.78);
+            }
+            cx.closePath();
+        }
+
+        // ── Weather/Sky System — changes every 100m with smooth transitions ──
+        var WEATHER_TYPES = [
+            { name: 'sunny', sky1: '#4a90d9', sky2: '#87ceeb', decor: ['clouds', 'birds'] },
+            { name: 'rainbow', sky1: '#88bbff', sky2: '#aaddff', decor: ['clouds', 'rainbow'] },
+            { name: 'sunset', sky1: '#ff8855', sky2: '#ffd700', decor: ['birds', 'clouds'] },
+            { name: 'starry', sky1: '#0a0a3e', sky2: '#1a1a5e', decor: ['stars', 'comets', 'planets'] },
+            { name: 'snow', sky1: '#aabbcc', sky2: '#ddeeff', decor: ['snow', 'clouds'] },
+            { name: 'spring', sky1: '#55bb55', sky2: '#99dd99', decor: ['balloons', 'birds', 'clouds'] },
+            { name: 'dawn', sky1: '#ff9a76', sky2: '#ffecd2', decor: ['birds', 'clouds'] },
+            { name: 'aurora', sky1: '#0a1a3a', sky2: '#1a3a5a', decor: ['aurora', 'stars'] },
+            { name: 'cotton', sky1: '#ddbbff', sky2: '#ffccee', decor: ['clouds', 'balloons'] },
+            { name: 'golden', sky1: '#ffbb33', sky2: '#ffee99', decor: ['balloons', 'birds', 'clouds'] }
+        ];
+        var _bgElements = [];
+        var _prevSky = { sky1: '#4a90d9', sky2: '#87ceeb' };
+        var _curSky = { sky1: '#4a90d9', sky2: '#87ceeb' };
+        var _skyBlend = 1;
+        var _lastWeatherZone = -1;
+
+        function getWeather() {
+            var zone = Math.floor(maxDepth / 100);
+            return WEATHER_TYPES[zone % WEATHER_TYPES.length];
+        }
+
+        function _hexToRgb(hex) { var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); return [r, g, b]; }
+        function _lerpColor(c1, c2, t) { var a = _hexToRgb(c1), b = _hexToRgb(c2); return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' + Math.round(a[1] + (b[1] - a[1]) * t) + ',' + Math.round(a[2] + (b[2] - a[2]) * t) + ')'; }
+
+        function updateWeatherParticles() {
+            var w = getWeather();
+            var zone = Math.floor(maxDepth / 100);
+            var W = canvas.width, H = canvas.height;
+            if (zone !== _lastWeatherZone) {
+                _prevSky = { sky1: _curSky.sky1, sky2: _curSky.sky2 };
+                _curSky = { sky1: w.sky1, sky2: w.sky2 };
+                _skyBlend = 0;
+                _lastWeatherZone = zone;
+                var types = w.decor;
+                for (var ti = 0; ti < types.length; ti++) {
+                    var dt = types[ti];
+                    if (dt === 'clouds') { for (var i = 0; i < 4; i++) _bgElements.push({ type: 'cloud', x: Math.random() * W * 1.5 - W * 0.25, y: H * 0.02 + Math.random() * H * 0.35, w: 200 + Math.random() * 500, speed: 0.1 + Math.random() * 0.25, life: 600 + Math.random() * 400 }); }
+                    if (dt === 'birds') { for (var i = 0; i < 4; i++) _bgElements.push({ type: 'bird', x: -50 - Math.random() * 200, y: H * 0.03 + Math.random() * H * 0.3, speed: 0.3 + Math.random() * 0.5, phase: Math.random() * Math.PI * 2, life: 500 + Math.random() * 300 }); }
+                    if (dt === 'balloons') { for (var i = 0; i < 5; i++) _bgElements.push({ type: 'balloon', x: Math.random() * W, y: H + Math.random() * 200, r: 40 + Math.random() * 90, color: 'hsl(' + Math.floor(Math.random() * 360) + ',80%,60%)', speed: 0.05 + Math.random() * 0.15, life: 800 + Math.random() * 400 }); }
+                    if (dt === 'stars') { for (var i = 0; i < 20; i++) _bgElements.push({ type: 'star', x: Math.random() * W, y: Math.random() * H * 0.5, size: 2.5 + Math.random() * 12.5, twinkle: Math.random() * Math.PI * 2, life: 900 + Math.random() * 300 }); }
+                    if (dt === 'comets') { for (var i = 0; i < 1; i++) _bgElements.push({ type: 'comet', x: -50, y: Math.random() * H * 0.3, speed: 2 + Math.random() * 3, angle: 0.3 + Math.random() * 0.4, life: 200 + Math.random() * 100 }); }
+                    if (dt === 'planets') { _bgElements.push({ type: 'planet', x: W * 0.2 + Math.random() * W * 0.6, y: H * 0.08 + Math.random() * H * 0.15, r: 75 + Math.random() * 125, color: 'hsl(' + Math.floor(Math.random() * 360) + ',40%,50%)', life: 900 }); }
+                    if (dt === 'snow') { for (var i = 0; i < 20; i++) _bgElements.push({ type: 'snow', x: Math.random() * W, y: -Math.random() * H, vx: (Math.random() - 0.5) * 0.8, vy: 0.4 + Math.random() * 1.2, size: 7.5 + Math.random() * 15, life: 500 + Math.random() * 300 }); }
+                    if (dt === 'rainbow') { _bgElements.push({ type: 'rainbow', life: 800 }); }
+                    if (dt === 'aurora') { for (var i = 0; i < 2; i++) _bgElements.push({ type: 'aurora', idx: i, life: 900 }); }
+                }
+            }
+            if (_skyBlend < 1) _skyBlend = Math.min(1, _skyBlend + 0.008);
+
+            // Continuous respawn — keep elements populated across the whole screen
+            var types = w.decor;
+            var counts = {};
+            for (var ci = 0; ci < _bgElements.length; ci++) counts[_bgElements[ci].type] = (counts[_bgElements[ci].type] || 0) + 1;
+            for (var ti = 0; ti < types.length; ti++) {
+                var dt = types[ti];
+                if (dt === 'clouds' && (counts.cloud || 0) < 3) _bgElements.push({ type: 'cloud', x: -100 - Math.random() * 100, y: Math.random() * H * 0.4, w: 200 + Math.random() * 500, speed: 0.1 + Math.random() * 0.25, life: 600 + Math.random() * 400 });
+                if (dt === 'birds' && (counts.bird || 0) < 3) _bgElements.push({ type: 'bird', x: -50 - Math.random() * 100, y: Math.random() * H * 0.35, speed: 0.3 + Math.random() * 0.5, phase: Math.random() * Math.PI * 2, life: 500 + Math.random() * 300 });
+                if (dt === 'balloons' && (counts.balloon || 0) < 4) _bgElements.push({ type: 'balloon', x: Math.random() * W, y: H + 20, r: 40 + Math.random() * 90, color: 'hsl(' + Math.floor(Math.random() * 360) + ',80%,60%)', speed: 0.05 + Math.random() * 0.15, life: 800 + Math.random() * 400 });
+                if (dt === 'stars' && (counts.star || 0) < 15) _bgElements.push({ type: 'star', x: Math.random() * W, y: Math.random() * H * 0.6, size: 2.5 + Math.random() * 12.5, twinkle: Math.random() * Math.PI * 2, life: 900 + Math.random() * 300 });
+                if (dt === 'snow' && (counts.snow || 0) < 15) _bgElements.push({ type: 'snow', x: Math.random() * W, y: -5, vx: (Math.random() - 0.5) * 0.8, vy: 0.4 + Math.random() * 1.2, size: 7.5 + Math.random() * 15, life: 500 + Math.random() * 300 });
+                if (dt === 'comets' && (counts.comet || 0) < 1 && Math.random() < 0.005) _bgElements.push({ type: 'comet', x: -50, y: Math.random() * H * 0.3, speed: 2 + Math.random() * 3, angle: 0.3 + Math.random() * 0.4, life: 200 + Math.random() * 100 });
+                if (dt === 'aurora' && (counts.aurora || 0) < 2) _bgElements.push({ type: 'aurora', idx: Math.floor(Math.random() * 4), life: 900 });
+                if (dt === 'rainbow' && (counts.rainbow || 0) < 1) _bgElements.push({ type: 'rainbow', life: 800 });
+            }
+            for (var i = _bgElements.length - 1; i >= 0; i--) {
+                var e = _bgElements[i]; e.life--;
+                if (e.life <= 0) { _bgElements.splice(i, 1); continue; }
+                if (e.type === 'cloud') { e.x += e.speed; if (e.x > W + 150) e.x = -150; }
+                else if (e.type === 'bird') { e.x += e.speed; e.phase += 0.1; if (e.x > W + 100) e.x = -80; }
+                else if (e.type === 'balloon') { e.y -= e.speed; e.x += Math.sin(Date.now() * 0.002 + i) * 0.2; if (e.y < -50) e.y = H + 50; }
+                else if (e.type === 'star') { e.twinkle += 0.04; }
+                else if (e.type === 'comet') { e.x += e.speed; e.y += e.speed * e.angle; if (e.x > W + 50) { e.x = -50; e.y = Math.random() * H * 0.3; } }
+                else if (e.type === 'snow') { e.x += e.vx; e.y += e.vy; if (e.y > H + 10) { e.y = -5; e.x = Math.random() * W; } }
+            }
+        }
+
+        function drawWeatherOverlay() {
+            if (bgVideoActive) return; // Desabilita fundo dinâmico quando vídeo está ativo
+            var W = canvas.width, H = canvas.height, t = Date.now() * 0.001;
+            ctx.save();
+            var s1 = _lerpColor(_prevSky.sky1, _curSky.sky1, _skyBlend);
+            var s2 = _lerpColor(_prevSky.sky2, _curSky.sky2, _skyBlend);
+            // Full sky gradient
+            if (!bgVideoActive) {
+                ctx.globalAlpha = 1;
+                var sg = ctx.createLinearGradient(0, 0, 0, H); sg.addColorStop(0, s1); sg.addColorStop(1, s2);
+                ctx.fillStyle = sg; ctx.fillRect(0, 0, W, H);
+            }
+            for (var i = 0; i < _bgElements.length; i++) {
+                var e = _bgElements[i];
+                var fi = Math.min(1, (800 - e.life) / 60), fo = Math.min(1, e.life / 60), al = Math.min(fi, fo);
+                if (e.type === 'cloud') { ctx.globalAlpha = 0.4 * al; ctx.fillStyle = '#fff'; var cw = e.w; ctx.beginPath(); ctx.arc(e.x, e.y, cw * 0.3, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(e.x + cw * 0.22, e.y - cw * 0.12, cw * 0.25, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(e.x - cw * 0.18, e.y + cw * 0.05, cw * 0.22, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(e.x + cw * 0.12, e.y + cw * 0.1, cw * 0.2, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(e.x - cw * 0.08, e.y - cw * 0.08, cw * 0.18, 0, Math.PI * 2); ctx.fill(); }
+                else if (e.type === 'bird') { ctx.globalAlpha = 0.5 * al; ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5; var wy = Math.sin(e.phase) * 5; ctx.beginPath(); ctx.moveTo(e.x - 50, e.y + wy); ctx.quadraticCurveTo(e.x - 20, e.y - 30 + wy, e.x, e.y); ctx.quadraticCurveTo(e.x + 20, e.y - 30 + wy, e.x + 10, e.y + wy); ctx.stroke(); }
+                else if (e.type === 'balloon') { ctx.globalAlpha = 0.5 * al; ctx.fillStyle = e.color; ctx.beginPath(); ctx.ellipse(e.x, e.y, e.r * 0.75, e.r, 0, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(e.x, e.y + e.r); ctx.lineTo(e.x + Math.sin(t + i) * 4, e.y + e.r + 25); ctx.stroke(); ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(e.x - e.r * 0.2, e.y - e.r * 0.3, e.r * 0.18, 0, Math.PI * 2); ctx.fill(); }
+                else if (e.type === 'star') { var tw = 0.2 + Math.sin(e.twinkle) * 0.3; ctx.globalAlpha = tw * al; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2); ctx.fill(); if (e.size > 1.5 && tw > 0.35) { ctx.strokeStyle = 'rgba(255,255,255,' + (tw * 0.5) + ')'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(e.x - e.size * 2, e.y); ctx.lineTo(e.x + e.size * 2, e.y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(e.x, e.y - e.size * 2); ctx.lineTo(e.x, e.y + e.size * 2); ctx.stroke(); } }
+                else if (e.type === 'comet') {
+                    ctx.globalAlpha = 0.6 * al; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(e.x, e.y, 8, 0, Math.PI * 2); ctx.fill();
+                    function isInWater(px, py) {
+                        return false;
+                    }
+                }
+                else if (e.type === 'planet') { ctx.globalAlpha = 0.35 * al; var pg = ctx.createRadialGradient(e.x - e.r * 0.2, e.y - e.r * 0.2, 0, e.x, e.y, e.r); pg.addColorStop(0, e.color); pg.addColorStop(1, 'rgba(0,0,0,0.3)'); ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(e.x, e.y, e.r * 1.5, e.r * 0.3, 0.2, 0, Math.PI * 2); ctx.stroke(); }
+                else if (e.type === 'snow') { ctx.globalAlpha = 0.7 * al; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2); ctx.fill(); }
+                else if (e.type === 'rainbow') { ctx.globalAlpha = 0.18 * al; var rc = ['#ff0000', '#ff8800', '#ffff00', '#00ff00', '#0088ff', '#4400ff', '#8800ff']; for (var ri = 0; ri < rc.length; ri++) { ctx.strokeStyle = rc[ri]; ctx.lineWidth = 30; ctx.beginPath(); ctx.arc(W * 0.5, H * 0.7, W * 0.6 - ri * 35, Math.PI, 0); ctx.stroke(); } }
+                else if (e.type === 'aurora') { ctx.globalAlpha = 0.15 * al; var ay = H * 0.06 + e.idx * 22 + Math.sin(t + e.idx) * 12; var ag = ctx.createLinearGradient(0, ay, W, ay); ag.addColorStop(0, '#00ff88'); ag.addColorStop(0.3, '#00ffcc'); ag.addColorStop(0.6, '#8844ff'); ag.addColorStop(1, '#00ff88'); ctx.fillStyle = ag; ctx.fillRect(0, ay, W, 10 + Math.sin(t * 2 + e.idx) * 5); }
+            }
+            ctx.globalAlpha = 1; ctx.restore();
+        }
+
+        function drawBackground() {
+            bgTick++;
+            // Sky is drawn by drawWeatherOverlay — just clear
+            if (!bgVideoActive) {
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+        function isInWater(px, py) {
+            return false;
+        }
+
+        function drawPlayerCooldowns(context, px, py, userName) {
+            var avRadius = 24;
+            var skills = [
+                { id: '_nuke', color: '#ff4400', label: '☢', maxKey: 'nuke' },
+                { id: '_thor', color: '#00ffff', label: '⚡', maxKey: 'thor' },
+                { id: '_clone', color: '#44ffaa', label: '👥', maxKey: 'clone' },
+                { id: '_storm', color: '#ff88ff', label: '🏓', maxKey: 'storm' },
+                { id: '_sword', color: '#ff4444', label: '⚔️', maxKey: 'sword' },
+                { id: '_blackhole', color: '#8800ff', label: '🕳️', maxKey: 'blackhole' },
+                { id: '_big', color: '#44aaff', label: '🍄', maxKey: 'big' },
+                { id: '_creeper', color: '#00ff66', label: '💣', maxKey: 'creeper' }
+            ];
+            var maxMap = { nuke: nukeCooldown, thor: thorCooldown, clone: cloneCooldown, storm: stormCooldown, sword: SWORD_DURATION + SWORD_COOLDOWN, blackhole: blackholeCooldown, big: bigCooldown, creeper: creeperCooldown };
+
+
+            context.save();
+            var anyActive = false;
+            for (var i = 0; i < skills.length; i++) {
+                var key = userName + skills[i].id;
+                var timeLeft = skillCooldowns[key] || 0;
+                if (timeLeft > 0) { anyActive = true; break; }
+            }
+            if (!anyActive) { context.restore(); return; }
+
+            context.translate(px, py);
+
+            for (var i = 0; i < skills.length; i++) {
+                var key = userName + skills[i].id;
+                var timeLeft = skillCooldowns[key] || 0;
+                if (timeLeft <= 0) continue;
+
+                var maxVal = maxMap[skills[i].maxKey] || 1;
+                var pct = timeLeft / maxVal;
+                var r = avRadius + (i * 5);
+
+                // background circle (track)
+                context.globalAlpha = 0.25;
+                context.strokeStyle = skills[i].color;
+                context.lineWidth = 3;
+                context.beginPath();
+                context.arc(0, 0, r, 0, Math.PI * 2);
+                context.stroke();
+
+                // foreground arc (remaining)
+                context.globalAlpha = 0.9;
+                context.strokeStyle = skills[i].color;
+                context.lineWidth = 3;
+                context.beginPath();
+                context.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct);
+                context.stroke();
+
+                // seconds remaining text
+                var secs = Math.ceil(timeLeft / 60);
+                context.globalAlpha = 1;
+                context.fillStyle = skills[i].color;
+                context.font = 'bold 9px Arial';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                var tx = Math.cos(-Math.PI / 2 + Math.PI * 2 * pct) * (r + 6);
+                var ty = Math.sin(-Math.PI / 2 + Math.PI * 2 * pct) * (r + 6);
+                context.fillText(secs + 's', tx, ty);
+            }
+            context.restore();
+        }
+
+
+        function drawPickaxeSprite(p) {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.ang);
+
+            if (p._bhScale !== undefined) {
+                ctx.scale(p._bhScale, p._bhScale);
+                ctx.rotate(p._bhSpin || 0);
+            }
+
+            var scale = (p.bigTimer > 0) ? BIG_SCALE : 1;
+            if (p.isCompanion) scale *= 0.85; // um pouco menor
+            if (scale !== 1) ctx.scale(scale, scale);
+
+            var pickData = p.pickaxe || currentPickaxe;
+            var pickImg = pickData.imgObj;
+
+            if (pickImg && pickImg.complete && pickImg.naturalWidth > 0) {
+                var hMask = pickData.headMask;
+                if (SHADOW_ENABLED && hMask && !(p.swordTimer > 0)) {
+                    ctx.save();
+                    var pulse = (Math.sin(Date.now() * 0.004 + (p.companionIdx || 0)) + 1) / 2;
+                    ctx.globalAlpha = p.isCompanion ? 0.6 : 1.0;
+                    if (SHADOW_ENABLED) {
+                        ctx.shadowBlur = p.isCompanion ? 8 : (12 + pulse * 18);
+                        ctx.shadowColor = pickData.color || '#fff';
+                    }
+                    ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    ctx.restore();
+                }
+
+                var tex = pickImg;
+                if (p.isSteve && steveFrames.length > 0) {
+                    var frame = Math.floor((Date.now() / 50) % steveFrames.length);
+                    tex = steveFrames[frame];
+                    ctx.drawImage(tex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
+                } else if (p.isHomer && HOMER_PICKAXE.imgObj.complete) {
+                    tex = HOMER_PICKAXE.imgObj;
+                    ctx.drawImage(tex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
+                } else if (p.isChicken) {
+                    var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
+                    tex = chickenFrames[frame];
+                    ctx.drawImage(tex, -PICK_HALF * 1.5, -PICK_HALF * 1.5, PICK_HALF * 3, PICK_HALF * 3);
+                } else {
+                    var animFrames = null;
+                    var sType = '';
+                    if (p.isExtraSword) {
+                        sType = p.swordType || 'Wood';
+                        animFrames = ENCHANTED_SWORD_FRAMES[sType];
+                    } else if (p.isGoldSword) {
+                        sType = 'Gold';
+                        animFrames = enchantedGoldSwordFrames;
+                    } else if (p.isDiamondSword) {
+                        sType = 'Diamond';
+                        animFrames = enchantedDiamondSwordFrames;
+                    }
+
+                    if (animFrames && animFrames.length > 0) {
+                        var frameIdx = Math.floor((Date.now() / 33) % animFrames.length);
+                        var frameImg = animFrames[frameIdx];
+                        if (frameImg && frameImg.complete && frameImg.naturalWidth > 0) {
+                            tex = frameImg;
+                        } else {
+                            if (SWORD_ASSETS[sType]) tex = SWORD_ASSETS[sType];
+                            else if (p.swordTimer > 0 && SWORD_ASSETS[pickData.name || 'Wood']) tex = SWORD_ASSETS[pickData.name || 'Wood'];
+                        }
+                    } else if (p.swordTimer > 0) {
+                        var mat = pickData.name || 'Wood';
+                        if (SWORD_ASSETS[mat]) tex = SWORD_ASSETS[mat];
+                    }
+                    if (tex) ctx.drawImage(tex, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                }
+            } else if (pickData.color) {
+                ctx.fillStyle = pickData.color;
+                ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+            }
+            ctx.restore();
+        }
+
+        function drawPickaxeInfo(p) {
+            if (!p.userName) return;
+            ctx.save();
+            var avImg = (p.userAvatarUrl && avatarCache[p.userAvatarUrl]) || null;
+
+            // Auto-precarregamento se não estiver no cache
+            if (p.userAvatarUrl && !avImg) {
+                loadAvatar(p.userAvatarUrl);
+            } else if (!p.userAvatarUrl && persistentScores[p.userName] && persistentScores[p.userName].avatar) {
+                p.userAvatarUrl = persistentScores[p.userName].avatar;
+                loadAvatar(p.userAvatarUrl);
+            }
+
+            var avSize = p.isCompanion ? 32 : 48;
+            var avY = p.y - PICK_HALF - (p.isCompanion ? 34 : 44);
+
+            if (avImg && avImg.complete && avImg.naturalWidth > 0) {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.clip();
+                try { ctx.drawImage(avImg, p.x - 10 - avSize, avY - avSize / 2, avSize, avSize); } catch (e) { }
+                ctx.restore();
+                ctx.strokeStyle = (p.isCompanion ? '#aaa' : (p.color || '#ffdd44'));
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.stroke();
+            } else {
+                ctx.save();
+                ctx.fillStyle = (p.isCompanion ? '#aaa' : (p.color || '#ffdd44'));
+                ctx.beginPath(); ctx.arc(p.x - 10 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#000'; ctx.font = 'bold ' + Math.floor(avSize * 0.4) + 'px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText((p.userName || '?').replace('@', '').charAt(0).toUpperCase(), p.x - 10 - avSize / 2, avY);
+                ctx.restore();
+            }
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold ' + (p.isCompanion ? '16px' : '26px') + ' Arial';
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.strokeStyle = '#000'; ctx.lineWidth = p.isCompanion ? 3 : 4; ctx.lineJoin = 'round';
+            ctx.strokeText(p.userName, p.x + 10, avY);
+            if (SHADOW_ENABLED) { ctx.shadowBlur = p.isCompanion ? 4 : 8; ctx.shadowColor = '#000'; }
+            ctx.fillText(p.userName, p.x + 10, avY);
+
+            if (!p.isCompanion) {
+                drawPlayerCooldowns(ctx, p.x - 10 - avSize / 2, avY, p.userName);
+
+                // Desenhar Bandeira (se houver)
+                var ps = persistentScores[p.userName];
+                if (ps && ps.countryCode) {
+                    var fImg = getFlagImage(ps.countryCode);
+                    if (fImg.complete) {
+                        var fW = 40, fH = 26;
+                        var baseAX = p.x - 10 - avSize;
+                        var baseAY = avY - avSize / 2;
+                        ctx.save();
+                        ctx.translate(baseAX, baseAY);
+                        ctx.rotate(-0.4);
+                        ctx.strokeStyle = '#ddd'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -35); ctx.stroke();
+                        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(2, -35 + 2, fW, fH);
+                        ctx.drawImage(fImg, 0, -35, fW, fH);
+                        ctx.restore();
+                    }
+                }
+            }
+            ctx.restore();
+        }
+
+        function draw() {
+            // Always clear canvas first
+            if (chromaKey) {
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                drawBackground();
+                drawWeatherOverlay();
+            }
+            ctx.save();
+            var sx = shakeAmt > 0 ? (Math.random() - 0.5) * 2 * shakeAmt : 0;
+            var sy = shakeAmt > 0 ? (Math.random() - 0.5) * 2 * shakeAmt : 0;
+            ctx.translate(Math.floor(sx), Math.floor(sy - camY)); // aplica câmera + tremor arredondado
+
+            // ── Ender Dragon (Atrás dos blocos, Fase: behind) ──
+            if (dragonActive && dragonPhase === 'behind') {
+                var df = dragonFrames[dragonFrameIdx];
+                if (df && df.complete && df.naturalWidth > 0) {
+                    ctx.save();
+                    ctx.translate(dragonX, dragonY);
+                    // No phase behind (R->L), o dragão já está apontado para a esquerda (original)
+                    ctx.drawImage(df, -400, -200, 800, 400);
+                    ctx.restore();
+                }
+            }
+
+            // linhas visíveis
+            var rStart = Math.floor(camY / TILE);
+            var rEnd = Math.ceil((camY + canvas.height) / TILE) + 1;
+
+            // Ore shimmer set — blocks that glow
+            var _oreShimmer = { 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 16: 1, 17: 1 };
+            var _shimmerTime = Date.now() * 0.003;
+
+            // Pass 1: 3D faces removed for extreme performance
+
+            // Pass 2: Front faces + shimmer + cracks (drawn ON TOP of 3D faces)
+            for (var r = rStart; r <= rEnd; r++) {
+                for (var c = 0; c < COLS; c++) {
+                    var cell = getCell(r, c);
+                    if (!cell || cell.t === E) continue;
+                    var x = c * TILE;
+                    var y = r * TILE;
+                    var tex = BTEX[cell.t];
+
+                    if (tex && tex.complete && tex.naturalWidth > 0) {
+                        ctx.drawImage(tex, x - 0.5, y - 0.5, TILE + 1, TILE + 1);
+                    } else {
+                        ctx.fillStyle = BDEF[cell.t].color;
+                        ctx.fillRect(x - 0.5, y - 0.5, TILE + 1, TILE + 1);
+                    }
+
+                    // Custom Bonus Box rendering (Sheep or Pig Egg)
+                    if (cell.t === BONUS_BOX) {
+                        var isPigEgg = ((r + c) % 2 === 0);
+                        var eggImg = isPigEgg ? PIG_EGG_TEX : SHEEP_EGG_TEX;
+                        if (eggImg.complete) {
+                            ctx.drawImage(eggImg, x, y, TILE, TILE);
+                        } else {
+                            ctx.fillStyle = '#ffcc00';
+                            ctx.fillRect(x, y, TILE, TILE);
+                            ctx.strokeStyle = '#aa6600';
+                            ctx.lineWidth = 1.5;
+                            ctx.strokeRect(x + 1, y + 1, TILE - 2, TILE - 2);
+                            ctx.fillStyle = '#fff';
+                            ctx.font = (TILE * 0.5) + 'px sans-serif';
+                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                            ctx.fillText(isPigEgg ? '🥚🐖' : '🥚🐑', x + TILE / 2, y + TILE / 2);
+                        }
+                    }
+
+                    if (SHIMMER_ENABLED && _oreShimmer[cell.t]) {
+                        var phase = _shimmerTime + r * 0.7 + c * 0.5;
+                        var glow = (Math.sin(phase) + 1) * 0.5;
+                        var alpha = 0.05 + glow * 0.2;
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.globalAlpha = alpha;
+                        if (tex && tex.complete && tex.naturalWidth > 0) {
+                            ctx.drawImage(tex, x - 0.5, y - 0.5, TILE + 1, TILE + 1);
+                        }
+                        ctx.restore();
+                    }
+                    if (cell.cr > 0.01) {
+                        var stage = Math.min(9, Math.floor(cell.cr * 10));
+                        var dtex = DESTROY_TEX[stage];
+                        if (dtex && dtex.complete && dtex.naturalWidth > 0) {
+                            ctx.drawImage(dtex, x, y, TILE, TILE);
+                        }
+                    }
+                }
+            }
+
+            // Water system completely removed
+            drawFallingBlocks();
+            drawBonusBalls();
+
+            // Crystal decorations growing from clearing walls
+            var viewTop = camY - TILE * 2;
+            var viewBot = camY + canvas.height + TILE * 2;
+            ctx.globalAlpha = 0.9;
+            for (var ci = crystalDecoList.length - 1; ci >= 0; ci--) {
+                var cd = crystalDecoList[ci];
+                if (cd.y < camY - 2000) { crystalDecoList.splice(ci, 1); continue; }
+                if (cd.y < viewTop || cd.y > viewBot) continue;
+                // Remove crystal if its wall block was destroyed (check every ~30 frames to save perf)
+                if ((bgTick + ci) % 30 === 0) {
+                    var wCell = getCell(cd.wallRow, cd.wallCol);
+                    if (!wCell || wCell.t === E) { crystalDecoList.splice(ci, 1); continue; }
+                }
+                var sprites = crystalSprites[cd.type];
+                if (!sprites) continue;
+                var cimg = sprites[cd.variant];
+                if (!cimg || !cimg.complete) continue;
+                var sz = TILE * cd.scale;
+                ctx.save();
+                ctx.translate(cd.x, cd.y);
+                ctx.rotate(cd.rotation);
+                ctx.drawImage(cimg, -sz / 2, -sz * 0.8, sz, sz);
+                ctx.restore();
+            }
+            ctx.globalAlpha = 1;
+
+            // ── Torches with light and shadow ──
+            var tTime = Date.now() * 0.005;
+            for (var ti = 0; ti < torchList.length; ti++) {
+                var torch = torchList[ti];
+                if (torch.y < camY - 2000) { torchList.splice(ti, 1); ti--; continue; }
+                if (torch.y < viewTop - TILE * 3 || torch.y > viewBot + TILE * 3) continue;
+                // Remove torch if wall block destroyed
+                if ((bgTick + ti) % 60 === 0) {
+                    var twc = getCell(torch.wallRow, torch.wallCol);
+                    if (!twc || twc.t === E) { torchList.splice(ti, 1); ti--; continue; }
+                }
+                var tx = torch.x, ty = torch.y;
+                var flicker = 0.7 + Math.sin(tTime * 3 + ti * 2.1) * 0.15 + Math.sin(tTime * 7 + ti * 5.3) * 0.1 + Math.random() * 0.05;
+                var lightR = TILE * 6 * flicker;
+
+                // Light glow (drawn behind everything via globalCompositeOperation)
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                var lg = ctx.createRadialGradient(tx, ty, 0, tx, ty, lightR);
+                lg.addColorStop(0, 'rgba(255,180,60,' + (0.12 * flicker) + ')');
+                lg.addColorStop(0.3, 'rgba(255,120,20,' + (0.06 * flicker) + ')');
+                lg.addColorStop(1, 'rgba(255,80,0,0)');
+                ctx.fillStyle = lg;
+                ctx.beginPath(); ctx.arc(tx, ty, lightR, 0, Math.PI * 2); ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.restore();
+
+                // Torch stick
+                ctx.save();
+                ctx.fillStyle = '#5a3a1a';
+                ctx.fillRect(tx - 6, ty, 12, 54);
+                // Torch head
+                ctx.fillStyle = '#8a5a2a';
+                ctx.fillRect(tx - 12, ty - 6, 24, 18);
+
+                // Flame (animated)
+                var fh = 30 + Math.sin(tTime * 4 + ti * 3) * 9;
+                var fw = 15 + Math.sin(tTime * 6 + ti * 1.7) * 4.5;
+                // Outer flame (orange)
+                ctx.fillStyle = 'rgba(255,120,20,' + (0.8 * flicker) + ')';
+                ctx.beginPath();
+                ctx.moveTo(tx - fw, ty - 6);
+                ctx.quadraticCurveTo(tx - fw * 0.3, ty - fh * 0.7, tx, ty - fh);
+                ctx.quadraticCurveTo(tx + fw * 0.3, ty - fh * 0.7, tx + fw, ty - 6);
+                ctx.fill();
+                // Inner flame (yellow)
+                ctx.fillStyle = 'rgba(255,220,80,' + (0.9 * flicker) + ')';
+                ctx.beginPath();
+                ctx.moveTo(tx - fw * 0.5, ty - 6);
+                ctx.quadraticCurveTo(tx - fw * 0.15, ty - fh * 0.5, tx, ty - fh * 0.7);
+                ctx.quadraticCurveTo(tx + fw * 0.15, ty - fh * 0.5, tx + fw * 0.5, ty - 6);
+                ctx.fill();
+                // Core (white-hot)
+                ctx.fillStyle = 'rgba(255,255,200,' + (0.7 * flicker) + ')';
+                ctx.beginPath();
+                ctx.arc(tx, ty - 9, 7.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // Occasional spark particle
+                if (Math.random() < 0.02) {
+                    parts.push({
+                        x: tx + (Math.random() - 0.5) * 6,
+                        y: ty - fh - Math.random() * 5,
+                        vx: (Math.random() - 0.5) * 1.5,
+                        vy: -0.8 - Math.random() * 1.2,
+                        life: 0.6 + Math.random() * 0.4,
+                        dec: 0.03 + Math.random() * 0.02,
+                        r: 1 + Math.random() * 1.5,
+                        c: Math.random() < 0.5 ? '#ffcc44' : '#ff8800'
+                    });
+                }
+            }
+
+            // partículas
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                ctx.globalAlpha = p.life; ctx.fillStyle = p.c;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // detritos de blocos
+            for (var d = 0; d < debris.length; d++) {
+                var db = debris[d];
+                var tex = BTEX[db.t];
+                ctx.save();
+                ctx.globalAlpha = db.life * 0.85; ctx.translate(db.x, db.y);
+                ctx.rotate(db.ang);
+                if (tex && tex.complete && tex.naturalWidth > 0) {
+                    ctx.drawImage(tex, -db.size / 2, -db.size / 2, db.size, db.size);
+                } else {
+                    ctx.fillStyle = BDEF[db.t] ? BDEF[db.t].color : '#888';
+                    ctx.fillRect(-db.size / 2, -db.size / 2, db.size, db.size);
+                }
+                ctx.restore();
+            }
+            ctx.globalAlpha = 1;
+
+            // itens colecionáveis (with culling)
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                if (it.y < viewTop || it.y > viewBot) continue;
+                var itex = ITEX[it.t];
+                if (itex && itex.complete && itex.naturalWidth > 0) {
+                    ctx.save();
+                    ctx.translate(it.x, it.y);
+                    ctx.rotate(it.ang);
+                    ctx.shadowBlur = 0;
+                    ctx.drawImage(itex, -16, -16, 32, 32);
+                    ctx.restore();
+                }
+            }
+
+            // blocos TNT caindo (with culling)
+            for (var i = 0; i < tntBlocks.length; i++) {
+                var b = tntBlocks[i];
+                if (b.y < viewTop - TILE * 2 || b.y > viewBot + TILE * 2) continue;
+                var glowSpeed = b.fuse <= 1 ? 8 : b.fuse <= 3 ? 4 : 1.5;
+                var glow = (Math.sin(b.blinkTimer * 0.1 * glowSpeed) + 1) / 2;
+                var drawSize, tntTexture;
+                if (b.nuke) {
+                    drawSize = TILE * 0.5;
+                    tntTexture = null;
+                } else if (b.mega) {
+                    drawSize = TILE * 1.8;
+                    tntTexture = MEGA_TNT_TEX;
+                } else if (b.heart) {
+                    drawSize = TILE * 0.9;
+                    tntTexture = HEART_TNT_TEX;
+                } else {
+                    drawSize = TILE;
+                    tntTexture = TNT_TEX;
+                }
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.rotate(b.ang || 0);
+
+                if (b.nuke) {
+                    ctx.globalAlpha = 0.92;
+                    if (tntTexture && tntTexture.complete && tntTexture.naturalWidth > 0) {
+                        ctx.drawImage(tntTexture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    } else {
+                        ctx.fillStyle = '#00cc44';
+                        ctx.fillRect(-drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    }
+                    ctx.globalAlpha = 0.7 + glow * 0.3;
+                    ctx.fillStyle = '#00ff66';
+                    ctx.font = 'bold ' + Math.floor(drawSize * 0.7) + 'px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('☢️', 0, 0);
+                } else if (b.mega) {
+                    if (tntTexture && tntTexture.complete && tntTexture.naturalWidth > 0) {
+                        ctx.drawImage(tntTexture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    } else {
+                        ctx.fillStyle = '#880088';
+                        ctx.fillRect(-drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    }
+                } else if (b.heart) {
+                    // Otimização: Sempre usa o ícone de coração estilizado para o "Tap Tap"
+                    var pulse = 1 + Math.sin(b.blinkTimer * 0.15) * 0.2;
+                    // Ajuste de escala para o novo tamanho do sprite (128px)
+                    var hsScale = (drawSize / 128) * pulse;
+                    ctx.scale(hsScale, hsScale);
+
+                    ctx.globalAlpha = 0.9 + glow * 0.1;
+                    ctx.drawImage(HEART_SPRITE, -64, -64, 128, 128);
+                } else {
+                    if (tntTexture && tntTexture.complete && tntTexture.naturalWidth > 0) {
+                        ctx.drawImage(tntTexture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    } else {
+                        ctx.fillStyle = '#cc0000';
+                        ctx.fillRect(-drawSize / 2, -drawSize / 2, drawSize, drawSize);
+                    }
+                }
+                ctx.restore();
+
+                // Nome e Avatar do mensageiro da TNT
+                if (b.userName) {
+                    ctx.save();
+                    var avImg = avatarCache[b.avatarUrl];
+                    var avSize = 32;
+                    var avY = b.y - drawSize / 2 - 28;
+                    if (avImg && avImg.complete && avImg.naturalWidth > 0) {
+                        ctx.save();
+                        ctx.beginPath(); ctx.arc(b.x - 5 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.clip();
+                        try { ctx.drawImage(avImg, b.x - 5 - avSize, avY - avSize / 2, avSize, avSize); } catch (e) { }
+                        ctx.restore();
+                        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.arc(b.x - 5 - avSize / 2, avY, avSize / 2, 0, Math.PI * 2); ctx.stroke();
+                    }
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                    ctx.strokeStyle = '#000'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+                    ctx.strokeText(b.userName, b.x + 5, avY);
+                    if (SHADOW_ENABLED) { ctx.shadowBlur = 4; ctx.shadowColor = '#000'; }
+                    ctx.fillText(b.userName, b.x + 5, avY);
+                    ctx.restore();
+                }
+            }
+
+            // creepers caindo (desenho)
+            for (var i = 0; i < creepers.length; i++) {
+                var c = creepers[i];
+                if (c.y < viewTop - TILE * 2 || c.y > viewBot + TILE * 2) continue;
+                var size = TILE * 2; // dobro do tamanho
+                if (CREEPER_TEX && CREEPER_TEX.complete && CREEPER_TEX.naturalWidth > 0) {
+                    ctx.save();
+                    ctx.translate(c.x, c.y);
+                    ctx.rotate(c.ang || 0);
+                    ctx.drawImage(CREEPER_TEX, -size / 2, -size / 2, size, size);
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fillRect(c.x - size / 2, c.y - size / 2, size, size);
+                }
+
+                // Nome do mensageiro do Creeper
+                if (c.userName) {
+                    ctx.save();
+                    var txtY = c.y - size / 2 - 12;
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.strokeStyle = '#000'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+                    ctx.strokeText(c.userName, c.x, txtY);
+                    if (SHADOW_ENABLED) { ctx.shadowBlur = 3; ctx.shadowColor = '#000'; }
+                    ctx.fillText(c.userName, c.x, txtY);
+                    ctx.restore();
+                }
+            }
+
+            // explosões TNT
+            for (var k = 0; k < explosions.length; k++) {
+                var ex = explosions[k];
+                var etex = EXPLOSION_TEX[ex.frame];
+                if (etex && etex.complete && etex.naturalWidth > 0) {
+                    var rad = ex.nuke ? 18 : (ex.mega ? MEGA_TNT_RADIUS : TNT_RADIUS);
+                    var esize = rad * TILE * 2.5;
+                    ctx.globalAlpha = (1 - ex.frame / EXPLOSION_TEX.length) * 0.5;
+                    ctx.drawImage(etex, ex.x - esize / 2, ex.y - esize / 2, esize, esize);
+                }
+            }
+
+            // ── Nuke & Thor visuals ──
+            if (_nukeActive) {
+                var nSize = (45 - _nukeTimer) * 50;
+                ctx.save();
+                ctx.globalAlpha = _nukeTimer / 45;
+                ctx.fillStyle = '#ff2200';
+                ctx.beginPath(); ctx.arc(_nukeLocation.x, _nukeLocation.y, nSize, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.arc(_nukeLocation.x, _nukeLocation.y, nSize * 0.6, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            // ── Creeper Spawn Visuals (Nuke-like circle) ──
+            for (var i = _creeperSpawnEffects.length - 1; i >= 0; i--) {
+                var ef = _creeperSpawnEffects[i];
+                ef.life--;
+                if (ef.life <= 0) { _creeperSpawnEffects.splice(i, 1); continue; }
+
+                var p = 1 - (ef.life / ef.maxLife);
+                var r = p * 110;
+                ctx.save();
+                ctx.globalAlpha = (ef.life / ef.maxLife) * 0.8;
+                // Green outer glow
+                ctx.fillStyle = 'rgba(0, 255, 100, 0.4)';
+                ctx.beginPath(); ctx.arc(ef.x, ef.y, r, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#00ff66';
+                ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(ef.x, ef.y, r, 0, Math.PI * 2); ctx.stroke();
+                // Inner white flash
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.beginPath(); ctx.arc(ef.x, ef.y, r * 0.6, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            for (var tk = 0; tk < _thorBeams.length; tk++) {
+                var tb = _thorBeams[tk];
+                if (!tb.player || !tb.enemy) continue; // safety check
+
+                ctx.save();
+                ctx.globalAlpha = Math.min(1, tb.life / 30); // keep full opacity until last half second
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                // Draw zig-zag lightning linking the dynamic positions
+                var sx = tb.player.x;
+                var sy = tb.player.y;
+                var tx = tb.enemy.x;
+                var ty = tb.enemy.y;
+
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                var segments = 6;
+                for (var s = 1; s <= segments; s++) {
+                    var px = sx + (tx - sx) * (s / segments);
+                    var py = sy + (ty - sy) * (s / segments);
+                    if (s < segments) {
+                        px += (Math.random() - 0.5) * 40;
+                        py += (Math.random() - 0.5) * 40;
+                    }
+                    ctx.lineTo(px, py);
+                }
+
+                if (SHADOW_ENABLED) { ctx.shadowBlur = 15; ctx.shadowColor = '#00ffff'; }
+                ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 6; ctx.stroke();
+
+                if (SHADOW_ENABLED) { ctx.shadowBlur = 25; ctx.shadowColor = '#ffffff'; }
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.restore();
+            }
+            ctx.globalAlpha = 1;
+
+            // zombies
+            drawZombies();
+            // Spider webs
+            if (spiderWebs.length > 0) {
+                var wvTop = camY - TILE * 2, wvBot = camY + canvas.height + TILE * 2;
+                for (var wi = 0; wi < spiderWebs.length; wi++) {
+                    var web = spiderWebs[wi];
+                    if (web.y < wvTop || web.y > wvBot) continue;
+                    ctx.save();
+                    ctx.globalAlpha = web.alpha;
+                    ctx.strokeStyle = '#cccccc';
+                    ctx.lineWidth = 0.8;
+                    var ws = web.size;
+                    // Draw web pattern: radial lines + concentric rings
+                    for (var ri = 0; ri < 6; ri++) {
+                        var a = ri * Math.PI / 3;
+                        ctx.beginPath(); ctx.moveTo(web.x, web.y);
+                        ctx.lineTo(web.x + Math.cos(a) * ws, web.y + Math.sin(a) * ws);
+                        ctx.stroke();
+                    }
+                    for (var ci = 1; ci <= 3; ci++) {
+                        var cr = ws * ci / 3;
+                        ctx.beginPath();
+                        for (var ai = 0; ai <= 6; ai++) {
+                            var a2 = ai * Math.PI / 3 + Math.sin(ci * 0.5) * 0.15;
+                            var px = web.x + Math.cos(a2) * cr, py = web.y + Math.sin(a2) * cr;
+                            if (ai === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                        }
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            }
+            drawSpiders();
+            drawWitherSkeletons();
+            drawBlackHoles();
+
+            // ── Boss Gate barrier visual ──
+            if (pick) {
+                var gPRow = Math.floor(pick.y / TILE);
+                if (isMegaClearingRow(gPRow)) {
+                    var gMz = getMegaZone(gPRow);
+                    if (gMz >= 0 && megaClearedZones[gMz] && !megaClearedZones[gMz + '_gateOpen']) {
+                        var gateRow = getMegaStart(gMz) + MEGA_CLEARING_HEIGHT - 10;
+                        var gateY = gateRow * TILE;
+                        var gPulse = 0.5 + Math.sin(Date.now() * 0.004) * 0.3;
+                        var gType = megaClearedZones[gMz + '_type'];
+                        var gColor = gType === 'zombie' ? '0, 255, 80' : '255, 60, 100';
+                        ctx.save();
+                        // Glow line
+                        ctx.strokeStyle = 'rgba(' + gColor + ', ' + (0.4 * gPulse) + ')';
+                        ctx.lineWidth = 8 + Math.sin(Date.now() * 0.006) * 3;
+                        ctx.beginPath(); ctx.moveTo(0, gateY); ctx.lineTo(COLS * TILE, gateY); ctx.stroke();
+                        // Bright core
+                        ctx.strokeStyle = 'rgba(' + gColor + ', ' + (0.7 * gPulse) + ')';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.moveTo(0, gateY); ctx.lineTo(COLS * TILE, gateY); ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            }
+
+            // bats
+            drawBats();
+
+            // textos flutuantes
+            for (var j = 0; j < texts.length; j++) {
+                var t = texts[j];
+                ctx.globalAlpha = t.life; ctx.font = 'bold 22px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.strokeStyle = 'rgba(0,0,0,' + (t.life * 0.8) + ')'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+                ctx.strokeText(t.txt, t.x, t.y);
+                ctx.fillStyle = t.c;
+                ctx.fillText(t.txt, t.x, t.y);
+            }
+            ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+
+            // picareta principal - sprite
+            if (pick && pick.active) {
+                drawTormentaAura(pick);
+                drawSpinAura(pick);
+                drawPickaxeSprite(pick);
+
+                // Desenha companheiros do host
+                if (pick.companions) {
+                    pick.companions.forEach(function (c) {
+                        drawPickaxeSprite(c);
+                    });
+                }
+
+                // Owner name & avatar on main pickaxe
+                drawPickaxeInfo(pick);
+            }
+
+            // picaretas extras (skill dupla + clones)
+            for (var ei = 0; ei < extraPicks.length; ei++) {
+                var ep = extraPicks[ei];
+                ctx.save();
+                ctx.translate(ep.x, ep.y);
+                ctx.rotate(ep.ang);
+
+                if (ep.cloneOwner) {
+                    // Clone: use owner's pickaxe and color glow
+                    var cFadeThreshold = Math.floor(cloneCooldown * 0.15); // fade last 15%
+                    var cloneAlpha = ep.cloneTimer < cFadeThreshold ? (ep.cloneTimer / cFadeThreshold) : 1; // fade out last 15%
+                    ctx.globalAlpha = cloneAlpha;
+
+                    // Shadow for clones disabled to improve FPS
+
+                    var cImg = (ep.clonePickaxe || currentPickaxe).imgObj;
+                    if (ep.swordTimer > 0) {
+                        var cMatName = (ep.clonePickaxe || currentPickaxe).name || 'Wood';
+                        if (SWORD_ASSETS[cMatName]) cImg = SWORD_ASSETS[cMatName];
+                    }
+                    if (cImg && cImg.complete && cImg.naturalWidth > 0) {
+                        ctx.drawImage(cImg, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    } else {
+                        ctx.fillStyle = ep.cloneColor || '#44ddff';
+                        ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    }
+                    ctx.restore();
+                    // Draw clone avatar and name (same size as original picks)
+                    var cloneAvSize = 48;
+                    var cloneAvY = ep.y - PICK_HALF - 44;
+                    if (ep.cloneAvatar && avatarCache[ep.cloneAvatar]) {
+                        var avImg = avatarCache[ep.cloneAvatar];
+                        if (avImg.complete && avImg.naturalWidth > 0) {
+                            ctx.save();
+                            ctx.globalAlpha = cloneAlpha * 0.85;
+                            ctx.beginPath(); ctx.arc(ep.x - 10 - cloneAvSize / 2, cloneAvY, cloneAvSize / 2, 0, Math.PI * 2); ctx.clip();
+                            try { ctx.drawImage(avImg, ep.x - 10 - cloneAvSize, cloneAvY - cloneAvSize / 2, cloneAvSize, cloneAvSize); } catch (e) { }
+                            ctx.restore();
+                            ctx.save();
+                            ctx.globalAlpha = cloneAlpha * 0.85;
+                            ctx.strokeStyle = ep.cloneColor || '#44ddff'; ctx.lineWidth = 2;
+                            ctx.beginPath(); ctx.arc(ep.x - 10 - cloneAvSize / 2, cloneAvY, cloneAvSize / 2, 0, Math.PI * 2); ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                    ctx.save();
+                    ctx.globalAlpha = cloneAlpha * 0.85;
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                    ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+                    ctx.strokeText(ep.cloneOwner || '', ep.x + 10, cloneAvY);
+
+                    // Text shadow for clones disabled to improve FPS
+
+                    ctx.fillText(ep.cloneOwner || '', ep.x + 10, cloneAvY);
+                    ctx.restore();
+                } else {
+                    // Original doublePick extra
+
+                    // Shadow for double pick disabled to improve FPS
+
+                    var epimg = currentPickaxe.imgObj;
+                    if (epimg && epimg.complete && epimg.naturalWidth > 0) {
+                        // Head Glow Effect (only if NOT sword)
+                        var hMask = currentPickaxe.headMask;
+                        if (hMask && SHADOW_ENABLED && !(ep.swordTimer > 0)) {
+                            ctx.save();
+                            // Simplified head glow to improve FPS
+                            ctx.globalAlpha = 0.5;
+                            ctx.drawImage(hMask, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                            ctx.restore();
+                        }
+                        var dpTex = epimg;
+                        if (ep.swordTimer > 0) {
+                            var dpMat = currentPickaxe.name || 'Wood';
+                            if (SWORD_ASSETS[dpMat]) dpTex = SWORD_ASSETS[dpMat];
+                        }
+                        ctx.drawImage(dpTex, -PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    } else {
+                        ctx.fillStyle = '#44ddff';
+                        ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            // picaretas de outros usuários (permanentes com avatar)
+            for (var ui = 0; ui < userPicks.length; ui++) {
+                var up = userPicks[ui];
+                drawTormentaAura(tormentaPick === up ? up : null);
+                drawSpinAura(up);
+
+                ctx.save();
+                drawPickaxeSprite(up);
+                if (up.companions) {
+                    up.companions.forEach(function (c) {
+                        drawPickaxeSprite(c);
+                    });
+                }
+
+                // nome e avatar (apenas da picareta principal)
+                drawPickaxeInfo(up);
+                ctx.restore();
+            }
+
+            // ── Camera target indicator ──
+            if (camTarget && camTarget !== pick && !camTarget.stuck) {
+                ctx.save();
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillStyle = '#ffdd44';
+                ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.005) * 0.3;
+                ctx.fillText('📷', camTarget.x, camTarget.y - 30);
+                ctx.globalAlpha = 1;
+                ctx.restore();
+            }
+
+            // ── Ender Dragon (Frente de tudo, Fase: front) ──
+            if (dragonActive && dragonPhase === 'front') {
+                var df = dragonFrames[dragonFrameIdx];
+                if (df && df.complete && df.naturalWidth > 0) {
+                    ctx.save();
+                    ctx.translate(dragonX, dragonY);
+                    ctx.scale(-1, 1); // Flip horizontal para ele olhar para a direita (L->R)
+                    var sizeMult = 5;
+                    ctx.drawImage(df, -400 * sizeMult, -200 * sizeMult, 800 * sizeMult, 400 * sizeMult);
+                    ctx.restore();
+                }
+            }
+
+            // ── Bolas de Fogo do Dragão (Frente de tudo) ──
+            activeFireballs.forEach(function (f) {
+                ctx.save();
+                ctx.translate(f.x, f.y);
+                var pulse = 1 + Math.sin(Date.now() * 0.01) * 0.2;
+                ctx.fillStyle = '#ff4400';
+                ctx.beginPath(); ctx.arc(0, 0, 15 * pulse, 0, Math.PI * 2); ctx.fill();
+                // Shadow disabled for performance
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath(); ctx.arc(0, 0, 8 * pulse, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            });
+
+            ctx.restore(); // fim da câmera
+
+            // Cycle scoring overlay (screen space)
+            drawCycleOverlay();
+
+        }
+
+        // ── Loop ─────────────────────────────────────────────────────────────────────
+        var fpsLastTime = performance.now();
+        var fpsFrameCount = 0;
+        var fpsUpdateInterval = 1000;
+
+        function loop() {
+            var now = performance.now();
+            fpsFrameCount++;
+            if (now - fpsLastTime >= fpsUpdateInterval) {
+                var fps = Math.round((fpsFrameCount * 1000) / (now - fpsLastTime));
+                document.getElementById('fpsCounter').innerText = 'FPS: ' + fps;
+                fpsFrameCount = 0;
+                fpsLastTime = now;
+            }
+
+            update();
+            updateFX();
+            updateWeatherParticles();
+            try { draw(); } catch (e) { console.warn('draw error:', e.message); }
+            // ── Otimização: Processa eventos da fila (max 5 por frame) ──
+            var eventsProcessed = 0;
+            while (liveEventQueue.length > 0 && eventsProcessed < 5) {
+                processLiveEvent(liveEventQueue.shift());
+                eventsProcessed++;
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        // ── ZOMBIES ────────────────────────────────────────────────────────────────
+        var zombies = [];
+        var MAX_ZOMBIES = 5;
+        var ZOMBIE_SIZE = TILE;
+
+        // ── WITHER SKELETON (New Enemy) ──────────────────────────────────────────
+        var witherSkeletons = [];
+        var WITHER_SPAWN_INTERVAL = 30; // Every 30 meters
+        var lastWitherSpawnDepth = 0;
+        var WITHER_IMAGE = new Image();
+        WITHER_IMAGE.src = 'enemy/Wither_Skeleton.png';
+        var WOOD_SWORD_IMAGE = new Image();
+        WOOD_SWORD_IMAGE.src = 'sword/Wooden_Sword.png';
+
+        function drawPixelHeart(ctx, x, y, size, color) {
+            ctx.fillStyle = color;
+            var s = size / 5;
+            // Row 1: _ X _ X _
+            ctx.fillRect(x + s, y, s, s);
+            ctx.fillRect(x + 3 * s, y, s, s);
+            // Row 2-3: X X X X X
+            ctx.fillRect(x, y + s, 5 * s, s * 2);
+            // Row 4: _ X X X _
+            ctx.fillRect(x + s, y + 3 * s, 3 * s, s);
+            // Row 5: _ _ X _ _
+            ctx.fillRect(x + 2 * s, y + 4 * s, s, s);
+        }
+
+        function drawEnemyHearts(x, y, hp, isBoss) {
+            var size = isBoss ? 14 : 10;
+            var spacing = size + 3;
+            var maxHp = isBoss ? 30 : 10;
+            var totalIcons = Math.ceil(maxHp / 3);
+            var heartsPerRow = 5;
+            var totalRows = Math.ceil(totalIcons / heartsPerRow);
+            var rowHeight = size + 5;
+            var startY = y - (totalRows * rowHeight) / 2;
+
+            ctx.save();
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+
+            for (var i = 0; i < totalIcons; i++) {
+                var row = Math.floor(i / heartsPerRow);
+                var col = i % heartsPerRow;
+                var rowCount = Math.min(heartsPerRow, totalIcons - row * heartsPerRow);
+                var rowWidth = rowCount * spacing;
+                var hx = x - rowWidth / 2 + col * spacing;
+                var hy = startY + row * rowHeight;
+
+                // Shadow
+                drawPixelHeart(ctx, hx + 1, hy + 1, size, 'rgba(0,0,0,0.5)');
+
+                // HP Logic: 1 icon = 3 HP (Red, Orange, Yellow)
+                var heartVal = hp - (i * 3);
+                var color = '#3d3d3d'; // Empty
+                if (heartVal >= 3) color = '#ff4444';      // Red (3 HP)
+                else if (heartVal >= 2) color = '#ff8800'; // Orange (2 HP)
+                else if (heartVal >= 1) color = '#ffcc00'; // Yellow (1 HP)
+
+                drawPixelHeart(ctx, hx, hy, size, color);
+
+                // Highlight
+                if (color !== '#3d3d3d') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.fillRect(hx + size * 0.2, hy + size * 0.2, size * 0.2, size * 0.2);
+                }
+            }
+            ctx.restore();
+        }
+
+        function updateWitherSkeletons() {
+            var allPicks = getAllActivePicks();
+            for (var i = witherSkeletons.length - 1; i >= 0; i--) {
+                var w = witherSkeletons[i];
+
+                // Exact Pickaxe Physics
+                if (w.stuck) {
+                    w.stuckTimer++;
+                    if (w.stuckTimer > 60) { // Unstick after 1s
+                        w.stuck = false;
+                        w.stuckTimer = 0;
+                        w.vy = -3; w.vx = (Math.random() - 0.5) * 4;
+                    }
+                } else {
+                    applyPhysics(w, 22); // Use standard physics with 22px radius
+                    w.ang += w.spin;
+
+                    // Auto-stuck protection (like players)
+                    var speed = Math.sqrt(w.vx * w.vx + w.vy * w.vy);
+                    if (speed < 0.2 && Math.abs(w.spin) < 0.01) {
+                        w.stuckTimer++;
+                        if (w.stuckTimer > 180) w.stuck = true;
+                    } else { w.stuckTimer = 0; }
+                }
+
+                // Enemy collision (push apart, no damage)
+                var enemies = zombies.concat(bats).concat(spiders).concat(witherSkeletons);
+                for (var ei = 0; ei < enemies.length; ei++) {
+                    var e = enemies[ei];
+                    if (e === w || e.state === 'dead' || e._bhCaptured) continue;
+
+                    var dx = w.x - e.x, dy = w.y - e.y;
+                    var distSq = dx * dx + dy * dy;
+
+                    var eRadius = 22; // default
+                    if (e.isBlaze) eRadius = 140;
+                    else if (e.isGhast) eRadius = e.isMother ? 120 : 50;
+                    else if (e.isQueen) eRadius = 60;
+                    else if (e.isZBoss) eRadius = 60;
+                    else if (e.isMother) eRadius = 40; // spider mother
+
+                    var minDist = 22 + eRadius; // Wither Skeleton radius (22) + Enemy radius
+
+                    if (distSq < minDist * minDist && distSq > 0) {
+                        var dist = Math.sqrt(distSq);
+                        var nx = dx / dist, ny = dy / dist;
+                        var overlap = minDist - dist;
+
+                        w.x += nx * overlap * 0.5;
+                        w.y += ny * overlap * 0.5;
+                        e.x -= nx * overlap * 0.5;
+                        e.y -= ny * overlap * 0.5;
+
+                        // Transfer momentum (billiard style)
+                        var relVx = w.vx - (e.vx || 0), relVy = w.vy - (e.vy || 0);
+                        var dot = relVx * (-nx) + relVy * (-ny);
+                        if (dot > 0) {
+                            var pushForce = dot * 2.0;
+                            w.vx += nx * pushForce * 0.3;
+                            w.vy += ny * pushForce * 0.3;
+                            if (e.vx !== undefined) e.vx -= nx * pushForce * 0.8;
+                            if (e.vy !== undefined) e.vy -= ny * pushForce * 0.8;
+                        }
+                        // Kick wither skeleton upward on any hit (ricochet)
+                        w.vy = Math.min(w.vy, -4);
+                        w.spin += (Math.random() - 0.5) * 0.15;
+                    }
+                }
+
+                // Player interaction & Impact
+                for (var pi = 0; pi < allPicks.length; pi++) {
+                    var p = allPicks[pi];
+                    if (!p || p.stuck || p === w) continue;
+                    var dx = p.x - w.x, dy = p.y - w.y;
+                    var distSq = dx * dx + dy * dy;
+                    var minDist = 48;
+                    if (distSq < minDist * minDist) {
+                        var dist = Math.sqrt(distSq);
+                        var nx = dx / dist, ny = dy / dist;
+
+                        // Physical Impact (Knockback)
+                        var impact = 6;
+                        w.vx -= nx * impact;
+                        w.vy -= ny * impact;
+                        p.vx += nx * impact;
+                        p.vy += ny * impact;
+                        p.stuck = false; w.stuck = false; // Unstick both
+
+                        // Damage player if their material is inferior
+                        var pTier = (p.pickaxe && p.pickaxe.tier !== undefined) ? p.pickaxe.tier : 0;
+                        var wTier = (w.pickaxe && w.pickaxe.tier !== undefined) ? w.pickaxe.tier : 0;
+                        var isSuperBurst = (p.stormTimer > 0);
+                        var hasSword = (p.swordTimer > 0 || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.isCompanion);
+
+                        if (isSuperBurst) {
+                            w.hp = 0; // Insta-kill
+                        } else if (pTier <= wTier && !hasSword) {
+                            applyDamage(p.userName, 0.5);
+                        }
+
+                        // Take damage if player has sword, auxiliary swords, or is in Super Burst
+                        if (hasSword || isSuperBurst) {
+                            if (!isSuperBurst) w.hp -= 1;
+                            w.vy -= 4;
+                            spawnText(w.x, w.y - 30, isSuperBurst ? '💥 BURST!' : '-1 ⚔️', isSuperBurst ? '#ff00ff' : '#ff4444');
+                            if (w.hp <= 0) {
+                                playWitherDeath();
+                                if (typeof spawnParts === 'function') {
+                                    spawnParts(w.x, w.y, '#555555', 10);
+                                    spawnParts(w.x, w.y, '#aaaaaa', 10);
+                                }
+                                witherSkeletons.splice(i, 1);
+                                spawnText(w.x, w.y, '💀 DEAD', '#ffffff');
+                                if (p.userName) {
+                                    addCycleScore(p.userName, 50, 'kill');
+                                    registerComboHit(p, w.x, w.y);
+                                }
+                                break;
+                            } else {
+                                playWitherHurt();
+                            }
+                        }
+                    }
+                }
+
+                // Cleanup
+                if (w.y > camY + canvas.height + 1500 || w.y < camY - 1200) {
+                    witherSkeletons.splice(i, 1);
+                }
+            }
+        }
+
+        function drawWitherSkeletons() {
+            for (var i = 0; i < witherSkeletons.length; i++) {
+                var w = witherSkeletons[i];
+                ctx.save();
+                ctx.translate(w.x, w.y);
+                if (w._bhScale !== undefined) {
+                    ctx.scale(w._bhScale, w._bhScale);
+                    ctx.rotate(w._bhSpin || 0);
+                }
+
+                // Draw Sword based on Material
+                ctx.save();
+                ctx.rotate(w.ang);
+                var mat = (w.pickaxe && w.pickaxe.name) ? w.pickaxe.name : 'Wood';
+                var sImg = SWORD_ASSETS[mat] || SWORD_ASSETS['Wood'];
+                if (sImg && sImg.complete && sImg.naturalWidth > 0) {
+                    // Increased from 48 to 62 (30% increase)
+                    ctx.drawImage(sImg, -31, -31, 62, 62);
+                } else {
+                    ctx.fillStyle = (w.pickaxe && w.pickaxe.color) ? w.pickaxe.color : '#8b4513';
+                    ctx.fillRect(-26, -4, 52, 8);
+                }
+                ctx.restore();
+
+                // Draw Avatar (Wither Skeleton in a circle)
+                var avSize = 52; // Increased from 40 to 52 (30% increase)
+                var avY = -70;   // Adjusted position
+                ctx.save();
+                ctx.beginPath(); ctx.arc(0, avY, avSize / 2, 0, Math.PI * 2); ctx.clip();
+                if (WITHER_IMAGE.complete && WITHER_IMAGE.naturalWidth > 0) {
+                    ctx.drawImage(WITHER_IMAGE, -avSize / 2, avY - avSize / 2, avSize, avSize);
+                } else {
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(-avSize / 2, avY - avSize / 2, avSize, avSize);
+                }
+                ctx.restore();
+
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(0, avY, avSize / 2, 0, Math.PI * 2); ctx.stroke();
+
+                // Health Hearts (Using boss size for visibility)
+                drawEnemyHearts(0, avY - 60, w.hp, w.maxHp, true);
+
+                ctx.restore();
+            }
+        }
+
+        // Preload zombie sprites
+        var ZOMBIE_TYPES = ['Zombie1', 'Zombie2', 'Zombie3', 'Zombie4'];
+        var ZOMBIE_ANIMS = {
+            idle: { prefix: 'Idle', count: 4, speed: 0.08 },
+            walk: { prefix: 'Walk', count: 6, speed: 0.12 },
+            run: { prefix: 'Run', count: 10, speed: 0.18 },
+            attack: { prefix: 'Attack', count: 6, speed: 0.15 },
+            hurt: { prefix: 'Hurt', count: 5, speed: 0.12 },
+            dead: { prefix: 'Dead', count: 8, speed: 0.10 },
+            jump: { prefix: 'Jump', count: 7, speed: 0.12 }
+        };
+        var zombieSprites = {};
+        ZOMBIE_TYPES.forEach(function (zt) {
+            zombieSprites[zt] = {};
+            Object.keys(ZOMBIE_ANIMS).forEach(function (anim) {
+                var a = ZOMBIE_ANIMS[anim];
+                zombieSprites[zt][anim] = [];
+                for (var i = 1; i <= a.count; i++) {
+                    var img = new Image();
+                    var prefix = a.prefix;
+                    if (zt === 'Zombie3' && anim === 'attack' && i === 6) {
+                        img.src = zt + '/animation/Attaxk6.png';
+                    } else if (zt === 'Zombie4') {
+                        img.src = zt + '/animation/' + prefix + '_' + i + '.png';
+                    } else {
+                        img.src = zt + '/animation/' + prefix + i + '.png';
+                    }
+                    zombieSprites[zt][anim].push(img);
+                }
+            });
+        });
+
+        // ── SPIDER SYSTEM (mini-clearings) ──────────────────────────────────────
+        var spiders = [];
+        var MAX_SPIDERS = 6;
+        var SPIDER_SIZE = TILE * 2.08; // Increased from 1.6 by 30%
+        var SPIDER_MOTHER_SCALE = 1.5;
+        var SPIDER_MOTHER_SPAWN_MS = 5000;
+        var spiderWebs = [];
+
+        var SPIDER_ANIMS = {
+            idle: { folder: 'Idle_Nervous', count: 24, speed: 0.12 },
+            walk: { folder: 'Walk', count: 16, speed: 0.15 },
+            run: { folder: 'Run', count: 16, speed: 0.22 },
+            attack: { folder: 'Attack_01', count: 20, speed: 0.18 },
+            hurt: { folder: 'Hit', count: 16, speed: 0.15 },
+            dead: { folder: 'Die_01', count: 24, speed: 0.12 },
+            jump: { folder: 'Jump_Simple', count: 24, speed: 0.15 }
+        };
+
+        // Spider sprites disabled - using canvas drawing instead
+        // var spiderSprites = { baby: {}, mother: {} };
+        // (function() {
+        //     ['baby', 'mother'].forEach(function(size) {
+        //         var res = size === 'baby' ? 'Frames_256x144' : 'Frames_384x216';
+        //         Object.keys(SPIDER_ANIMS).forEach(function(anim) {
+        //             var a = SPIDER_ANIMS[anim];
+        //             spiderSprites[size][anim] = [];
+        //             for (var i = 1; i <= a.count; i++) {
+        //                 var img = new Image();
+        //                 var frame = String(i);
+        //                 while (frame.length < 4) frame = '0' + frame;
+        //                 img.src = 'Spider/' + res + '/' + a.folder + '/Body/' + a.folder + '_' + frame + '.png';
+        //                 spiderSprites[size][anim].push(img);
+        //             }
+        //         });
+        //     });
+        // })();
+
+        function spawnSpider(wx, wy, isMother) {
+            if (spiders.length >= MAX_SPIDERS) return;
+            var motherFlag = !!isMother;
+            var depth = Math.floor(wy / TILE);
+            spiders.push({
+                x: wx, y: wy - SPIDER_SIZE * 0.3,
+                vx: (Math.random() - 0.5) * 2,
+                vy: 0,
+                hp: motherFlag ? 8 : 2,
+                maxHp: motherFlag ? 8 : 2,
+                speed: 0.8 + Math.random() * 0.5,
+                dir: Math.random() < 0.5 ? -1 : 1,
+                state: 'walk',
+                animTimer: Math.random() * 10,
+                hurtTimer: 0,
+                deadTimer: 0,
+                idleTimer: 0,
+                grounded: false,
+                isMother: motherFlag,
+                lastSpawnTime: Date.now(),
+                pts: motherFlag ? 80 + depth * 2 : 25 + depth
+            });
+        }
+
+        function updateSpiders() {
+            var SG = 0.35;
+            var HS = SPIDER_SIZE * 0.35;
+            for (var i = spiders.length - 1; i >= 0; i--) {
+                var s = spiders[i];
+                if (s.y < camY - 400 || s.y > camY + canvas.height + 2000) { spiders.splice(i, 1); continue; }
+
+                if (s._dirTimer > 0) s._dirTimer--;
+
+                // DEAD
+                if (s.state === 'dead') {
+                    s.deadTimer++;
+                    s.animTimer += SPIDER_ANIMS.dead.speed;
+                    if (s.animTimer >= SPIDER_ANIMS.dead.count) s.animTimer = SPIDER_ANIMS.dead.count - 0.01;
+                    s.vy += SG; s.y += s.vy;
+                    var dRow = Math.floor((s.y + HS) / TILE);
+                    var dG = getCell(dRow, Math.floor(s.x / TILE));
+                    if (dG && dG.t !== E) { s.y = dRow * TILE - HS; s.vy = 0; }
+                    if (s.deadTimer > 100) spiders.splice(i, 1);
+                    continue;
+                }
+
+                // HURT
+                if (s.state === 'hurt') {
+                    s.hurtTimer--;
+                    s.animTimer += SPIDER_ANIMS.hurt.speed;
+                    s.vy += SG; s.y += s.vy; s.x += s.vx;
+                    s.vx *= 0.9;
+                    var hRow = Math.floor((s.y + HS) / TILE);
+                    var hG = getCell(hRow, Math.floor(s.x / TILE));
+                    if (hG && hG.t !== E) { s.y = hRow * TILE - HS; s.vy = 0; }
+                    if (s.hurtTimer <= 0) { s.state = 'walk'; s.animTimer = 0; }
+                    else if (s.animTimer >= SPIDER_ANIMS.hurt.count) s.animTimer = 0;
+                    continue;
+                }
+
+                // Skip physics if captured by black hole
+                if (s._bhCaptured) {
+                    s.x += s.vx; s.y += s.vy;
+                    continue;
+                }
+
+                // Gravity
+                s.vy += SG;
+                // Water: dark jellies float too
+                if (typeof isInWater === 'function' && isInWater(s.x, s.y)) {
+                    s.vx *= 0.85;
+                    s.vy *= 0.75;
+                    s.vy -= SG * 1.3;
+                    s.vy += Math.sin(Date.now() * 0.005 + i * 3) * 0.06;
+                }
+                s.x += s.vx;
+                s.y += s.vy;
+                if (!isFinite(s.x) || !isFinite(s.y)) { spiders.splice(i, 1); continue; }
+
+                // Ground collision
+                var fRow = Math.floor((s.y + HS) / TILE);
+                var fCol = Math.floor(s.x / TILE);
+                var ground = getCell(fRow, fCol);
+                s.grounded = false;
+                if (ground && ground.t !== E) {
+                    s.y = fRow * TILE - HS;
+                    if (s.vy > 0) s.vy = 0;
+                    s.grounded = true;
+                }
+
+                // Wall collision
+                var wCol = Math.floor((s.x + s.dir * HS) / TILE);
+                var wall = getCell(Math.floor(s.y / TILE), wCol);
+                if (wall && wall.t !== E) {
+                    s.dir *= -1;
+                    s.vx = s.dir * Math.abs(s.vx);
+                }
+
+                // Movement
+                if (s.grounded) {
+                    s.vx = s.dir * s.speed;
+                    s.animTimer += SPIDER_ANIMS.run.speed;
+                    if (s.animTimer >= SPIDER_ANIMS.run.count) s.animTimer = 0;
+                    s.vx *= 0.92;
+
+                    // Random direction change
+                    if (Math.random() < 0.008) s.dir *= -1;
+
+                    // Frequent jumps — spiders are jumpy
+                    if (Math.random() < 0.025) {
+                        s.vy = -5 - Math.random() * 4;
+                        s.vx = s.dir * (2 + Math.random() * 3);
+                        s.grounded = false;
+                    }
+                } else {
+                    // Air — use jump animation
+                    s.animTimer += SPIDER_ANIMS.jump.speed;
+                    if (s.animTimer >= SPIDER_ANIMS.jump.count) s.animTimer = SPIDER_ANIMS.jump.count - 0.01;
+                    s.vx *= 0.99;
+                }
+
+                // Clamp to map
+                if (s.x < TILE * 0.5) { s.x = TILE * 0.5; s.dir = 1; }
+                if (s.x > (COLS - 0.5) * TILE) { s.x = (COLS - 0.5) * TILE; s.dir = -1; }
+
+                // Mother spawns babies
+                if (s.isMother && s.state !== 'dead' && s.grounded) {
+                    var now = Date.now();
+                    if (now - s.lastSpawnTime >= SPIDER_MOTHER_SPAWN_MS && spiders.length < MAX_SPIDERS) {
+                        s.lastSpawnTime = now;
+                        spawnSpider(s.x + (Math.random() - 0.5) * 40, s.y, false);
+                    }
+                }
+            }
+        }
+
+        function checkPickSpiderCollisions() {
+            var PICK_R = 28;
+            var allPicks = getAllActivePicks();
+            for (var pi = 0; pi < allPicks.length; pi++) {
+                var p = allPicks[pi];
+                if (!p || p.stuck) continue;
+                var pSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                if (pSpeed < 0.8) continue;
+                for (var si = spiders.length - 1; si >= 0; si--) {
+                    var s = spiders[si];
+                    if (s.state === 'dead') continue;
+                    if (s._bhCaptured) continue;
+                    var SR = SPIDER_SIZE * 0.35 * (s.isMother ? SPIDER_MOTHER_SCALE : 1);
+                    var dx = p.x - s.x, dy = p.y - s.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    var minDist = PICK_R + SR;
+                    if (dist < minDist) {
+                        var nx = dist > 0 ? dx / dist : 0;
+                        var ny = dist > 0 ? dy / dist : -1;
+                        var overlap = minDist - dist;
+                        p.x += nx * overlap * 0.3;
+                        p.y += ny * overlap * 0.3;
+                        s.x -= nx * overlap * 0.7;
+                        s.y -= ny * overlap * 0.7;
+                        var relVx = p.vx - (s.vx || 0), relVy = p.vy - (s.vy || 0);
+                        var dot = relVx * (-nx) + relVy * (-ny);
+                        if (dot > 0) {
+                            var pushForce = dot * 2.0;
+                            p.vx += nx * pushForce * 0.25;
+                            p.vy += ny * pushForce * 0.25;
+                            s.vx -= nx * pushForce * 1.2;
+                            s.vy -= ny * pushForce * 1.2 - 2;
+                        }
+                        // Kick pickaxe upward
+                        p.vy = Math.min(p.vy, -3);
+                        p.spin += (Math.random() - 0.5) * 0.2;
+                        if (pSpeed > 1.5) {
+                            var baseDmg = p.damage || 1;
+                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var finalDmg = Math.ceil(baseDmg * swordMult);
+                            s.hp -= finalDmg;
+                            spawnText(s.x, s.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
+                            if (swordMult > 1) sfxSwordHit();
+                            s.state = 'hurt'; s.hurtTimer = 12; s.animTimer = 0;
+                            sfxZombieHurt();
+                            registerComboHit(p, s.x, s.y);
+                            if (s.hp <= 0) {
+                                s.state = 'dead'; s.animTimer = 0; s.deadTimer = 0;
+                                if (p.userName) {
+                                    addCycleScore(p.userName, s.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, s.pts, 'kill');
+                                }
+                                sfxZombieDeath();
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        function checkPlayerMobCollisions() {
+            var allPicks = getAllActivePicks();
+            var enemies = zombies.concat(bats).concat(spiders);
+            var PLAYER_R = 24;
+
+            for (var pi = 0; pi < allPicks.length; pi++) {
+                var p = allPicks[pi];
+                if (!p || p.stuck) continue;
+
+                for (var ei = 0; ei < enemies.length; ei++) {
+                    var e = enemies[ei];
+                    if (e.state === 'dead') continue;
+
+                    var dx = p.x - e.x, dy = p.y - e.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    var minDist = PLAYER_R + (TILE * 0.4);
+
+                    if (dist < minDist) {
+                        applyDamage(p.userName, 0.5);
+                    }
+                }
+            }
+        }
+
+        function drawSpiders() {
+            var viewTop = camY - TILE * 2;
+            var viewBot = camY + canvas.height + TILE * 2;
+            var t = Date.now() * 0.004;
+            for (var i = 0; i < spiders.length; i++) {
+                var s = spiders[i];
+                if (s.y < viewTop || s.y > viewBot) continue;
+
+                var baseW = SPIDER_SIZE * 0.5;
+                var baseH = SPIDER_SIZE * 0.45;
+                if (s.isMother) { baseW *= SPIDER_MOTHER_SCALE; baseH *= SPIDER_MOTHER_SCALE; }
+
+                // Black hole shrink
+                if (s._bhScale !== undefined && s._bhScale < 1) {
+                    var ssc = Math.max(0.05, s._bhScale);
+                    baseW *= ssc; baseH *= ssc;
+                }
+
+                // Squash & stretch
+                var speedY = Math.abs(s.vy || 0);
+                var speedX = Math.abs(s.vx || 0);
+                var squashX = 1 + speedY * 0.05 - speedX * 0.02;
+                var squashY = 1 - speedY * 0.04 + speedX * 0.02;
+                squashX = Math.max(0.7, Math.min(1.3, squashX));
+                squashY = Math.max(0.7, Math.min(1.3, squashY));
+                var wobble = Math.sin(t + i * 2.1) * 0.03;
+                squashX += wobble; squashY -= wobble;
+
+                var w = baseW * squashX;
+                var h = baseH * squashY;
+
+                ctx.save();
+                ctx.translate(s.x, s.y + SPIDER_SIZE * 0.3);
+                if (s.vx > 0) ctx.scale(-1, 1);
+
+                if (s._bhScale !== undefined && s._bhScale < 1) ctx.rotate(s._bhSpin || 0);
+                if (s.state === 'hurt' && s.hurtTimer % 4 < 2) ctx.globalAlpha = 0.6;
+                if (s.state === 'dead') ctx.globalAlpha = Math.max(0, 1 - s.deadTimer / 100);
+
+                // ── Draw Spider Sprite ──
+                if (SPIDER_TEX.complete && SPIDER_TEX.naturalWidth > 0) {
+                    ctx.drawImage(SPIDER_TEX, -w / 2, -h * 0.7, w, h);
+                } else {
+                    // Fallback to original dark jelly body
+                    ctx.beginPath();
+                    ctx.ellipse(0, -h * 0.1, w / 2, h * 0.5, 0, Math.PI, 0);
+                    ctx.ellipse(0, -h * 0.1, w / 2 * 1.1, h * 0.3, 0, 0, Math.PI);
+                    ctx.closePath();
+                    var grad = ctx.createRadialGradient(-w * 0.15, -h * 0.25, 0, 0, 0, w * 0.6);
+                    grad.addColorStop(0, 'rgba(80,80,90,0.5)');
+                    grad.addColorStop(0.5, 'rgba(30,30,40,0.4)');
+                    grad.addColorStop(1, 'rgba(10,10,15,0.3)');
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(60,60,70,0.5)';
+                    ctx.lineWidth = s.isMother ? 2 : 1.2;
+                    ctx.stroke();
+                    // Highlight
+                    ctx.beginPath();
+                    ctx.ellipse(-w * 0.12, -h * 0.3, w * 0.16, h * 0.1, -0.3, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(-w * 0.05, -h * 0.45, w * 0.05, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                    ctx.fill();
+                }
+
+                // Eyes (red tint for dark jelly)
+                var eyeY = -h * 0.15;
+                var eyeSpacing = w * 0.14;
+                var eyeR = s.isMother ? 4 : 2.5;
+                ctx.fillStyle = 'rgba(255,100,100,0.8)';
+                ctx.beginPath(); ctx.arc(-eyeSpacing, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeSpacing, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                var pupilOff = (s.dir || 1) * eyeR * 0.3;
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.beginPath(); ctx.arc(-eyeSpacing + pupilOff, eyeY, eyeR * 0.45, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeSpacing + pupilOff, eyeY, eyeR * 0.45, 0, Math.PI * 2); ctx.fill();
+
+                // HP hearts
+                if (s.state !== 'dead') {
+                    drawEnemyHearts(0, -h / 2 - 25, s.hp, s.maxHp, s.isMother);
+                }
+
+                ctx.globalAlpha = 1;
+                ctx.restore();
+            }
+        }
+
+        // ── BAT / VESP SYSTEM (alternating per clearing) ──────────────────────
+        var bats = [];
+        var MAX_BATS = 8;
+        var BAT_SIZE = TILE * 1.05;
+        var MOTHER_SCALE = 3.0; // 300% size
+        var MOTHER_SPAWN_MS = 4000; // spawn baby every 4s
+
+        var FLYER_TYPES = ['bat', 'vesp', 'marimbondo'];
+        var BAT_ANIMS = {
+            fly: { prefix: 'Fly', count: 18, speed: 0.25 },
+            idle: { prefix: 'Idle', count: 18, speed: 0.12 },
+            attack: { prefix: 'Attack', count: 18, speed: 0.20 },
+            dying: { prefix: 'Dying', count: 18, speed: 0.12 },
+            fall: { prefix: 'Fall', count: 18, speed: 0.15 }
+        };
+        // Sprites indexed by flyer type
+        var flyerSprites = {};
+        (function () {
+            FLYER_TYPES.forEach(function (ft) {
+                flyerSprites[ft] = {};
+                Object.keys(BAT_ANIMS).forEach(function (anim) {
+                    var a = BAT_ANIMS[anim];
+                    flyerSprites[ft][anim] = [];
+                    for (var i = 0; i < a.count; i++) {
+                        var img = new Image();
+                        var frame = String(i);
+                        while (frame.length < 3) frame = '0' + frame;
+                        img.src = ft + '/' + a.prefix + '/0_Monster_' + a.prefix + '_' + frame + '.png';
+                        flyerSprites[ft][anim].push(img);
+                    }
+                });
+            });
+        })();
+
+        function spawnGhast(wx, wy, zone, isMother) {
+            spawnBat(wx, wy, zone, isMother, true);
+        }
+
+        function spawnBat(wx, wy, zone, isMother, forceGhast) {
+            // Use higher cap during mega-clearings
+            var batRow = Math.floor(wy / TILE);
+            var inMega = isMegaClearingRow(batRow);
+            var cap = inMega ? MAX_BATS_MEGA : MAX_BATS;
+            if (bats.length >= cap) return;
+
+            // Alternate: cycle bat → vesp → marimbondo per zone
+            var flyType = FLYER_TYPES[zone % FLYER_TYPES.length];
+
+            var minY, maxY, minX, maxX;
+            if (inMega) {
+                // Mega-clearing: wall-to-wall bounds
+                var mz = getMegaZone(batRow);
+                var megaStart = getMegaStart(mz >= 0 ? mz : 0);
+                minX = 0;
+                maxX = COLS * TILE;
+                minY = megaStart * TILE + TILE * 8;
+                maxY = (megaStart + MEGA_CLEARING_HEIGHT - 8) * TILE;
+            } else {
+                var shape = getClearingShape(zone);
+                var zoneStart = zone * CLEARING_INTERVAL;
+                minY = Infinity; maxY = -Infinity; minX = Infinity; maxX = -Infinity;
+                for (var lr = 0; lr < CLEARING_HEIGHT; lr++) {
+                    var b = shape[lr];
+                    if (!b) continue;
+                    var ry = (zoneStart + lr) * TILE;
+                    if (ry < minY) minY = ry;
+                    if (ry + TILE > maxY) maxY = ry + TILE;
+                    if (b.left * TILE < minX) minX = b.left * TILE;
+                    if ((b.right + 1) * TILE > maxX) maxX = (b.right + 1) * TILE;
+                }
+            }
+            var motherFlag = !!isMother;
+            var hpVal = motherFlag ? 10 : 2;
+            var ptsVal = motherFlag ? (100 + Math.floor(zone * 15)) : (30 + Math.floor(zone * 5));
+            bats.push({
+                x: wx, y: wy,
+                vx: (Math.random() < 0.5 ? -1 : 1) * (1 + Math.random() * 1.5),
+                vy: (Math.random() - 0.5) * 0.4,
+                state: 'fly',
+                anim: Math.random() * 18,
+                dir: Math.random() < 0.5 ? -1 : 1,
+                hp: hpVal, maxHp: hpVal,
+                hurtTimer: 0,
+                deadTimer: 0,
+                zone: zone,
+                flyType: flyType,
+                isMother: motherFlag,
+                isGhast: forceGhast || (zone % 2 === 1),
+                lastSpawnTime: Date.now(),
+                boundsMinX: minX + TILE, boundsMaxX: maxX - TILE,
+                boundsMinY: minY + TILE * 0.5, boundsMaxY: maxY - TILE,
+                flyPhase: Math.random() * Math.PI * 2,
+                flyFreq: motherFlag ? 0.02 : (0.03 + Math.random() * 0.02),
+                targetX: wx, targetY: wy,
+                retargetTimer: 0,
+                pts: ptsVal
+            });
+        }
+
+        function spawnQueen(wx, wy, zone, index) {
+            console.log('Spawning Queen at', wx, wy, 'Zone', zone);
+            var flyType = FLYER_TYPES[zone % FLYER_TYPES.length];
+            var megaStart = getMegaStart(zone);
+            bats.push({
+                x: wx, y: wy,
+                vx: 0, vy: 0,
+                state: 'fly',
+                anim: Math.random() * 18,
+                dir: Math.random() < 0.5 ? -1 : 1,
+                hp: QUEEN_HP, maxHp: QUEEN_HP,
+                hurtTimer: 0,
+                deadTimer: 0,
+                zone: zone,
+                flyType: flyType,
+                isMother: true,
+                isQueen: true,
+                lastSpawnTime: Date.now(),
+                boundsMinX: wx - TILE * 2, boundsMaxX: wx + TILE * 2,
+                boundsMinY: wy - TILE * 2, boundsMaxY: wy + TILE * 2,
+                flyPhase: Math.random() * Math.PI * 2,
+                flyFreq: 0.01,
+                targetX: wx, targetY: wy,
+                homeX: wx, homeY: wy,
+                retargetTimer: 0,
+                pts: 50 + zone * 5
+            });
+        }
+
+        function spawnBlazeBoss(wx, wy, zone, index) {
+            console.log('Spawning Blaze Boss at', wx, wy, 'Zone', zone);
+            var hpVal = Math.ceil((600 + (zone * 50)) / 3); // Reduced to 1/3
+            bats.push({
+                x: wx, y: wy,
+                vx: 0, vy: 0,
+                state: 'fly',
+                dir: Math.random() < 0.5 ? -1 : 1,
+                hp: hpVal, maxHp: hpVal,
+                hurtTimer: 0, deadTimer: 0,
+                zone: zone,
+                isBlaze: true,
+                isMother: true,
+                flyPhase: Math.random() * Math.PI * 2,
+                flyFreq: 0.015,
+                targetX: wx, targetY: wy,
+                homeX: wx, homeY: wy,
+                retargetTimer: 0,
+                pts: 200 + zone * 20,
+                boundsMinX: wx - TILE * 3, boundsMaxX: wx + TILE * 3,
+                boundsMinY: wy - TILE * 3, boundsMaxY: wy + TILE * 3,
+                lastSpawnTime: Date.now()
+            });
+        }
+
+        function spawnGhastBoss(wx, wy, zone, index) {
+            console.log('Spawning Ghast Boss at', wx, wy, 'Zone', zone);
+            var hpVal = Math.ceil((500 + (zone * 40)) / 3); // Reduced to 1/3
+            bats.push({
+                x: wx, y: wy,
+                vx: 0, vy: 0,
+                state: 'fly',
+                dir: Math.random() < 0.5 ? -1 : 1,
+                hp: hpVal, maxHp: hpVal,
+                hurtTimer: 0, deadTimer: 0,
+                zone: zone,
+                isGhast: true,
+                isMother: true,
+                flyPhase: Math.random() * Math.PI * 2,
+                flyFreq: 0.008,
+                targetX: wx, targetY: wy,
+                homeX: wx, homeY: wy,
+                retargetTimer: 0,
+                pts: 150 + zone * 15,
+                boundsMinX: wx - TILE * 4, boundsMaxX: wx + TILE * 4,
+                boundsMinY: wy - TILE * 4, boundsMaxY: wy + TILE * 4,
+                lastSpawnTime: Date.now()
+            });
+        }
+
+
+        function updateBats() {
+            for (var i = bats.length - 1; i >= 0; i--) {
+                var b = bats[i];
+
+                // Remove if too far above or way below camera (expanded for Mega Clearings)
+                var isMegaBat = (b.zone !== undefined);
+                var cullingDistB = isMegaBat ? 20000 : 2000;
+                if (b.y < camY - 800 || b.y > camY + canvas.height + cullingDistB) { bats.splice(i, 1); continue; }
+
+                // ── DEAD ──
+                if (b.state === 'dead') {
+                    b.deadTimer++;
+                    b.anim += BAT_ANIMS.dying.speed;
+                    if (b.anim >= BAT_ANIMS.dying.count) b.anim = BAT_ANIMS.dying.count - 0.01;
+                    // Fall with gravity
+                    b.vy += 0.2;
+                    b.y += b.vy;
+                    b.x += b.vx * 0.95;
+                    if (b.deadTimer > 90) { bats.splice(i, 1); }
+                    continue;
+                }
+
+                // ── HURT ──
+                if (b.state === 'hurt') {
+                    b.hurtTimer--;
+                    b.anim += BAT_ANIMS.fall.speed;
+                    if (b.anim >= BAT_ANIMS.fall.count) b.anim = 0;
+                    b.vy += 0.05;
+                    b.y += b.vy;
+                    b.x += b.vx * 0.9;
+                    // Block collision while hurt (skip if being sucked by black hole)
+                    if (!b._bhCaptured) {
+                        var hHalf = BAT_SIZE * 0.35 * (b.isBlaze ? 3.5 : (b.isGhast ? (b.isMother ? 3.0 : 1.2) : (b.isQueen ? QUEEN_SCALE : (b.isMother ? MOTHER_SCALE : 1.3))));
+
+
+                        var hCol = Math.floor(b.x / TILE), hRow = Math.floor(b.y / TILE);
+                        for (var hr = hRow - 1; hr <= hRow + 1; hr++) {
+                            for (var hc = hCol - 1; hc <= hCol + 1; hc++) {
+                                var hCell = getCell(hr, hc);
+                                if (!hCell || hCell.t === E) continue;
+                                var htl = hc * TILE, htr = (hc + 1) * TILE, htt = hr * TILE, htb = (hr + 1) * TILE;
+                                var hcx = Math.max(htl, Math.min(b.x, htr));
+                                var hcy = Math.max(htt, Math.min(b.y, htb));
+                                var hdx = b.x - hcx, hdy = b.y - hcy;
+                                var hd = Math.sqrt(hdx * hdx + hdy * hdy);
+                                if (hd < hHalf) {
+                                    if (hd > 0) { b.x += (hdx / hd) * (hHalf - hd); b.y += (hdy / hd) * (hHalf - hd); }
+                                    else { b.y -= hHalf; }
+                                    b.vx *= -0.3; b.vy *= -0.3;
+                                }
+                            }
+                        }
+                    } // end bhCaptured check
+                    if (b.hurtTimer <= 0) {
+                        b.state = 'fly'; b.anim = 0;
+                    }
+                    continue;
+                }
+
+                // ── FLY: erratic movement within clearing bounds ──
+                b.flyPhase += b.flyFreq;
+
+                // Queens, Blaze & Ghast: dynamic movement across entire mega-clearing
+                if (b.isQueen || b.isBlaze || (b.isGhast && b.isMother)) {
+
+
+                    b.retargetTimer--;
+                    if (b.retargetTimer <= 0) {
+                        b.targetX = b.boundsMinX + Math.random() * (b.boundsMaxX - b.boundsMinX);
+                        b.targetY = b.boundsMinY + Math.random() * (b.boundsMaxY - b.boundsMinY);
+                        b.retargetTimer = 25 + Math.floor(Math.random() * 50);
+                    }
+                    var qdx = b.targetX - b.x, qdy = b.targetY - b.y;
+                    var qdist = Math.sqrt(qdx * qdx + qdy * qdy) || 1;
+                    b.vx += (qdx / qdist) * 0.25;
+                    b.vy += (qdy / qdist) * 0.18 + Math.sin(b.flyPhase) * 0.08;
+                    b.vy -= 0.02;
+                    var qspd = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+                    var maxSpd = (b.isBlaze || b.isGhast) ? 4.5 : 3.5;
+
+                    if (qspd > maxSpd) { b.vx = (b.vx / qspd) * maxSpd; b.vy = (b.vy / qspd) * maxSpd; }
+
+                    b.vx *= 0.97; b.vy *= 0.97;
+                    b.x += b.vx; b.y += b.vy;
+                    // Clamp to bounds
+                    if (b.x < b.boundsMinX) { b.x = b.boundsMinX; b.vx = Math.abs(b.vx); }
+                    if (b.x > b.boundsMaxX) { b.x = b.boundsMaxX; b.vx = -Math.abs(b.vx); b._dirTimer = 90; }
+                    if (b.y < b.boundsMinY) { b.y = b.boundsMinY; b.vy = Math.abs(b.vy); }
+                    if (b.y > b.boundsMaxY) { b.y = b.boundsMaxY; b.vy = -Math.abs(b.vy); }
+
+                    if (b._dirTimer === undefined) { b._dirTimer = 0; b._lastDir = b.vx > 0 ? 1 : -1; }
+                    if (b._dirTimer > 0) b._dirTimer--;
+                    else {
+                        var desB = b.vx > 0 ? 1 : -1;
+                        if (desB !== b._lastDir && Math.abs(b.vx) > 0.3) {
+                            b._lastDir = desB;
+                            b._dirTimer = 90;
+                        }
+                    }
+                    if (Math.abs(b.vx) > 0.3) b.dir = b._lastDir;
+                    b.anim += BAT_ANIMS.fly.speed;
+                    if (b.anim >= BAT_ANIMS.fly.count) b.anim = 0;
+                    // Queens spawn babies
+                    var qNow = Date.now();
+                    if (qNow - b.lastSpawnTime >= MOTHER_SPAWN_MS) {
+                        b.lastSpawnTime = qNow;
+                        if (bats.length < MAX_BATS_MEGA) {
+                            spawnBat(b.x + (Math.random() - 0.5) * 60, b.y - 40, b.zone, false);
+                        }
+                    }
+                    continue;
+                }
+
+                b.retargetTimer--;
+                if (b.retargetTimer <= 0) {
+                    // Pick new target: mostly lateral movement (keep Y close, vary X widely)
+                    for (var rt = 0; rt < 5; rt++) {
+                        var tx = b.boundsMinX + Math.random() * (b.boundsMaxX - b.boundsMinX);
+                        // Keep Y within a small band around current position (±3 tiles)
+                        var yBand = TILE * 3;
+                        var tyMin = Math.max(b.boundsMinY, b.y - yBand);
+                        var tyMax = Math.min(b.boundsMaxY, b.y + yBand);
+                        var ty = tyMin + Math.random() * (tyMax - tyMin);
+                        var tc = getCell(Math.floor(ty / TILE), Math.floor(tx / TILE));
+                        if (!tc || tc.t === E) { b.targetX = tx; b.targetY = ty; break; }
+                    }
+                    b.retargetTimer = 60 + Math.floor(Math.random() * 120);
+                }
+
+                // Steer toward target
+                var dx = b.targetX - b.x;
+                var dy = b.targetY - b.y;
+                var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                var accel = 0.08;
+
+                if (b._dirTimer === undefined) { b._dirTimer = 0; b._lastDir = dx > 0 ? 1 : -1; }
+                if (b._dirTimer > 0) b._dirTimer--;
+                else {
+                    var desDir = dx > 0 ? 1 : -1;
+                    if (desDir !== b._lastDir && Math.abs(dx) > 20) {
+                        b._lastDir = desDir;
+                        b._dirTimer = 90;
+                    }
+                }
+                b.vx += b._lastDir * accel;
+                b.vy += (dy / dist) * accel * 0.5 + Math.sin(b.flyPhase) * 0.06;
+                // Buoyancy — bubbles float upward slightly
+                b.vy -= 0.02;
+
+                // Speed limit (bubbles are slow and floaty)
+                var spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+                var maxSpd = 1.8;
+                if (spd > maxSpd) { b.vx = (b.vx / spd) * maxSpd; b.vy = (b.vy / spd) * maxSpd; }
+
+                // Damping (more than before — bubbles are sluggish)
+                b.vx *= 0.96;
+                b.vy *= 0.96;
+
+                b.x += b.vx;
+                b.y += b.vy;
+
+                // ── Block collision: push out of solid tiles (skip if black hole captured) ──
+                if (!b._bhCaptured) {
+                    var bHalf = BAT_SIZE * 0.35 * (b.isQueen ? QUEEN_SCALE : (b.isMother ? MOTHER_SCALE : 1));
+                    var bCol = Math.floor(b.x / TILE), bRow = Math.floor(b.y / TILE);
+                    // Check a small grid around the bat
+                    for (var cr = bRow - 1; cr <= bRow + 1; cr++) {
+                        for (var cc = bCol - 1; cc <= bCol + 1; cc++) {
+                            var cell = getCell(cr, cc);
+                            if (!cell || cell.t === E) continue;
+                            // Tile AABB
+                            var tl = cc * TILE, tr = (cc + 1) * TILE, tt = cr * TILE, tb = (cr + 1) * TILE;
+                            // Overlap check (circle vs AABB)
+                            var closestX = Math.max(tl, Math.min(b.x, tr));
+                            var closestY = Math.max(tt, Math.min(b.y, tb));
+                            var ddx = b.x - closestX, ddy = b.y - closestY;
+                            var dd = Math.sqrt(ddx * ddx + ddy * ddy);
+                            if (dd < bHalf) {
+                                // Push out
+                                if (dd > 0) {
+                                    var pen = bHalf - dd;
+                                    b.x += (ddx / dd) * pen;
+                                    b.y += (ddy / dd) * pen;
+                                } else {
+                                    b.y -= bHalf;
+                                }
+                                // Bounce velocity away from block
+                                if (ddx !== 0 || ddy !== 0) {
+                                    var nd = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                                    b.vx = Math.abs(b.vx) * (ddx / nd) * 0.5;
+                                    b.vy = Math.abs(b.vy) * (ddy / nd) * 0.5;
+                                }
+                            }
+                        }
+                    }
+                } // end bhCaptured block collision check
+
+                // Clamp to bounds (skip if captured by black hole)
+                if (!b._bhCaptured) {
+                    if (b.x < b.boundsMinX) { b.x = b.boundsMinX; b.vx = Math.abs(b.vx); }
+                    if (b.x > b.boundsMaxX) { b.x = b.boundsMaxX; b.vx = -Math.abs(b.vx); }
+                    if (b.y < b.boundsMinY) { b.y = b.boundsMinY; b.vy = Math.abs(b.vy); }
+                    if (b.y > b.boundsMaxY) { b.y = b.boundsMaxY; b.vy = -Math.abs(b.vy); }
+                }
+
+                // Direction based on velocity
+                if (Math.abs(b.vx) > 0.3) b.dir = b.vx > 0 ? 1 : -1;
+
+                // Animate
+                b.anim += BAT_ANIMS.fly.speed;
+                if (b.anim >= BAT_ANIMS.fly.count) b.anim = 0;
+
+                // Mother spawns babies every 4 seconds
+                if (b.isMother && b.state === 'fly') {
+                    var now = Date.now();
+                    if (now - b.lastSpawnTime >= MOTHER_SPAWN_MS) {
+                        b.lastSpawnTime = now;
+                        if (bats.length < MAX_BATS) {
+                            spawnBat(b.x + (Math.random() - 0.5) * 40, b.y + 20, b.zone, false);
+                            spawnText(b.x, b.y + BAT_SIZE * 0.5, '🥚 Pop!', '#ff88ff');
+                        }
+                    }
+                }
+
+                // Bubble-bubble collision (push apart)
+                var bR = BAT_SIZE * 0.45 * (b.isQueen ? QUEEN_SCALE : (b.isMother ? MOTHER_SCALE : 1));
+                for (var j = i + 1; j < bats.length; j++) {
+                    var o = bats[j];
+                    if (o.state === 'dead' || o._bhCaptured) continue;
+                    var oR = BAT_SIZE * 0.45 * (o.isQueen ? QUEEN_SCALE : (o.isMother ? MOTHER_SCALE : 1));
+                    var bbdx = b.x - o.x, bbdy = b.y - o.y;
+                    var bbdist = Math.sqrt(bbdx * bbdx + bbdy * bbdy);
+                    var bbmin = bR + oR;
+                    if (bbdist < bbmin && bbdist > 0) {
+                        var bbnx = bbdx / bbdist, bbny = bbdy / bbdist;
+                        var bbov = (bbmin - bbdist) * 0.5;
+                        b.x += bbnx * bbov; b.y += bbny * bbov;
+                        o.x -= bbnx * bbov; o.y -= bbny * bbov;
+                        b.vx += bbnx * 1.2; b.vy += bbny * 1.2;
+                        o.vx -= bbnx * 1.2; o.vy -= bbny * 1.2;
+                    }
+                }
+            }
+        }
+
+        function checkPickBatCollisions() {
+            var PICK_R = 28;
+            var allPicks = getAllActivePicks();
+            for (var pi = 0; pi < allPicks.length; pi++) {
+                var p = allPicks[pi];
+                if (!p || p.stuck) continue;
+                var pSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                if (pSpeed < 0.8) continue;
+                for (var bi = bats.length - 1; bi >= 0; bi--) {
+                    var b = bats[bi];
+                    if (b.state === 'dead') continue;
+                    if (b._bhCaptured) continue;
+                    var BR = BAT_SIZE * 0.45;
+                    if (b.isBlaze) BR *= 3.5;
+                    else if (b.isGhast) BR *= (b.isMother ? 3.0 : 1.2);
+                    else if (b.isQueen) BR *= QUEEN_SCALE;
+                    else if (b.isMother) BR *= MOTHER_SCALE;
+                    else BR *= 1.3; // Bee Kids +30%
+                    var dx = p.x - b.x, dy = p.y - b.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    var minDist = PICK_R + BR;
+                    if (dist < minDist) {
+                        var nx = dist > 0 ? dx / dist : 0;
+                        var ny = dist > 0 ? dy / dist : -1;
+                        // Separate (push apart)
+                        var overlap = minDist - dist;
+                        p.x += nx * overlap * 0.4;
+                        p.y += ny * overlap * 0.4;
+                        b.x -= nx * overlap * 0.6;
+                        b.y -= ny * overlap * 0.6;
+                        // Transfer momentum (billiard style)
+                        var relVx = p.vx - (b.vx || 0), relVy = p.vy - (b.vy || 0);
+                        var dot = relVx * (-nx) + relVy * (-ny);
+                        if (dot > 0) {
+                            var pushForce = dot * 2.5;
+                            p.vx += nx * pushForce * 0.2;
+                            p.vy += ny * pushForce * 0.2;
+                            b.vx -= nx * pushForce * 1.5;
+                            b.vy -= ny * pushForce * 1.5;
+                        }
+                        // Kick pickaxe upward on any hit
+                        p.vy = Math.min(p.vy, -3);
+                        p.spin += (Math.random() - 0.5) * 0.15;
+                        // Damage
+                        if (pSpeed > 1.5) {
+                            var baseDmg = p.damage || 1;
+                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var finalDmg = Math.ceil(baseDmg * swordMult);
+                            b.hp -= finalDmg;
+                            b.hurtTimer = 10;
+                            b.anim = 0;
+                            if (swordMult > 1) sfxSwordHit();
+                            sfxBatHurt();
+                            registerComboHit(p, b.x, b.y);
+                            spawnText(b.x, b.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
+                            if (b.hp <= 0) {
+                                b.state = 'dead'; b.anim = 0; b.deadTimer = 0;
+                                if (p.userName) {
+                                    addCycleScore(p.userName, b.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, b.pts, 'kill');
+                                }
+                                sfxBatDeath();
+                            } else {
+                                b.state = 'hurt';
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ── Queen Barrier Physical Collision ──────────────────────────────────
+        // Bubble colors per zone type
+        var BUBBLE_COLORS = [
+            { fill: 'rgba(100,180,255,0.25)', stroke: 'rgba(150,210,255,0.6)', highlight: 'rgba(255,255,255,0.7)' },
+            { fill: 'rgba(255,150,200,0.25)', stroke: 'rgba(255,180,220,0.6)', highlight: 'rgba(255,255,255,0.7)' },
+            { fill: 'rgba(150,255,150,0.25)', stroke: 'rgba(180,255,180,0.6)', highlight: 'rgba(255,255,255,0.7)' }
+        ];
+
+        function drawBats() {
+            var viewTop = camY - TILE * 2;
+            var viewBot = camY + canvas.height + TILE * 2;
+            var t = Date.now() * 0.003;
+            for (var i = 0; i < bats.length; i++) {
+                var b = bats[i];
+                if (b.y < viewTop || b.y > viewBot) continue;
+
+                var r = BAT_SIZE * 0.45;
+                if (b.isBlaze) r *= 3.5;
+                else if (b.isGhast) r *= (b.isMother ? 3.0 : 1.2);
+                else if (b.isQueen) r *= QUEEN_SCALE;
+                else if (b.isMother) r *= MOTHER_SCALE;
+                else r *= 1.3; // Abelhas Kids +30%
+
+
+                // Black hole shrink
+                if (b._bhScale !== undefined && b._bhScale < 1) {
+                    r *= Math.max(0.05, b._bhScale);
+                }
+
+                if (b.state === 'hurt' && b.hurtTimer % 3 < 2) ctx.globalAlpha = 0.5;
+                if (b.state === 'dead') {
+                    ctx.globalAlpha = Math.max(0, 1 - b.deadTimer / 90);
+                    r *= Math.max(0.1, 1 - b.deadTimer / 90); // shrink on death (pop)
+                }
+
+                var bc = BUBBLE_COLORS[b.zone % BUBBLE_COLORS.length];
+                var wobble = Math.sin(t + i * 2.3) * r * 0.06;
+
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                if (b.vx > 0) ctx.scale(-1, 1);
+
+                // Black hole spin
+                if (b._bhScale !== undefined && b._bhScale < 1) {
+                    ctx.rotate(b._bhSpin || 0);
+                }
+
+                // ── Draw Bee/Blaze/Ghast Sprite (Animated Frames) ──
+                var frames = b.isGhast ? GHAST_FRAMES : (b.isBlaze ? BLAZE_BOSS_FRAMES : ((b.isMother || b.isQueen) ? ABELHA_MOTHER_FRAMES : ABELHA_KID_FRAMES));
+
+                var frameIdx = Math.floor(Date.now() / 40) % frames.length; // Velocidade da animação (~25 FPS)
+                var beeImg = frames[frameIdx];
+
+                if (beeImg && beeImg.complete && beeImg.naturalWidth > 0) {
+                    // Shadows disabled on Blaze/Ghast for performance
+                    ctx.drawImage(beeImg, -r, -r + wobble, r * 2, r * 2);
+                } else {
+
+                    // Fallback to original bubble body
+                    ctx.beginPath();
+                    ctx.arc(0, wobble, r, 0, Math.PI * 2);
+                    ctx.fillStyle = bc.fill;
+                    ctx.fill();
+                    ctx.strokeStyle = bc.stroke;
+                    ctx.lineWidth = b.isMother ? 2.5 : 1.5;
+                    ctx.stroke();
+                    // Highlight (top-left shine)
+                    ctx.beginPath();
+                    ctx.arc(-r * 0.25, -r * 0.3 + wobble, r * 0.3, 0, Math.PI * 2);
+                    ctx.fillStyle = bc.highlight;
+                    ctx.globalAlpha = (ctx.globalAlpha || 1) * 0.5;
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                    // Small secondary highlight
+                    ctx.beginPath();
+                    ctx.arc(-r * 0.1, -r * 0.5 + wobble, r * 0.12, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.globalAlpha = 0.4;
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                    // Mother/Queen indicator glow fallback
+                    if (b.isMother && b.state !== 'dead') {
+                        var mPulse = 0.3 + Math.sin(t * 2 + i) * 0.2;
+                        var mGrad = ctx.createRadialGradient(0, wobble, 0, 0, wobble, r);
+                        if (b.isQueen) {
+                            mGrad.addColorStop(0, 'rgba(255,215,0,' + mPulse + ')');
+                            mGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                        } else {
+                            mGrad.addColorStop(0, 'rgba(255,100,200,' + mPulse + ')');
+                            mGrad.addColorStop(1, 'rgba(255,100,200,0)');
+                        }
+                        ctx.fillStyle = mGrad;
+                        ctx.beginPath(); ctx.arc(0, wobble, r, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
+
+                // HP hearts
+                if (b.state !== 'dead') {
+                    var isB = b.isQueen || b.isBlaze || b.isGhast || b.isMother;
+                    drawEnemyHearts(0, -r - 20, b.hp, b.maxHp, isB);
+                }
+
+                ctx.globalAlpha = 1;
+                ctx.restore();
+            }
+        }
+
+        // Bubble sound effects
+        function sfxBatHurt() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(600, t);
+            o.frequency.exponentialRampToValueAtTime(300, t + 0.08);
+            g.gain.setValueAtTime(0.1, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.1);
+        }
+
+        function sfxBatDeath() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            // Bubble pop sound
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(800, t);
+            o.frequency.exponentialRampToValueAtTime(200, t + 0.12);
+            g.gain.setValueAtTime(0.15, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.15);
+            // Tiny noise burst
+            var nLen = Math.ceil(ac.sampleRate * 0.05);
+            var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / nLen);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+            src.connect(ng); ng.connect(ac.destination); src.start(t);
+        }
+
+        function spawnZombie(wx, wy) {
+            if (zombies.length >= MAX_ZOMBIES) return;
+            var zt = ZOMBIE_TYPES[Math.floor(Math.random() * ZOMBIE_TYPES.length)];
+            var depth = Math.floor(wy / TILE);
+            var hp = 2;
+            var spd = 0.4 + Math.random() * 0.4 + Math.min(depth / 100, 0.6);
+            // Find safe Y: move up until not inside a solid block
+            var safeY = wy - ZOMBIE_SIZE * 0.5;
+            for (var sy = 0; sy < 5; sy++) {
+                var checkRow = Math.floor((safeY + ZOMBIE_SIZE * 0.5) / TILE);
+                var checkCol = Math.floor(wx / TILE);
+                var cc = getCell(checkRow, checkCol);
+                if (!cc || cc.t === E) break;
+                safeY -= TILE;
+            }
+            zombies.push({
+                x: wx, y: safeY,
+                vx: 0, vy: 0,
+                type: zt,
+                hp: hp, maxHp: hp,
+                speed: spd,
+                dir: Math.random() < 0.5 ? -1 : 1,
+                state: 'idle',
+                anim: 0,
+                animTimer: 0,
+                hurtTimer: 0,
+                attackTimer: 0,
+                deadTimer: 0,
+                grounded: false,
+                fallFrames: 0,
+                idleTimer: 0,
+                sleepTimer: 0,
+                sleepZzz: 0,
+                returnToSleep: false,
+                pts: 5 + depth * 0.3
+            });
+        }
+
+        function spawnZombieBoss(wx, wy, zone) {
+            console.log('Spawning Zombie Boss at', wx, wy, 'Zone', zone);
+            var zt = ZOMBIE_TYPES[Math.floor(Math.random() * ZOMBIE_TYPES.length)];
+            zombies.push({
+                x: wx, y: wy,
+                vx: 0, vy: 0,
+                type: zt,
+                hp: ZBOSS_HP, maxHp: ZBOSS_HP,
+                speed: 0.3,
+                dir: Math.random() < 0.5 ? -1 : 1,
+                state: 'idle',
+                anim: 0,
+                animTimer: 0,
+                hurtTimer: 0,
+                attackTimer: 0,
+                deadTimer: 0,
+                grounded: false,
+                fallFrames: 0,
+                idleTimer: 0,
+                sleepTimer: 0,
+                sleepZzz: 0,
+                returnToSleep: false,
+                isZBoss: true,
+                homeX: wx, homeY: wy,
+                zone: zone,
+                pts: 600 + zone * 60
+            });
+        }
+
+        function checkPickZombieCollisions() {
+            var PICK_R = 28;
+            var allPicks = getAllActivePicks();
+            for (var pi = 0; pi < allPicks.length; pi++) {
+                var p = allPicks[pi];
+                if (!p || p.stuck) continue;
+                var pSpeed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                if (pSpeed < 0.8) continue;
+                for (var zi = zombies.length - 1; zi >= 0; zi--) {
+                    var z = zombies[zi];
+                    if (z.state === 'dead') continue;
+                    if (z._bhCaptured) continue;
+                    var ZR = ZOMBIE_SIZE * 0.4 * (z.isZBoss ? ZBOSS_SCALE : 1);
+                    var dx = p.x - z.x, dy = p.y - z.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    var minDist = PICK_R + ZR;
+                    if (dist < minDist) {
+                        var nx = dist > 0 ? dx / dist : 0;
+                        var ny = dist > 0 ? dy / dist : -1;
+                        // Hard separation — never overlap
+                        var overlap = minDist - dist + 2;
+                        p.x += nx * overlap * 0.5;
+                        p.y += ny * overlap * 0.5;
+                        z.x -= nx * overlap * 0.5;
+                        z.y -= ny * overlap * 0.5;
+                        // Ping-pong momentum transfer
+                        var relVx = p.vx - (z.vx || 0), relVy = p.vy - (z.vy || 0);
+                        var dot = relVx * (-nx) + relVy * (-ny);
+                        if (dot > 0) {
+                            var pushForce = dot * 2.2;
+                            p.vx += nx * pushForce * 0.4;
+                            p.vy += ny * pushForce * 0.4;
+                            z.vx -= nx * pushForce * 1.2;
+                            z.vy -= ny * pushForce * 1.2 - 3;
+                        }
+                        // Kick pickaxe upward
+                        p.vy = Math.min(p.vy, -3.5);
+                        p.spin += (Math.random() - 0.5) * 0.2;
+                        // Damage
+                        if (pSpeed > 1.5) {
+                            var baseDmg = p.damage || 1;
+                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var finalDmg = Math.ceil(baseDmg * swordMult);
+                            z.hp -= finalDmg;
+                            spawnText(z.x, z.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
+                            if (swordMult > 1) sfxSwordHit();
+                            z.state = 'hurt'; z.hurtTimer = 12; z.animTimer = 0;
+                            sfxZombieHurt();
+                            registerComboHit(p, z.x, z.y);
+                            if (z.hp <= 0) {
+                                z.state = 'dead'; z.animTimer = 0; z.deadTimer = 0;
+                                if (p.userName) {
+                                    addCycleScore(p.userName, z.pts, 'kill');
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, z.pts, 'kill');
+                                }
+                                sfxZombieDeath();
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        function updateZombies() {
+            var ZG = 0.35;
+            for (var i = zombies.length - 1; i >= 0; i--) {
+                var z = zombies[i];
+
+                // Remove if too far above or way below camera (expanded for Mega Clearings)
+                var isMegaZ = (z.zone !== undefined || z.isZBoss);
+                var cullingDistZ = isMegaZ ? 20000 : 2000;
+                if (z.y < camY - 800 || z.y > camY + canvas.height + cullingDistZ) { zombies.splice(i, 1); continue; }
+
+                if (z._dirTimer > 0) z._dirTimer--;
+
+                // ── DEAD: play full animation then remove ──
+                if (z.state === 'dead') {
+                    z.deadTimer++;
+                    z.animTimer += ZOMBIE_ANIMS.dead.speed;
+                    if (z.animTimer >= ZOMBIE_ANIMS.dead.count) z.animTimer = ZOMBIE_ANIMS.dead.count - 0.01;
+                    // still apply gravity so corpse falls
+                    z.vy += ZG;
+                    if (isInWater(z.x, z.y)) { z.vx *= 0.85; z.vy *= 0.8; z.vy -= ZG * 0.8; }
+                    z.y += z.vy;
+                    var dFootRow = Math.floor((z.y + ZOMBIE_SIZE * 0.5) / TILE);
+                    var dGround = getCell(dFootRow, Math.floor(z.x / TILE));
+                    if (dGround && dGround.t !== E) { z.y = dFootRow * TILE - ZOMBIE_SIZE * 0.5; z.vy = 0; }
+                    if (z.deadTimer > 120) { zombies.splice(i, 1); }
+                    continue;
+                }
+
+                // ── HURT: play full hurt anim, then transition ──
+                if (z.state === 'hurt') {
+                    z.hurtTimer--;
+                    z.animTimer += ZOMBIE_ANIMS.hurt.speed;
+                    // apply gravity during hurt
+                    z.vy += ZG;
+                    if (isInWater(z.x, z.y)) { z.vx *= 0.85; z.vy *= 0.8; z.vy -= ZG * 0.7; }
+                    z.y += z.vy;
+                    var hFootRow = Math.floor((z.y + ZOMBIE_SIZE * 0.5) / TILE);
+                    var hGround = getCell(hFootRow, Math.floor(z.x / TILE));
+                    if (hGround && hGround.t !== E) { z.y = hFootRow * TILE - ZOMBIE_SIZE * 0.5; z.vy = 0; }
+                    if (z.hurtTimer <= 0) {
+                        // transition to idle after hurt
+                        z.state = 'idle'; z.animTimer = 0;
+                    } else if (z.animTimer >= ZOMBIE_ANIMS.hurt.count) {
+                        z.animTimer = 0; // loop hurt if timer not done
+                    }
+                    continue;
+                }
+
+                // ── Zombie Boss: dynamic movement — patrol + chase + jump ──
+                if (z.isZBoss && !z._bhCaptured) {
+                    z.vy += ZG * 1.5; // stronger gravity for bosses
+                    // Find nearest pick to chase
+                    var nearPick = null, nearDist = 600;
+                    var allP = [pick].concat(userPicks);
+                    for (var np = 0; np < allP.length; np++) {
+                        if (!allP[np] || allP[np].stuck) continue;
+                        var ndx = allP[np].x - z.x, ndy = allP[np].y - z.y;
+                        var nd = Math.sqrt(ndx * ndx + ndy * ndy);
+                        if (nd < nearDist) { nearDist = nd; nearPick = allP[np]; }
+                    }
+                    var moveSpeed = z.speed * 2.5;
+                    var pickClose = nearDist < ZOMBIE_SIZE * ZBOSS_SCALE * 0.8;
+
+                    // ── Boss state machine ──
+                    if (!z.grounded && z.state !== 'hurt' && z.state !== 'dead') {
+                        // Airborne — use jump animation
+                        z.state = 'jump';
+                        z.animTimer += ZOMBIE_ANIMS.jump.speed;
+                        if (z.animTimer >= ZOMBIE_ANIMS.jump.count) z.animTimer = ZOMBIE_ANIMS.jump.count - 0.01;
+                        z.vx *= 0.98;
+                    } else if (z.grounded) {
+                        if (pickClose && nearPick) {
+                            // Attack when very close
+                            if (z.state !== 'attack') { z.state = 'attack'; z.animTimer = 0; }
+                            z.animTimer += ZOMBIE_ANIMS.attack.speed;
+                            if (z.animTimer >= ZOMBIE_ANIMS.attack.count) z.animTimer = 0;
+                            if (!(z._dirTimer > 0)) {
+                                var newDir = nearPick.x > z.x ? 1 : -1;
+                                if (newDir !== z.dir) { z.dir = newDir; z._dirTimer = 90; }
+                            }
+                            z.vx *= 0.8;
+                        } else if (nearPick) {
+                            // Run toward target
+                            z.state = 'run';
+                            if (!(z._dirTimer > 0)) {
+                                var newDir = nearPick.x > z.x ? 1 : -1;
+                                if (newDir !== z.dir) { z.dir = newDir; z._dirTimer = 90; }
+                            }
+                            z.vx += z.dir * 0.2;
+                            z.animTimer += ZOMBIE_ANIMS.run.speed;
+                            if (z.animTimer >= ZOMBIE_ANIMS.run.count) z.animTimer = 0;
+                            // Jump toward pick if it's above or randomly
+                            if (nearPick.y < z.y - TILE || Math.random() < 0.03) {
+                                z.vy = -6 - Math.random() * 3;
+                                z.grounded = false;
+                                z.state = 'jump'; z.animTimer = 0;
+                            }
+                        } else {
+                            // Patrol — walk with frequent jumps
+                            z.state = 'walk';
+                            z.vx = z.dir * moveSpeed;
+                            z.animTimer += ZOMBIE_ANIMS.walk.speed;
+                            if (z.animTimer >= ZOMBIE_ANIMS.walk.count) z.animTimer = 0;
+                            if (Math.random() < 0.03) {
+                                z.vy = -5 - Math.random() * 3;
+                                z.grounded = false;
+                                z.state = 'jump'; z.animTimer = 0;
+                            }
+                        }
+                    }
+
+                    // Speed limit
+                    var bSpd = Math.abs(z.vx);
+                    if (bSpd > moveSpeed * 3) z.vx = z.dir * moveSpeed * 3;
+                    z.vx *= 0.95;
+                    z.x += z.vx;
+                    z.y += z.vy;
+                    // Wall bounce
+                    var bwL = TILE * 0.5, bwR = (COLS - 0.5) * TILE;
+                    if (z.x <= bwL) { z.x = bwL; z.dir = 1; z.vx = Math.abs(z.vx); }
+                    if (z.x >= bwR) { z.x = bwR; z.dir = -1; z.vx = -Math.abs(z.vx); }
+                    // Ground collision
+                    var bFootRow = Math.floor((z.y + ZOMBIE_SIZE * ZBOSS_SCALE * 0.5) / TILE);
+                    var bFootCol = Math.floor(z.x / TILE);
+                    var bGround = getCell(bFootRow, bFootCol);
+                    z.grounded = false;
+                    if (bGround && bGround.t !== E) {
+                        z.y = bFootRow * TILE - ZOMBIE_SIZE * ZBOSS_SCALE * 0.5;
+                        if (z.vy > 0) z.vy = 0;
+                        z.grounded = true;
+                    }
+                    // Random groan
+                    if (Math.random() < 0.004) sfxZombieGroan();
+                    continue;
+                }
+
+                // ── Physics (skip if captured by black hole) ──
+                if (z._bhCaptured) {
+                    z.x += z.vx; z.y += z.vy;
+                    continue;
+                }
+                var wasGrounded = z.grounded;
+                z.vy += ZG;
+                // Water interaction: jellies float and bob on surface
+                z.isSwimming = false;
+                if (isInWater(z.x, z.y)) {
+                    z.isSwimming = true;
+                    z.vx *= 0.85;
+                    z.vy *= 0.75;
+                    z.vy -= ZG * 1.4; // strong buoyancy — jellies float
+                    // Bob on surface
+                    z.vy += Math.sin(Date.now() * 0.005 + i * 2) * 0.08;
+                    z.grounded = false;
+                }
+                z.x += z.vx;
+                z.y += z.vy;
+
+                // NaN/Infinity safety
+                if (!isFinite(z.x) || !isFinite(z.y)) { zombies.splice(i, 1); continue; }
+                if (!isFinite(z.vx)) z.vx = 0;
+                if (!isFinite(z.vy)) z.vy = 0;
+
+                // Ground check
+                var footRow = Math.floor((z.y + ZOMBIE_SIZE * 0.5) / TILE);
+                var footCol = Math.floor(z.x / TILE);
+                var groundCell = getCell(footRow, footCol);
+                z.grounded = false;
+                if (groundCell && groundCell.t !== E && z.vy >= 0) {
+                    z.y = footRow * TILE - ZOMBIE_SIZE * 0.5;
+                    z.vy = 0;
+                    z.grounded = true;
+                }
+
+                // Landing transition: was airborne, now grounded
+                if (!wasGrounded && z.grounded && z.state === 'jump') {
+                    z.state = 'idle'; z.animTimer = 0;
+                    z.fallFrames = 0;
+                }
+
+                // Track fall duration
+                if (!z.grounded && z.vy > 0) {
+                    z.fallFrames++;
+                }
+
+                // Floor disappeared under zombie (block broken)
+                if (wasGrounded && !z.grounded && z.state !== 'jump') {
+                    z.state = 'jump'; z.animTimer = 0; z.fallFrames = 0;
+                }
+
+                // Wall clamp
+                var wallLeft = 1;
+                var wallRight = COLS * TILE - 1;
+                if (z.x < wallLeft + ZOMBIE_SIZE * 0.4) { z.x = wallLeft + ZOMBIE_SIZE * 0.4; z.dir = 1; }
+                if (z.x > wallRight - ZOMBIE_SIZE * 0.4) { z.x = wallRight - ZOMBIE_SIZE * 0.4; z.dir = -1; }
+
+                // ── JUMP state: animate and wait for landing ──
+                if (z.state === 'jump') {
+                    z.animTimer += ZOMBIE_ANIMS.jump.speed;
+                    if (z.animTimer >= ZOMBIE_ANIMS.jump.count) z.animTimer = ZOMBIE_ANIMS.jump.count - 0.01;
+                    // air friction
+                    z.vx *= 0.98;
+                    continue;
+                }
+
+                // ── GROUNDED STATES: idle, walk, run ──
+                if (!z.grounded) {
+                    // fell off edge unexpectedly
+                    z.state = 'jump'; z.animTimer = 0; z.fallFrames = 0;
+                    continue;
+                }
+
+                // ── Spatial awareness ──
+                var myRow = Math.floor(z.y / TILE);
+                var myCol = footCol;
+
+                // Check wall/block in direction
+                var _scL = Math.floor((z.x - ZOMBIE_SIZE * 0.5) / TILE);
+                var _cL = getCell(myRow, _scL);
+                var blockedLeft = _cL && _cL.t !== E;
+                var _scR = Math.floor((z.x + ZOMBIE_SIZE * 0.5) / TILE);
+                var _cR = getCell(myRow, _scR);
+                var blockedRight = _cR && _cR.t !== E;
+
+                // Check gap in direction
+                var _gapColL = Math.floor((z.x - TILE * 0.6) / TILE);
+                var _gapColR = Math.floor((z.x + TILE * 0.6) / TILE);
+                var _floorL = getCell(footRow, _gapColL);
+                var _floorR = getCell(footRow, _gapColR);
+                var gapLeft = !_floorL || _floorL.t === E;
+                var gapRight = !_floorR || _floorR.t === E;
+
+                // Isolated = solid walls on both sides
+                var isolated = blockedLeft && blockedRight;
+                // Can't move in either direction
+                var trapped = (blockedLeft || gapLeft) && (blockedRight || gapRight);
+
+                // Jump check helper — also checks headroom above zombie and landing space
+                var _canJump = function (dir) {
+                    var sc = Math.floor((z.x + dir * ZOMBIE_SIZE * 0.5) / TILE);
+                    var myCol2 = Math.floor(z.x / TILE);
+                    var a1 = getCell(myRow - 1, sc);
+                    if (!a1 || a1.t === E) {
+                        // 1-block wall: check headroom above zombie and space for body at landing
+                        var headroom = getCell(myRow - 1, myCol2);
+                        var landBody = getCell(myRow - 2, sc);
+                        if (headroom && headroom.t !== E) return 0; // ceiling blocks jump
+                        if (landBody && landBody.t !== E) return 0; // no space for body at top
+                        return 1;
+                    }
+                    var a2 = getCell(myRow - 2, sc);
+                    if (!a2 || a2.t === E) {
+                        // 2-block wall: check headroom above zombie and space for body at landing
+                        var head1 = getCell(myRow - 1, myCol2);
+                        var head2 = getCell(myRow - 2, myCol2);
+                        var landBody2 = getCell(myRow - 3, sc);
+                        if ((head1 && head1.t !== E) || (head2 && head2.t !== E)) return 0;
+                        if (landBody2 && landBody2.t !== E) return 0;
+                        return 2;
+                    }
+                    return 0;
+                };
+                // Gap landing helper
+                var _gapLanding = function (dir) {
+                    var ac = Math.floor((z.x + dir * TILE * 0.6) / TILE);
+                    var l1 = getCell(footRow, ac + dir);
+                    var l2 = getCell(footRow, ac + dir * 2);
+                    return (l1 && l1.t !== E) || (l2 && l2.t !== E);
+                };
+                // Gap drop helper
+                var _gapDrop = function (dir) {
+                    var ac = Math.floor((z.x + dir * TILE * 0.6) / TILE);
+                    var d1 = getCell(footRow + 1, ac);
+                    var d2 = getCell(footRow + 2, ac);
+                    return (d1 && d1.t !== E) || (d2 && d2.t !== E);
+                };
+
+                // ── Check proximity to any pickaxe for attack ──
+                var nearPick = null;
+                var nearPickDist = 999;
+                for (var pk = 0; pk < userPicks.length; pk++) {
+                    var p = userPicks[pk];
+                    var dx = p.x - z.x, dy = p.y - z.y;
+                    var dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < nearPickDist) { nearPickDist = dist; nearPick = p; }
+                }
+                var pickClose = nearPickDist < ZOMBIE_SIZE * 1.2;
+
+                // ── SLEEP state: zombie rests when isolated between walls ──
+                if (z.state === 'sleep') {
+                    z.vx = 0;
+                    z.animTimer += ZOMBIE_ANIMS.idle.speed * 0.4;
+                    if (z.animTimer >= ZOMBIE_ANIMS.idle.count) z.animTimer = 0;
+                    z.sleepTimer = (z.sleepTimer || 0) + 1;
+                    z.sleepZzz = (z.sleepZzz || 0) + 1;
+                    // Only wake up if no longer isolated (wall was destroyed, path opened)
+                    // AND there's actually somewhere to go
+                    if (!isolated && (!blockedLeft || !blockedRight)) {
+                        var canGoLeft = !blockedLeft && !gapLeft;
+                        var canGoRight = !blockedRight && !gapRight;
+                        var canJumpL = _canJump(-1) > 0;
+                        var canJumpR = _canJump(1) > 0;
+                        var canDropL = gapLeft && _gapDrop(-1);
+                        var canDropR = gapRight && _gapDrop(1);
+                        if (canGoLeft || canGoRight || canJumpL || canJumpR || canDropL || canDropR) {
+                            z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0; z.sleepTimer = 0;
+                        }
+                    }
+                    // Attack if pickaxe comes close
+                    if (pickClose) {
+                        if (!(z._dirTimer > 0)) {
+                            var newDir = nearPick.x > z.x ? 1 : -1;
+                            if (newDir !== z.dir) { z.dir = newDir; z._dirTimer = 90; }
+                        }
+                        z.state = 'attack'; z.animTimer = 0; z.returnToSleep = isolated;
+                    }
+                    if (Math.random() < 0.002) sfxZombieGroan();
+                    if (z.grounded) z.vx *= 0.85;
+                    continue;
+                }
+
+                // ── ATTACK: only triggered by pickaxe proximity ──
+                if (z.state === 'attack') {
+                    z.animTimer += ZOMBIE_ANIMS.attack.speed;
+                    if (z.animTimer >= ZOMBIE_ANIMS.attack.count) {
+                        if (z.returnToSleep && isolated) {
+                            z.state = 'sleep'; z.animTimer = 0; z.sleepTimer = 0;
+                        } else {
+                            z.state = 'idle'; z.animTimer = 0;
+                        }
+                        z.returnToSleep = false;
+                    }
+                    if (z.grounded) z.vx *= 0.85;
+                    continue;
+                }
+
+                // ── Obstacle handling (only when walking) ──
+                if (z.state === 'walk') {
+                    var dirBlocked = z.dir > 0 ? blockedRight : blockedLeft;
+                    var dirGap = z.dir > 0 ? gapRight : gapLeft;
+
+                    if (dirBlocked) {
+                        var jh = _canJump(z.dir);
+                        if (jh > 0) {
+                            z.vy = jh === 1 ? -7 : -9.5; z.vx = z.dir * z.speed * 2;
+                            z.grounded = false; z.state = 'jump'; z.animTimer = 0; z.fallFrames = 0;
+                            continue;
+                        }
+                        // Can't jump over — check other direction
+                        var otherBlocked = z.dir > 0 ? blockedLeft : blockedRight;
+                        var otherGap = z.dir > 0 ? gapLeft : gapRight;
+                        if (!otherBlocked && !otherGap) {
+                            z.dir *= -1; z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0;
+                            continue;
+                        }
+                        // Isolated between walls — sleep
+                        if (isolated) {
+                            z.state = 'sleep'; z.animTimer = 0; z.sleepTimer = 0; z.vx = 0;
+                            continue;
+                        }
+                        // Trapped but not isolated (gaps) — stop and idle
+                        if (trapped) {
+                            z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0; z.vx = 0;
+                            continue;
+                        }
+                    }
+
+                    if (dirGap) {
+                        if (_gapDrop(z.dir)) {
+                            // Drop down — explore lower areas
+                            z.vx = z.dir * z.speed * 1.8;
+                        } else if (_gapLanding(z.dir)) {
+                            z.vy = -6; z.vx = z.dir * z.speed * 3;
+                            z.grounded = false; z.state = 'jump'; z.animTimer = 0; z.fallFrames = 0;
+                            continue;
+                        } else {
+                            var otherBlocked2 = z.dir > 0 ? blockedLeft : blockedRight;
+                            var otherGap2 = z.dir > 0 ? gapLeft : gapRight;
+                            if (!otherBlocked2 && !otherGap2) {
+                                z.dir *= -1; z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0;
+                                continue;
+                            }
+                            // Dead end — idle (not sleep, since it's a gap not a wall)
+                            z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0; z.vx = 0;
+                            continue;
+                        }
+                    }
+                }
+
+                // ── State machine: idle ↔ walk with random hurt as ambient ──
+                if (z.state === 'idle') {
+                    z.vx = 0;
+                    z.animTimer += ZOMBIE_ANIMS.idle.speed;
+                    if (z.animTimer >= ZOMBIE_ANIMS.idle.count) z.animTimer = 0;
+                    z.idleTimer++;
+                    // Isolated between walls — go to sleep
+                    if (isolated && z.idleTimer > 40) {
+                        z.state = 'sleep'; z.animTimer = 0; z.sleepTimer = 0;
+                        continue;
+                    }
+                    // Attack if pickaxe is close
+                    if (pickClose) {
+                        if (!(z._dirTimer > 0)) {
+                            var newDir = nearPick.x > z.x ? 1 : -1;
+                            if (newDir !== z.dir) { z.dir = newDir; z._dirTimer = 90; }
+                        }
+                        z.state = 'attack'; z.animTimer = 0;
+                        continue;
+                    }
+                    // After idling, start walking
+                    if (z.idleTimer > 60 + Math.random() * 90) {
+                        z.state = 'walk'; z.animTimer = 0; z.idleTimer = 0;
+                        // Random direction, prefer gaps (explore lower areas)
+                        var canL = !blockedLeft;
+                        var canR = !blockedRight;
+                        if (canL && canR) {
+                            // Prefer direction with gap (leads down)
+                            if (gapLeft && !gapRight) z.dir = -1;
+                            else if (gapRight && !gapLeft) z.dir = 1;
+                            else z.dir = Math.random() < 0.5 ? -1 : 1;
+                        } else if (canR) z.dir = 1;
+                        else if (canL) z.dir = -1;
+                        else z.dir = Math.random() < 0.5 ? -1 : 1;
+                    }
+                } else if (z.state === 'walk') {
+                    z.vx = z.dir * z.speed;
+                    z.animTimer += ZOMBIE_ANIMS.walk.speed;
+                    if (z.animTimer >= ZOMBIE_ANIMS.walk.count) z.animTimer = 0;
+                    z.idleTimer++;
+                    // Attack if pickaxe is close
+                    if (pickClose) {
+                        if (!(z._dirTimer > 0)) {
+                            var newDir = nearPick.x > z.x ? 1 : -1;
+                            if (newDir !== z.dir) { z.dir = newDir; z._dirTimer = 90; }
+                        }
+                        z.state = 'attack'; z.animTimer = 0; z.vx = 0;
+                        continue;
+                    }
+                    // Random stop to idle
+                    if (z.idleTimer > 120 + Math.random() * 180) {
+                        z.state = 'idle'; z.animTimer = 0; z.idleTimer = 0;
+                    }
+                    // Random groan
+                    if (Math.random() < 0.003) sfxZombieGroan();
+                    // Random jump to explore lower areas
+                    if (Math.random() < 0.015) {
+                        z.vy = -5 - Math.random() * 3;
+                        z.vx = z.dir * z.speed * 2.5;
+                        z.grounded = false; z.state = 'jump'; z.animTimer = 0; z.fallFrames = 0;
+                    }
+                }
+
+                // Ground friction
+                if (z.grounded) z.vx *= 0.85;
+
+                // Jelly-jelly collision (push apart + bounce)
+                var zR = ZOMBIE_SIZE * 0.4 * (z.isZBoss ? ZBOSS_SCALE : 1);
+                for (var j = i + 1; j < zombies.length; j++) {
+                    var o = zombies[j];
+                    if (o.state === 'dead' || o._bhCaptured) continue;
+                    var oR = ZOMBIE_SIZE * 0.4 * (o.isZBoss ? ZBOSS_SCALE : 1);
+                    var jdx = z.x - o.x, jdy = z.y - o.y;
+                    var jdist = Math.sqrt(jdx * jdx + jdy * jdy);
+                    var jmin = zR + oR;
+                    if (jdist < jmin && jdist > 0) {
+                        var jnx = jdx / jdist, jny = jdy / jdist;
+                        var jov = (jmin - jdist) * 0.5;
+                        z.x += jnx * jov; z.y += jny * jov;
+                        o.x -= jnx * jov; o.y -= jny * jov;
+                        // Bounce velocity
+                        z.vx += jnx * 1.0; z.vy += jny * 0.5;
+                        o.vx -= jnx * 1.0; o.vy -= jny * 0.5;
+                    }
+                }
+            }
+        }
+
+        // Jelly colors — cycle per zombie type
+        var JELLY_COLORS = [
+            { r: 50, g: 200, b: 80 },   // green
+            { r: 200, g: 80, b: 180 },  // purple
+            { r: 80, g: 150, b: 220 },  // blue
+            { r: 220, g: 160, b: 50 }   // orange
+        ];
+        var SLIME_TEX = new Image();
+        SLIME_TEX.src = 'slime/Slime.png';
+
+        function drawZombies() {
+            var viewTop = camY - TILE * 2;
+            var viewBot = camY + canvas.height + TILE * 2;
+            var t = Date.now() * 0.004;
+            for (var i = 0; i < zombies.length; i++) {
+                var z = zombies[i];
+                if (z.y < viewTop || z.y > viewBot) continue;
+
+                var baseW = ZOMBIE_SIZE * 0.9;
+                var baseH = ZOMBIE_SIZE * 0.8;
+                if (z.isZBoss) { baseW *= ZBOSS_SCALE; baseH *= ZBOSS_SCALE; }
+
+                // Black hole shrink
+                if (z._bhScale !== undefined && z._bhScale < 1) {
+                    var zsc = Math.max(0.05, z._bhScale);
+                    baseW *= zsc; baseH *= zsc;
+                }
+
+                // Squash & stretch based on velocity
+                var speedY = Math.abs(z.vy || 0);
+                var speedX = Math.abs(z.vx || 0);
+                var squashX = 1 + speedY * 0.04 - speedX * 0.02;
+                var squashY = 1 - speedY * 0.03 + speedX * 0.02;
+                squashX = Math.max(0.7, Math.min(1.3, squashX));
+                squashY = Math.max(0.7, Math.min(1.3, squashY));
+
+                // Idle wobble
+                var wobble = Math.sin(t + i * 1.7) * 0.04;
+                squashX += wobble;
+                squashY -= wobble;
+
+                var w = baseW * squashX;
+                var h = baseH * squashY;
+
+                // Jelly color
+                var jc = JELLY_COLORS[i % JELLY_COLORS.length];
+                if (z.isZBoss) jc = { r: 255, g: 60, b: 60 }; // boss = red
+
+                ctx.save();
+                var dx = z.x, dy = z.y + ZOMBIE_SIZE * 0.3;
+                ctx.translate(dx, dy);
+                if (z.vx > 0) ctx.scale(-1, 1);
+
+                // Black hole spin
+                if (z._bhScale !== undefined && z._bhScale < 1) {
+                    ctx.rotate(z._bhSpin || 0);
+                }
+
+                if (z.state === 'hurt' && z.hurtTimer % 4 < 2) ctx.globalAlpha = 0.6;
+                if (z.state === 'dead') ctx.globalAlpha = Math.max(0, 1 - z.deadTimer / 120);
+
+                // ── Draw Slime Sprite ──
+                if (SLIME_TEX.complete && SLIME_TEX.naturalWidth > 0) {
+                    ctx.drawImage(SLIME_TEX, -w / 2, -h * 0.7, w, h);
+                } else {
+                    // Fallback to original jelly body (ellipse)
+                    ctx.beginPath();
+                    ctx.ellipse(0, -h * 0.1, w / 2, h * 0.5, 0, Math.PI, 0);
+                    ctx.ellipse(0, -h * 0.1, w / 2 * 1.1, h * 0.3, 0, 0, Math.PI);
+                    ctx.closePath();
+                    var grad = ctx.createRadialGradient(-w * 0.15, -h * 0.25, 0, 0, 0, w * 0.6);
+                    grad.addColorStop(0, 'rgba(' + Math.min(255, jc.r + 80) + ',' + Math.min(255, jc.g + 80) + ',' + Math.min(255, jc.b + 80) + ',0.5)');
+                    grad.addColorStop(0.5, 'rgba(' + jc.r + ',' + jc.g + ',' + jc.b + ',0.35)');
+                    grad.addColorStop(1, 'rgba(' + Math.max(0, jc.r - 40) + ',' + Math.max(0, jc.g - 40) + ',' + Math.max(0, jc.b - 40) + ',0.25)');
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(' + jc.r + ',' + jc.g + ',' + jc.b + ',0.5)';
+                    ctx.lineWidth = z.isZBoss ? 3 : 1.5;
+                    ctx.stroke();
+                    // Highlights
+                    ctx.beginPath();
+                    ctx.ellipse(-w * 0.12, -h * 0.3, w * 0.18, h * 0.12, -0.3, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(-w * 0.05, -h * 0.45, w * 0.06, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                    ctx.fill();
+                }
+
+                // Eyes (two dots)
+                var eyeY = -h * 0.15;
+                var eyeSpacing = w * 0.15;
+                var eyeR = z.isZBoss ? 5 : 3;
+                // White
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.beginPath(); ctx.arc(-eyeSpacing, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeSpacing, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                // Pupils (look in movement direction)
+                var pupilOff = (z.dir || 1) * eyeR * 0.3;
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.beginPath(); ctx.arc(-eyeSpacing + pupilOff, eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeSpacing + pupilOff, eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
+
+                // Boss indicator (subtle)
+                if (z.isZBoss && z.state !== 'dead') {
+                    ctx.fillStyle = 'rgba(255,60,60,0.08)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, -h * 0.1, w / 2 + 4, h * 0.5 + 4, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Sleep Zzz
+                if (z.state === 'sleep') {
+                    ctx.globalAlpha = 0.5 + 0.3 * Math.sin((z.sleepZzz || 0) * 0.04);
+                    ctx.font = '14px monospace'; ctx.fillStyle = '#aaddff';
+                    var zzOff = Math.sin((z.sleepZzz || 0) * 0.03) * 6;
+                    ctx.fillText('Z', 8, -h / 2 - 6 + zzOff);
+                    ctx.font = '11px monospace'; ctx.fillText('z', 18, -h / 2 - 14 + zzOff * 0.7);
+                }
+
+                // HP hearts
+                if (z.state !== 'dead') {
+                    drawEnemyHearts(0, -h / 2 - 25, z.hp, z.maxHp, z.isZBoss);
+                }
+
+                ctx.globalAlpha = 1;
+                ctx.restore();
+            }
+        }
+
+        // ── BOSS: Aranha Gigante ─────────────────────────────────────────────────────
+
+        // ── Áudio ─────────────────────────────────────────────────────────────────
+        var AC = null;
+        function getAC() {
+            if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+            if (AC.state === 'suspended') AC.resume();
+            return AC;
+        }
+
+        var _reverbNode = null;
+        function getReverbNode() {
+            var ac = getAC();
+            if (_reverbNode && _reverbNode.context === ac) return _reverbNode;
+            var len = ac.sampleRate * 2.2;
+            var buf = ac.createBuffer(2, len, ac.sampleRate);
+            for (var ch = 0; ch < 2; ch++) {
+                var d = buf.getChannelData(ch);
+                for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+            }
+            var conv = ac.createConvolver(); conv.buffer = buf;
+            var wetG = ac.createGain(); wetG.gain.value = 0.38;
+            conv.connect(wetG); wetG.connect(ac.destination);
+            _reverbNode = conv; return conv;
+        }
+
+        function playNote(freq, type, vol, attack, decay, when) {
+            var ac = getAC();
+            var osc = ac.createOscillator();
+            var gain = ac.createGain();
+            var rev = getReverbNode();
+            osc.connect(gain); gain.connect(ac.destination); gain.connect(rev);
+            osc.type = type || 'sine';
+            osc.frequency.setValueAtTime(freq, when);
+            gain.gain.setValueAtTime(0.0001, when);
+            gain.gain.linearRampToValueAtTime(vol, when + attack);
+            gain.gain.exponentialRampToValueAtTime(0.0001, when + attack + decay);
+            osc.start(when); osc.stop(when + attack + decay + 0.1);
+        }
+
+        function sfxHit(blockType) {
+            var ac = getAC(), t = ac.currentTime;
+            var len = Math.ceil(ac.sampleRate * 0.045);
+            var buf = ac.createBuffer(1, len, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.5);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter();
+            filt.type = 'lowpass'; filt.frequency.value = 400 + blockType * 60;
+            var g = ac.createGain(); g.gain.setValueAtTime(0.09, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+            src.connect(filt); filt.connect(g); g.connect(ac.destination);
+            src.start(t);
+        }
+
+        function sfxBreak(blockType) {
+            var ac = getAC(), t = ac.currentTime;
+            var osc = ac.createOscillator(), og = ac.createGain();
+            var baseFreq = [55, 60, 58, 52, 48, 50, 44, 42, 40][Math.min(blockType, 8)];
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(baseFreq * 1.8, t);
+            osc.frequency.exponentialRampToValueAtTime(baseFreq, t + 0.18);
+            og.gain.setValueAtTime(0.45, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+            osc.connect(og); og.connect(ac.destination); osc.start(t); osc.stop(t + 0.35);
+            var len = Math.ceil(ac.sampleRate * 0.22);
+            var buf = ac.createBuffer(1, len, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter();
+            filt.type = 'lowpass'; filt.frequency.value = 300 + blockType * 40;
+            var g = ac.createGain(); g.gain.setValueAtTime(0.35, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+            src.connect(filt); filt.connect(g); g.connect(ac.destination); src.start(t);
+        }
+
+        function sfxPlayerHurt() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(150, t);
+            o.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+            g.gain.setValueAtTime(0.3, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.15);
+        }
+
+        function sfxMoneyLoss() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            [440, 330, 220].forEach(function (f, i) {
+                var o = ac.createOscillator(), g = ac.createGain();
+                o.type = 'sine';
+                o.frequency.setValueAtTime(f, t + i * 0.1);
+                o.frequency.exponentialRampToValueAtTime(f * 0.5, t + i * 0.1 + 0.2);
+                g.gain.setValueAtTime(0.15, t + i * 0.1);
+                g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.1 + 0.2);
+                o.connect(g); g.connect(ac.destination);
+                o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.2);
+            });
+        }
+
+        function sfxFuse(duration) {
+            var ac = getAC(), t = ac.currentTime;
+            var len = Math.ceil(ac.sampleRate * duration);
+            var buf = ac.createBuffer(1, len, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < len; i++) {
+                var crackle = Math.random() < 0.04 ? Math.random() * 2 * 1.8 : (Math.random() * 2 - 1) * 0.15;
+                d[i] = crackle * Math.pow(1 - i / len, 0.15);
+            }
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter();
+            filt.type = 'bandpass'; filt.frequency.value = 3200; filt.Q.value = 0.8;
+            var g = ac.createGain(); g.gain.setValueAtTime(0.22, t);
+            g.gain.linearRampToValueAtTime(0.38, t + duration * 0.85);
+            g.gain.linearRampToValueAtTime(0.0001, t + duration);
+            src.connect(filt); filt.connect(g); g.connect(ac.destination);
+            src.start(t); src.stop(t + duration + 0.05);
+            return src;
+        }
+
+        function sfxTNT() {
+            var ac = getAC(), t = ac.currentTime;
+            var sub = ac.createOscillator(), subG = ac.createGain();
+            sub.type = 'sine'; sub.frequency.setValueAtTime(38, t);
+            sub.frequency.exponentialRampToValueAtTime(14, t + 0.55);
+            subG.gain.setValueAtTime(0.0001, t);
+            subG.gain.linearRampToValueAtTime(0.9, t + 0.012);
+            subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 0.6);
+            var mid = ac.createOscillator(), midG = ac.createGain();
+            mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+            mid.frequency.exponentialRampToValueAtTime(28, t + 0.35);
+            midG.gain.setValueAtTime(0.0001, t);
+            midG.gain.linearRampToValueAtTime(0.5, t + 0.008);
+            midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.38);
+            var len = Math.ceil(ac.sampleRate * 0.7);
+            var buf = ac.createBuffer(1, len, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 0.7);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 900;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.55, t);
+            ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+            var rev = getReverbNode();
+            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
+            src.start(t);
+        }
+
+        function sfxMegaTNT() {
+            var ac = getAC(), t = ac.currentTime;
+            var sub = ac.createOscillator(), subG = ac.createGain();
+            sub.type = 'sine'; sub.frequency.setValueAtTime(32, t);
+            sub.frequency.exponentialRampToValueAtTime(8, t + 1.1);
+            subG.gain.setValueAtTime(0.0001, t);
+            subG.gain.linearRampToValueAtTime(1.0, t + 0.015);
+            subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.15);
+            var mid = ac.createOscillator(), midG = ac.createGain();
+            mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+            mid.frequency.exponentialRampToValueAtTime(20, t + 0.7);
+            midG.gain.setValueAtTime(0.0001, t);
+            midG.gain.linearRampToValueAtTime(0.8, t + 0.01);
+            midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.75);
+            var len = Math.ceil(ac.sampleRate * 1.2);
+            var buf = ac.createBuffer(1, len, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 0.5);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 700;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.85, t);
+            ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+            var rev = getReverbNode();
+            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
+            src.start(t);
+        }
+
+        function sfxPickaxeChange() {
+            var ac = getAC(), t = ac.currentTime;
+            playNote(880, 'sine', 0.1, 0.01, 0.18, t);
+            playNote(1320, 'sine', 0.08, 0.01, 0.14, t + 0.06);
+        }
+
+        // Zombie groan — low guttural sound
+        // Jelly groan — cute wobble sound
+        var _lastZombieSfx = 0;
+        function sfxZombieGroan() {
+            var now = Date.now();
+            if (now - _lastZombieSfx < 3000) return;
+            _lastZombieSfx = now;
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            // Wobble boing
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'sine';
+            var base = 200 + Math.random() * 100;
+            o.frequency.setValueAtTime(base, t);
+            o.frequency.linearRampToValueAtTime(base * 1.3, t + 0.05);
+            o.frequency.linearRampToValueAtTime(base * 0.8, t + 0.15);
+            o.frequency.linearRampToValueAtTime(base, t + 0.25);
+            g.gain.setValueAtTime(0.06, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.3);
+        }
+
+        function sfxZombieHurt() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            // Squish/splat sound
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(400 + Math.random() * 200, t);
+            o.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+            g.gain.setValueAtTime(0.12, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.12);
+            // Wet splat noise
+            var nLen = Math.ceil(ac.sampleRate * 0.06);
+            var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < nLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / nLen, 2);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+            src.connect(ng); ng.connect(ac.destination); src.start(t);
+        }
+
+        function sfxZombieDeath() {
+            if (!_audioStarted) return;
+            var ac = getAC(), t = ac.currentTime;
+            // Funny deflate/splat — descending boing + pop
+            var o = ac.createOscillator(), g = ac.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(600, t);
+            o.frequency.exponentialRampToValueAtTime(80, t + 0.3);
+            g.gain.setValueAtTime(0.15, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+            o.connect(g); g.connect(ac.destination);
+            o.start(t); o.stop(t + 0.35);
+            // Pop at the end
+            var p = ac.createOscillator(), pg = ac.createGain();
+            p.type = 'triangle';
+            p.frequency.setValueAtTime(900, t + 0.25);
+            p.frequency.exponentialRampToValueAtTime(300, t + 0.35);
+            pg.gain.setValueAtTime(0.0001, t + 0.25);
+            pg.gain.linearRampToValueAtTime(0.1, t + 0.27);
+            pg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+            p.connect(pg); pg.connect(ac.destination);
+            p.start(t + 0.25); p.stop(t + 0.36);
+        }
+
+        function sfxSkillActivate() {
+            var ac = getAC(), t = ac.currentTime;
+            playNote(440, 'sine', 0.1, 0.01, 0.12, t);
+            playNote(660, 'sine', 0.1, 0.01, 0.12, t + 0.07);
+            playNote(880, 'sine', 0.1, 0.01, 0.18, t + 0.14);
+        }
+
+        var swordHitSound = new Audio('sons/ataque de espada.ogg');
+        var sfxWitherHurt = new Audio('enemy/Dano_Wither_skeleton.ogg');
+        var sfxWitherDeath = new Audio('enemy/Death_Wither_skeleton.ogg');
+
+        function playWitherHurt() { if (_audioStarted) { sfxWitherHurt.currentTime = 0; sfxWitherHurt.play().catch(e => { }); } }
+        function playWitherDeath() { if (_audioStarted) { sfxWitherDeath.currentTime = 0; sfxWitherDeath.play().catch(e => { }); } }
+        function sfxSwordHit() {
+            if (!_audioStarted) return;
+            try {
+                var s = swordHitSound.cloneNode();
+                s.volume = 0.5;
+                s.play();
+            } catch (e) { }
+        }
+
+        var sheepSounds = [
+            new Audio('sons/som ovelha um.ogg'),
+            new Audio('sons/som ovelha dois.ogg'),
+            new Audio('sons/som ovelha tres.ogg')
+        ];
+        function sfxSheep(force) {
+            if (!_audioStarted) return;
+            // Only play if at least one sheep is visible (unless forced)
+            if (!force) {
+                var visible = bonusBalls.some(function (b) {
+                    return b.animalType === 'sheep' && b.y > camY && b.y < camY + canvas.height;
+                });
+                if (!visible) return;
+            }
+
+            try {
+                var s = sheepSounds[Math.floor(Math.random() * sheepSounds.length)].cloneNode();
+                s.volume = 0.4;
+                s.play();
+            } catch (e) { }
+        }
+
+        var pigSounds = [
+            new Audio('sons/som pig um.ogg'),
+            new Audio('sons/som pig dois.ogg'),
+            new Audio('sons/som pig tres.ogg')
+        ];
+        function sfxPig(force) {
+            if (!_audioStarted) return;
+            // Only play if at least one pig is visible (unless forced)
+            if (!force) {
+                var visible = bonusBalls.some(function (b) {
+                    return b.animalType === 'pig' && b.y > camY && b.y < camY + canvas.height;
+                });
+                if (!visible) return;
+            }
+
+            try {
+                var s = pigSounds[Math.floor(Math.random() * pigSounds.length)].cloneNode();
+                s.volume = 0.4;
+                s.play();
+            } catch (e) { }
+        }
+
+        // ── Música de Boss ──────────────────────────────────────────────────────────
+        // ── Trilha sonora — Happy & Dynamic ─────────────────────────────
+        var musicPlaying = false;
+        var musicTimeout = null;
+        var musicMode = 'normal'; // normal, mega, boss
+
+        // ── BGM personalizado (upload) ──────────────────────────────────
+        var customBGM = null;           // Audio element
+        var customBGMSource = null;     // MediaElementSourceNode
+        var customBGMGain = null;       // GainNode para volume
+        var customBGMPlaying = false;
+        var customBGMInitialized = false;
+
+        // C Major pentatonic — happy and bright
+        var ROOT = 130.81; // C3
+        var SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24]; // major pentatonic
+
+        function scaleFreq(degree, octave) {
+            octave = octave || 0;
+            return ROOT * Math.pow(2, (SCALE[degree % SCALE.length] + octave * 12) / 12);
+        }
+
+        // Happy bouncy bass
+        var BASS_NORMAL = [
+            { d: 0, oct: 0, dur: 0.4, vol: 0.14 },
+            { d: 4, oct: 0, dur: 0.3, vol: 0.10 },
+            { d: 2, oct: 0, dur: 0.4, vol: 0.12 },
+            { d: 4, oct: 0, dur: 0.3, vol: 0.10 },
+        ];
+        // Frantic mega bass
+        var BASS_MEGA = [
+            { d: 0, oct: 0, dur: 0.2, vol: 0.16 },
+            { d: 2, oct: 0, dur: 0.2, vol: 0.14 },
+            { d: 4, oct: 0, dur: 0.2, vol: 0.16 },
+            { d: 5, oct: 0, dur: 0.2, vol: 0.14 },
+            { d: 4, oct: 0, dur: 0.2, vol: 0.16 },
+            { d: 2, oct: 0, dur: 0.2, vol: 0.14 },
+        ];
+        // Dramatic boss bass
+        var BASS_BOSS = [
+            { d: 0, oct: -1, dur: 0.6, vol: 0.18 },
+            { d: 3, oct: -1, dur: 0.3, vol: 0.14 },
+            { d: 0, oct: -1, dur: 0.6, vol: 0.16 },
+            { d: 5, oct: -1, dur: 0.3, vol: 0.14 },
+        ];
+
+        // Happy melody
+        var MELODY_NORMAL = [
+            { d: 4, oct: 1, dur: 0.5, vol: 0.06 },
+            { d: 5, oct: 1, dur: 0.5, vol: 0.05 },
+            { d: 7, oct: 1, dur: 0.5, vol: 0.06 },
+            { d: 5, oct: 1, dur: 0.5, vol: 0.05 },
+            { d: 4, oct: 1, dur: 0.5, vol: 0.06 },
+            { d: 2, oct: 1, dur: 0.5, vol: 0.05 },
+            { d: 0, oct: 1, dur: 0.7, vol: 0.07 },
+            { d: 2, oct: 1, dur: 0.3, vol: 0.05 },
+        ];
+        // Fast mega melody
+        var MELODY_MEGA = [
+            { d: 0, oct: 2, dur: 0.25, vol: 0.07 },
+            { d: 2, oct: 2, dur: 0.25, vol: 0.06 },
+            { d: 4, oct: 2, dur: 0.25, vol: 0.07 },
+            { d: 5, oct: 2, dur: 0.25, vol: 0.06 },
+            { d: 7, oct: 2, dur: 0.25, vol: 0.07 },
+            { d: 5, oct: 2, dur: 0.25, vol: 0.06 },
+            { d: 4, oct: 2, dur: 0.25, vol: 0.07 },
+            { d: 2, oct: 2, dur: 0.25, vol: 0.06 },
+        ];
+
+        // Happy chords
+        var PAD_NORMAL = [[0, 2, 4], [2, 4, 7], [4, 7, 9], [0, 4, 7]];
+        var PAD_BOSS = [[0, 3, 7], [0, 3, 5], [0, 2, 5], [0, 3, 7]];
+
+        var musicStep = 0, bassStep = 0, melStep = 0, padStep = 0;
+        var BEAT = 0.45;
+
+        function getMusicMode() {
+            if (!pick) return 'normal';
+            var row = Math.floor(pick.y / TILE);
+            if (isMegaClearingRow(row)) {
+                var mz = getMegaZone(row);
+                if (mz >= 0 && megaClearedZones[mz]) {
+                    if (!megaClearedZones[mz + '_gateOpen']) {
+                        // Check if there are actually alive bosses
+                        var hasBoss = false;
+                        for (var bi = 0; bi < bats.length; bi++) { if (bats[bi].isQueen && bats[bi].zone === mz && bats[bi].state !== 'dead') { hasBoss = true; break; } }
+                        if (!hasBoss) { for (var zi = 0; zi < zombies.length; zi++) { if (zombies[zi].isZBoss && zombies[zi].zone === mz && zombies[zi].state !== 'dead') { hasBoss = true; break; } } }
+                        if (hasBoss) return 'boss';
+                    }
+                    return 'mega';
+                }
+                return 'mega';
+            }
+            return 'normal';
+        }
+
+        function scheduleMusicBeat() {
+            if (!musicPlaying) return;
+            // Se trilha personalizada estiver ativa, não tocar BGM procedural
+            if (customBGMPlaying) {
+                musicTimeout = setTimeout(scheduleMusicBeat, BEAT * 1000);
+                return;
+            }
+            var ac = getAC();
+            var t = ac.currentTime;
+            musicMode = getMusicMode();
+
+            // Harmonic variation: shift root every 16 beats
+            var harmonyPhase = Math.floor(musicStep / 16) % 4;
+            var rootShift = [0, 5, 7, 3][harmonyPhase]; // I, IV, V, II progression
+            var curRoot = ROOT * Math.pow(2, rootShift / 12);
+
+            function hScaleFreq(d, oct) {
+                oct = oct || 0;
+                return curRoot * Math.pow(2, (SCALE[d % SCALE.length] + (oct || 0) * 12) / 12);
+            }
+
+            var bass = musicMode === 'mega' ? BASS_MEGA : (musicMode === 'boss' ? BASS_BOSS : BASS_NORMAL);
+            var melody = musicMode === 'mega' ? MELODY_MEGA : MELODY_NORMAL;
+            var pads = musicMode === 'boss' ? PAD_BOSS : PAD_NORMAL;
+            var beat = musicMode === 'mega' ? 0.3 : (musicMode === 'boss' ? 0.55 : BEAT);
+
+            // Variation: alternate melody patterns every 32 beats
+            var melodyVariation = Math.floor(musicStep / 32) % 2;
+
+            // Bass
+            var bn = bass[bassStep % bass.length];
+            var bf = hScaleFreq(bn.d, bn.oct);
+            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t);
+            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t);
+            bassStep++;
+
+            // Melody (every 2 beats, or every beat in mega)
+            if (musicMode === 'mega' || musicStep % 2 === 0) {
+                var mn = melody[melStep % melody.length];
+                // Variation: offset melody degrees on alternate phrases
+                var melDeg = mn.d + (melodyVariation === 1 ? 2 : 0);
+                var mf = hScaleFreq(melDeg, mn.oct);
+                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t);
+                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t);
+                melStep++;
+            }
+
+            // Pad (every 4 beats)
+            if (musicStep % 4 === 0) {
+                var chord = pads[padStep % pads.length];
+                for (var ci = 0; ci < chord.length; ci++) {
+                    var pf = hScaleFreq(chord[ci], 1);
+                    var padType = musicMode === 'boss' ? 'triangle' : 'sine';
+                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t);
+                }
+                padStep++;
+            }
+
+            // Sparkle (random happy note) — varies with harmony
+            if (Math.random() < (musicMode === 'mega' ? 0.4 : 0.2)) {
+                var gd = Math.floor(Math.random() * SCALE.length);
+                var gf = hScaleFreq(gd, musicMode === 'mega' ? 3 : 2);
+                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5);
+            }
+
+            // Counter-melody (every 8 beats, adds variety)
+            if (musicStep % 8 === 4 && musicMode === 'normal') {
+                var cd = [7, 5, 4, 2][Math.floor(musicStep / 8) % 4];
+                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t);
+            }
+
+            // Boss: dramatic low pulse + tension notes
+            if (musicMode === 'boss') {
+                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t);
+                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t);
+            }
+
+            musicStep++;
+            musicTimeout = setTimeout(scheduleMusicBeat, beat * 1000);
+        }
+
+        function startMusic() {
+            if (musicPlaying) return;
+            musicPlaying = true;
+            musicStep = 0; bassStep = 0; melStep = 0; padStep = 0;
+            scheduleMusicBeat();
+        }
+
+        function stopMusic() {
+            musicPlaying = false;
+            if (musicTimeout) clearTimeout(musicTimeout);
+        }
+
+        // ── BGM personalizado por upload ───────────────────────────────────────────
+        function initCustomBGM() {
+            if (customBGMInitialized) return;
+            customBGMInitialized = true;
+            customBGM = new Audio();
+            customBGM.loop = true;
+            customBGM.crossOrigin = 'anonymous';
+            // conectar ao AudioContext do jogo
+            var ac = getAC();
+            customBGMSource = ac.createMediaElementSource(customBGM);
+            customBGMGain = ac.createGain();
+            customBGMGain.gain.value = 0.3; // volume da trilha (30% para não sobrepor SFX)
+            customBGMSource.connect(customBGMGain);
+            customBGMGain.connect(ac.destination);
+        }
+
+        function handleBGMUpload(input) {
+            var file = input.files && input.files[0];
+            if (!file) return;
+
+            // Parar BGM procedural se estiver rodando
+            if (musicPlaying) stopMusic();
+
+            initCustomBGM();
+            var url = URL.createObjectURL(file);
+            // Revogar URL anterior se existir
+            if (customBGM.src && customBGM.src.startsWith('blob:')) {
+                URL.revokeObjectURL(customBGM.src);
+            }
+            customBGM.src = url;
+            customBGM.load();
+            customBGM.play().then(function () {
+                customBGMPlaying = true;
+                var btn = document.getElementById('btnMusic');
+                if (btn) btn.textContent = '🎵 Trilha';
+                spawnText(canvas.width / 2, canvas.height / 2 - 80, '🎵 Trilha ativada!', '#00ddff');
+            }).catch(function (err) {
+                console.error('Erro ao tocar trilha:', err);
+                alert('Não foi possível reproduzir o arquivo de áudio.');
+            });
+        }
+
+        function toggleCustomBGM() {
+            if (!customBGM || !customBGM.src) return;
+            if (customBGMPlaying) {
+                customBGM.pause();
+                customBGMPlaying = false;
+                startMusic(); // Resume game music
+            } else {
+                customBGM.play();
+                customBGMPlaying = true;
+                stopMusic(); // Stop game music
+            }
+            var btn = document.getElementById('btnMusic');
+            if (btn) btn.textContent = customBGMPlaying ? '🎵 Trilha' : '⏸️ Pausa';
+        }
+
+        // Atalho de teclado para alternar entre Player e Botões (tecla M)
+        window.addEventListener('keydown', function (e) {
+            if (e.key === 'm' || e.key === 'M') {
+                ensureAudio();
+                window._uiMode = (window._uiMode === 'player') ? 'buttons' : 'player';
+                window.updateUIMode();
+            }
+        });
+
+        // --- UI Toggle Logic ---
+        window._uiMode = 'player'; // 'player' ou 'buttons'
+
+        window.updateUIMode = function () {
+            var player = document.getElementById('musicPlayerUI');
+            var topControls = document.getElementById('topControls');
+            var fps = document.getElementById('fpsCounter');
+            var apiStatus = document.getElementById('apiStatus');
+
+            if (window._uiMode === 'player') {
+                if (player) player.style.display = 'flex';
+                if (topControls) topControls.style.display = 'none';
+                if (fps) fps.style.display = 'none';
+                if (apiStatus) apiStatus.style.display = 'none';
+            } else {
+                if (player) player.style.display = 'none';
+                if (topControls) topControls.style.display = 'flex';
+                if (fps) fps.style.display = 'block';
+                if (apiStatus) apiStatus.style.display = 'flex';
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', function () {
+            window.updateUIMode();
+        });
+
+        // --- Music Player Logic ---
+        window.playlist = [];
+        window.currentTrackIndex = 0;
+        window.playerLooping = false;
+
+        function loadPlaylist() {
+            fetch('/music-list').then(r => r.json()).then(data => {
+                if (data.files && data.files.length > 0) {
+                    window.playlist = data.files;
+                    window.currentTrackIndex = 0;
+                    updatePlayerUI();
+                } else {
+                    var t = document.getElementById('mpTrackName');
+                    if (t) t.textContent = 'Pasta /music vazia';
+                }
+            }).catch(e => console.error(e));
+        }
+
+        window.playTrack = function (index) {
+            if (window.playlist.length === 0) return;
+            if (index < 0) index = window.playlist.length - 1;
+            if (index >= window.playlist.length) index = 0;
+            window.currentTrackIndex = index;
+
+            initCustomBGM();
+            if (customBGM.src && customBGM.src.startsWith('blob:')) {
+                URL.revokeObjectURL(customBGM.src);
+            }
+
+            customBGM.src = window.playlist[window.currentTrackIndex];
+            customBGM.loop = window.playerLooping;
+            customBGM.load();
+            customBGM.play().then(() => {
+                customBGMPlaying = true;
+                updatePlayerUI();
+                if (musicPlaying) stopMusic(); // Stop procedural BGM
+            }).catch(e => console.error('Play error:', e));
+        };
+
+        function updatePlayerUI() {
+            if (window.playlist.length === 0) return;
+            var path = window.playlist[window.currentTrackIndex];
+            var name = path.split('/').pop().replace(/\.[^/.]+$/, ""); // remove extension
+            var titleEl = document.getElementById('mpTrackName');
+            var playBtn = document.getElementById('mpPlay');
+            var loopBtn = document.getElementById('mpLoop');
+
+            if (titleEl) titleEl.textContent = name;
+            if (playBtn) playBtn.textContent = customBGMPlaying ? '⏸' : '▶';
+            if (loopBtn) loopBtn.style.opacity = window.playerLooping ? '1' : '0.4';
+        }
+
+        window.addEventListener('DOMContentLoaded', function () {
+            loadPlaylist();
+
+            var btnPlay = document.getElementById('mpPlay');
+            var btnPrev = document.getElementById('mpPrev');
+            var btnNext = document.getElementById('mpNext');
+            var btnLoop = document.getElementById('mpLoop');
+            var prog = document.getElementById('mpProgress');
+
+            if (btnPlay) {
+                btnPlay.onclick = function () {
+                    if (window.playlist.length === 0) return;
+                    if (!customBGM || !customBGM.src) {
+                        playTrack(window.currentTrackIndex);
+                    } else {
+                        toggleCustomBGM();
+                        updatePlayerUI();
+                    }
+                };
+            }
+            if (btnPrev) btnPrev.onclick = function () { playTrack(window.currentTrackIndex - 1); };
+            if (btnNext) btnNext.onclick = function () { playTrack(window.currentTrackIndex + 1); };
+            if (btnLoop) {
+                btnLoop.onclick = function () {
+                    window.playerLooping = !window.playerLooping;
+                    if (customBGM) customBGM.loop = window.playerLooping;
+                    updatePlayerUI();
+                };
+            }
+
+            if (prog) {
+                prog.oninput = function () {
+                    if (customBGM && customBGM.duration) {
+                        customBGM.currentTime = (prog.value / 100) * customBGM.duration;
+                    }
+                };
+            }
+
+            function updateProgressUI() {
+                if (prog && customBGM && customBGMPlaying && customBGM.duration) {
+                    prog.value = (customBGM.currentTime / customBGM.duration) * 100;
+                }
+                requestAnimationFrame(updateProgressUI);
+            }
+            updateProgressUI();
+        });
+
+        // ── Integração com o jogo ─────────────────────────────────────────────────────
+        // inicia música no primeiro input do usuário
+        var _audioStarted = false;
+        function ensureAudio() {
+            if (_audioStarted) return;
+            _audioStarted = true;
+            if (!customBGMPlaying) {
+                startMusic();
+            }
+        }
+        window.addEventListener('keydown', ensureAudio, { once: false });
+        window.addEventListener('pointerdown', ensureAudio, { once: false });
+
+        // Atalhos de teclado (Skills e Reset)
+        // ── Keyboard Shortcuts (Skills, Reset, Toggle) ──
+        window.addEventListener('keydown', function (e) {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            var k = e.key || '';
+            var kc = e.keyCode || e.which || 0;
+
+            // Reset
+            if (k === 'r' || k === 'R' || kc === 82) {
+                processedComments.clear();
+                restart();
+                spawnText(canvas.width / 2, canvas.height / 2, 'MATCH RESET!', '#00ffff');
+                _gameStarted = true;
+                hideApiSetup();
+            }
+
+            // Chroma Key
+            if (k === 'c' || k === 'C' || kc === 67) {
+                chromaKey = !chromaKey;
+                document.title = chromaKey ? '[CHROMA] Chat Live Game' : 'Chat Live Game';
+            }
+
+            // Music Player UI
+            if (k === 'm' || k === 'M' || kc === 77) {
+                var mu = document.getElementById('musicPlayerUI');
+                if (mu) mu.style.display = (mu.style.display === 'none' ? 'block' : 'none');
+            }
+
+            // Active Toggle
+            if (k === 'x' || k === 'X' || kc === 88) {
+                if (pick) {
+                    console.log('X pressed. userPicks:', userPicks.length, 'extraPicks:', extraPicks.length);
+                    var hasOthers = (userPicks.length > 0 || extraPicks.length > 0);
+                    if (hasOthers) {
+                        pick.active = !pick.active;
+                        if (!pick.active) {
+                            pick.vx = 0; pick.vy = 0;
+                            spawnText(pick.x, pick.y - 100, 'SAÍ DA PARTIDA!', '#ff4444');
+                        } else {
+                            spawnText(pick.x, pick.y - 100, 'VOLTEI!', '#00ff88');
+                        }
+                    } else {
+                        pick.active = true;
+                        spawnText(pick.x, pick.y - 100, 'SOLO: SEMPRE ATIVO', '#ffff00');
+                        console.warn('Toggle blocked: No other players/clones active.');
+                    }
+                }
+            }
+
+            // Test Keys (Skills)
+            var me = pick ? pick.userName : (ownerName || '@fabricio');
+            if (k === '1') activateTNT(pick ? pick.x : undefined, pick ? pick.y : undefined, me);
+            if (k === '2') activateMegaTNT(pick ? pick.x : undefined, pick ? pick.y : undefined, me);
+            if (k === '3') spawnClone(me, pick ? pick.userAvatarUrl : '');
+            if (k === '4') activateThor(pick ? pick.x : undefined, pick ? pick.y : undefined, me);
+            if (k === '5') activateNuke(pick ? pick.x : undefined, pick ? pick.y : undefined, me);
+            if (k === '6') activateStorm(pick);
+            if (k === '7') activateBlackHole(pick ? pick.x : undefined, pick ? pick.y : undefined, me);
+            if (k === '8') activateTormenta(pick);
+            if (k === '9') activateBig(pick ? pick.userName : ownerName || '@Player');
+
+            // API Event simulation
+            if (k === 'u' || k === 'U') processLiveEvent({ type: 'follow', user: 'TestUser', nickname: 'Tester', avatar: '', msgId: 'test_' + Date.now() });
+            if (k === 'i' || k === 'I') triggerBotrixEvent('superchat', '@fabiosdx');
+            if (k === 'p' || k === 'P') triggerBotrixEvent('gift', '@fabiosdx');
+
+            // Like simulation
+            if (k === 'l' || k === 'L') {
+                var lMe = (pick ? pick.userName : (ownerName || '@Player')).toLowerCase();
+                var lx = pick ? pick.x : canvas.width / 2;
+                var ly = pick ? pick.y : camY + canvas.height / 2;
+                activateHeartTNT(lx, ly, lMe, pick ? pick.userAvatarUrl : '');
+                if (pick.active) score += 2;
+                spawnText(lx, ly - 20, '+2 ❤', '#ff4488');
+
+                if (!persistentScores[lMe]) persistentScores[lMe] = { score: 0, avatar: pick ? pick.userAvatarUrl : '', color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0 };
+
+                var oldLikes = persistentScores[lMe].likes || 0;
+                var newLikes = oldLikes + 100; // Aumentado para 100 para facilitar testes de milhar
+                updatePlayerHealthFromLikes(lMe, newLikes);
+
+                // Milestone: Cada 1000 likes ganha um upgrade
+                if (Math.floor(newLikes / 1000) > Math.floor(oldLikes / 1000)) {
+                    persistentScores[lMe].giftsCount = (persistentScores[lMe].giftsCount || 0) + 1;
+                    var inv = getPlayerInventory(lMe);
+                    if (pick) {
+                        pick.pickaxe = inv[0];
+                        syncCompanions(pick, inv);
+                    }
+                    spawnText(lx, ly - 60, '🚀 UPGRADE POR LIKES!', '#ff4488');
+                }
+
+                if (pick.active || lMe !== (ownerName || '').toLowerCase()) persistentScores[lMe].score = (persistentScores[lMe].score || 0) + 2;
+                if (!_cycleScores[lMe]) _cycleScores[lMe] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, avatar: persistentScores[lMe].avatar || '' };
+                if (pick.active || lMe !== (ownerName || '').toLowerCase()) _cycleScores[lMe].score += 2;
+                _cycleScores[lMe].likes += 100;
+            }
+
+            // Bot simulation
+            if (k === 's' || k === 'S' || kc === 83) {
+                console.log('Shortcut S: Spawning 20 bots with scores...');
+                for (var bi = 0; bi < 20; bi++) {
+                    var botName = '@Bot_' + (1 + Math.floor(Math.random() * 9999));
+                    spawnUserPickaxe(botName, '');
+
+                    var randomBase = Math.floor(Math.random() * 1000);
+                    var randomKills = Math.floor(Math.random() * 15);
+
+                    addCycleScore(botName, randomBase, 'item');
+                    for (var k_i = 0; k_i < randomKills; k_i++) {
+                        addCycleScore(botName, 50, 'kill');
+                    }
+                }
+                spawnText(canvas.width / 2, camY + 100, '20 BOTS COM SCORE ADDED!', '#ffff00');
+            }
+
+            if (k === 'v' || k === 'V' || kc === 86) {
+                cycleBgVideo();
+            }
+
+            // Arrow keys → spin (owner pick)
+            if (pick && pick.userName) {
+                if (k === 'ArrowRight') { e.preventDefault(); activateSpin(pick.userName, 'right'); }
+                if (k === 'ArrowLeft') { e.preventDefault(); activateSpin(pick.userName, 'left'); }
+                if (k === 'ArrowDown') { e.preventDefault(); activateSpin(pick.userName, 'down'); }
+                if (k === 'ArrowUp') { e.preventDefault(); activateSpin(pick.userName, 'up'); }
+            }
+        }, true);
+
+        // ── Touch: double tap = TNT, triple tap = Mega TNT, long press = 20 bots ──
+        var _tapCount = 0;
+        var _tapTimer = null;
+        var _TAP_DELAY = 350;
+        var _swipeStartX = 0, _swipeStartY = 0, _swipeStartTime = 0;
+        var _SWIPE_MIN = 40; // minimum distance in pixels
+        var _SWIPE_MAX_TIME = 400; // max time in ms
+
+        canvas.addEventListener('touchstart', function (e) {
+            if (e.touches.length === 1) {
+                _swipeStartX = e.touches[0].clientX;
+                _swipeStartY = e.touches[0].clientY;
+                _swipeStartTime = Date.now();
+            }
+        }, { passive: true });
+
+        canvas.addEventListener('touchend', function (e) {
+            e.preventDefault();
+            ensureAudio();
+
+            // Check for swipe
+            var touch = e.changedTouches[0];
+            var dx = touch.clientX - _swipeStartX;
+            var dy = touch.clientY - _swipeStartY;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            var elapsed = Date.now() - _swipeStartTime;
+
+            if (dist > _SWIPE_MIN && elapsed < _SWIPE_MAX_TIME) {
+                // It's a swipe — determine direction
+                var dir;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    dir = dx > 0 ? 'right' : 'left';
+                } else {
+                    dir = dy > 0 ? 'down' : 'up';
+                }
+                var me = ownerName || pick.userName || '@owner';
+                activateSpin(me, dir);
+                _tapCount = 0;
+                if (_tapTimer) { clearTimeout(_tapTimer); _tapTimer = null; }
+                return;
+            }
+
+            // Not a swipe — handle as tap
+            _tapCount++;
+            if (_tapTimer) clearTimeout(_tapTimer);
+            _tapTimer = setTimeout(function () {
+                if (_tapCount === 2) activateTNT();
+                else if (_tapCount >= 3) activateMegaTNT();
+                _tapCount = 0;
+                _tapTimer = null;
+            }, _TAP_DELAY);
+        }, { passive: false });
+
+        canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+        // init
+        ensureRows(0, VIS + 4);
+        spawnPick();
+
+        // Carrega pontuações persistentes do localStorage
+        (function () {
+            try {
+                var saved = JSON.parse(localStorage.getItem('pd_persistent_scores') || '{}');
+                if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+                    // Limpar bots antigos do localStorage (manter apenas owner e top players)
+                    var ownerKey = localStorage.getItem('pd_tiktok_username');
+                    if (ownerKey) ownerKey = '@' + ownerKey.toLowerCase();
+                    var cleaned = {};
+                    // Sempre manter o owner se existir
+                    if (ownerKey && saved[ownerKey]) {
+                        cleaned[ownerKey] = saved[ownerKey];
+                    }
+                    // Manter apenas entradas que NÃO são bots
+                    Object.keys(saved).forEach(function (k) {
+                        if (k && !k.startsWith('@Bot_')) {
+                            cleaned[k] = saved[k];
+                        }
+                    });
+                    persistentScores = cleaned;
+                    // Limitar a no máximo 50 jogadores para performance
+                    var keys = Object.keys(persistentScores);
+                    if (keys.length > 50) {
+                        // Ordenar por score e manter top 50
+                        keys.sort(function (a, b) { return (persistentScores[b].score || 0) - (persistentScores[a].score || 0); });
+                        var limited = {};
+                        keys.slice(0, 50).forEach(function (k) { limited[k] = persistentScores[k]; });
+                        persistentScores = limited;
+                    }
+                    // Normaliza campos para upgrades (likes, giftsValue)
+                    Object.keys(persistentScores).forEach(function (k) {
+                        if (persistentScores[k].likes === undefined) persistentScores[k].likes = 0;
+                        if (persistentScores[k].giftsValue === undefined) persistentScores[k].giftsValue = 0;
+                    });
+                    // Salva versão limpa
+                    localStorage.setItem('pd_persistent_scores', JSON.stringify(persistentScores));
+                }
+                // Reset session counts so rewards can be earned again this session
+                Object.keys(persistentScores).forEach(function (u) {
+                    persistentScores[u].followCount = 0;
+                    persistentScores[u].subscribeCount = 0;
+                });
+
+                console.log('Scores loaded from localStorage:', Object.keys(persistentScores).length);
+            } catch (e) { console.error('Error loading scores:', e); }
+            // Expor funções globais para onclick
+            window.ensureAudio = ensureAudio;
+            window.activateCreeper = activateCreeper;
+            window.activateTNT = activateTNT;
+            window.activateMegaTNT = activateMegaTNT;
+            window.activateThor = activateThor;
+            window.activateNuke = activateNuke;
+            window.activateStorm = activateStorm;
+            window.spawnClone = spawnClone;
+            window.activateBlackHole = activateBlackHole;
+            window.activateBig = activateBig;
+            window.activateHeartTNT = activateHeartTNT;
+            window.resetAllScores = resetAllScores;
+            window.generateScoreReport = generateScoreReport;
+            window.tiktokConnect = tiktokConnect;
+            window.platformSkip = platformSkip;
+
+        })();
+
+        // Carrega ranking para avatares
+        var rankingData = [];
+        (function () {
+            try {
+                var saved = JSON.parse(localStorage.getItem('pd_ranking') || '[]');
+                if (Array.isArray(saved)) rankingData = saved;
+            } catch (e) { }
+        })();
+
+        loop();
+
+        function savePersistentScores() {
+            try {
+                localStorage.setItem('pd_persistent_scores', JSON.stringify(persistentScores));
+                _saveCycleScores();
+            } catch (e) { console.error('Error saving scores:', e); }
+        }
+        setInterval(savePersistentScores, 15000); // Salva a cada 15s
+
+        // ── Connection System (TikTok via WebSocket) ─────────────────
+        var _tiktokUsername = localStorage.getItem('pd_tiktok_username') || '';
+        var _ttConnected = false;
+        var _apiConnected = false;
+        var _apiCheckInterval = null;
+        var _apiSetupShown = false;
+        var _gameStarted = false;
+        var _ws = null;
+
+        var processedComments = new Set();
+        var avatarCache = {};
+        var _avatarLoading = {};
+        var _avatarDataCache = {};
+        try { _avatarDataCache = JSON.parse(localStorage.getItem('pd_avatar_data') || '{}'); } catch (e) { _avatarDataCache = {}; }
+        function _saveAvatarDataCache() { try { var keys = Object.keys(_avatarDataCache); if (keys.length > 200) { var del = keys.slice(0, keys.length - 200); del.forEach(function (k) { delete _avatarDataCache[k]; }); } localStorage.setItem('pd_avatar_data', JSON.stringify(_avatarDataCache)); } catch (e) { } }
+
+        function loadAvatar(url) {
+            if (!url || avatarCache[url] || _avatarLoading[url]) return;
+            if (_avatarDataCache[url]) { var c = new Image(); c.onload = function () { avatarCache[url] = c; }; c.src = _avatarDataCache[url]; _avatarLoading[url] = true; return; }
+            _avatarLoading[url] = true;
+            // Try direct load without CORS (will work if server allows it, fail silently otherwise)
+            var img = new Image();
+            img.onload = function () { if (img.naturalWidth > 0) avatarCache[url] = img; _avatarLoading[url] = false; };
+            img.onerror = function () { _avatarLoading[url] = false; }; // Silently fail for blocked URLs
+            img.src = url;
+        }
+
+        function updateStatusDots() {
+            var dTT = document.getElementById('statusDotTT'), tTT = document.getElementById('statusTextTT');
+            if (dTT) { if (_ttConnected) dTT.classList.add('online'); else dTT.classList.remove('online'); }
+            if (tTT) { tTT.textContent = 'TT: ' + (_ttConnected ? 'ON' : 'OFF'); tTT.style.color = _ttConnected ? '#00ff88' : '#888'; }
+            _apiConnected = _ttConnected;
+        }
+
+        function getProxyUrl(url) {
+            if (!url || url.startsWith('data:') || url.startsWith('blob:') || !url.startsWith('http')) return url;
+            if (url.includes(location.host)) return url;
+            return '/proxy-image?url=' + encodeURIComponent(url);
+        }
+
+        function showApiSetup(msg) {
+            if (_gameStarted) { showApiBanner(msg); return; }
+            document.getElementById('apiSetupOverlay').style.display = 'flex'; _apiSetupShown = true;
+            document.getElementById('apiSetupError').style.display = 'none'; document.getElementById('apiSetupSuccess').style.display = 'none';
+            if (msg) { var e = document.getElementById('apiSetupError'); e.style.display = 'block'; e.textContent = msg; }
+            if (_tiktokUsername) document.getElementById('tiktokUsernameInput').value = _tiktokUsername;
+        }
+        function hideApiSetup() { document.getElementById('apiSetupOverlay').style.display = 'none'; _apiSetupShown = false; }
+
+        function showApiBanner(msg) {
+            var existing = document.getElementById('apiBanner'); if (existing) existing.remove();
+            var b = document.createElement('div'); b.id = 'apiBanner';
+            b.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99998;background:rgba(0,0,0,0.85);border:1px solid #ff4444;border-radius:12px;padding:16px 24px;color:#fff;font-family:Arial,sans-serif;text-align:center;max-width:360px;width:90%;';
+            b.innerHTML = '<div style="font-size:24px;margin-bottom:8px;">⚠️</div><div style="font-size:14px;margin-bottom:12px;color:#ffaa00;">Connection lost</div><div style="font-size:12px;color:#aaa;margin-bottom:14px;">' + (msg || 'Game continues offline.') + '</div><div style="display:flex;gap:8px;justify-content:center;"><button onclick="openApiPopup()" style="padding:8px 16px;border:none;border-radius:8px;background:#00ff88;color:#000;font-weight:bold;cursor:pointer;">Reconnect</button><button onclick="dismissApiBanner()" style="padding:8px 16px;border:1px solid #555;border-radius:8px;background:transparent;color:#888;cursor:pointer;">Dismiss</button></div>';
+            document.body.appendChild(b);
+        }
+        function dismissApiBanner() { var b = document.getElementById('apiBanner'); if (b) b.remove(); }
+        function openApiPopup() { dismissApiBanner(); _gameStarted = false; showApiSetup('Reconnect to your platforms.'); }
+
+        function platformSkip() { hideApiSetup(); _gameStarted = true; updateStatusDots(); }
+        function tiktokConnect() {
+            var btn = document.getElementById('btnConnectTT'), u = document.getElementById('tiktokUsernameInput').value.trim().replace(/^@/, '');
+            var sid = document.getElementById('tiktokSessionInput').value.trim();
+            if (!u) return; if (btn) { btn.textContent = '...'; btn.disabled = true; }
+            connectWebSocket(function (ok) { if (btn) { btn.textContent = 'Connect'; btn.disabled = false; } if (!ok) return; sendTikTokConnect(u, sid); _gameStarted = true; });
+        }
+        function sendTikTokConnect(username, sessionId) {
+            _tiktokUsername = username; localStorage.setItem('pd_tiktok_username', username);
+            if (sessionId) localStorage.setItem('pd_tiktok_sessionid', sessionId);
+            ownerName = '@' + username.toLowerCase(); pick.userName = ownerName;
+            if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: '', color: '#ffdd44' };
+            if (_ws && _ws.readyState === 1) _ws.send(JSON.stringify({ action: 'connect', username: username, sessionId: sessionId }));
+        }
+
+        function connectWebSocket(callback) {
+            if (_ws && _ws.readyState === 1) { if (callback) callback(true); return; }
+            if (_ws) { try { _ws.close(); } catch (e) { } }
+            var wsHost = location.host || 'localhost:3000';
+            var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            try { _ws = new WebSocket(protocol + '//' + wsHost); } catch (e) { if (callback) callback(false); return; }
+            _ws.onopen = function () {
+                window._wsReconnectCount = 0;
+                if (!callback && _gameStarted) { if (_tiktokUsername) sendTikTokConnect(_tiktokUsername); }
+                if (callback) { callback(true); callback = null; }
+            };
+            _ws.onmessage = function (evt) { try { handleLiveEvent(JSON.parse(evt.data)); } catch (e) { } };
+            _ws.onclose = function () {
+                _ttConnected = false; updateStatusDots();
+                if (!window._wsReconnectCount) window._wsReconnectCount = 0; window._wsReconnectCount++;
+                if (window._wsReconnectCount <= 5 && _gameStarted) setTimeout(function () { if (_gameStarted) connectWebSocket(); }, Math.min(15000 * window._wsReconnectCount, 60000));
+            };
+            _ws.onerror = function () { if (callback) { callback(false); callback = null; } };
+        }
+
+        function handleLiveEvent(data) {
+            // Monitor Global: Ignora contagem de viewers para não poluir
+            if (data.type !== 'roomUser' && data.type !== 'connected') {
+                console.log('[WS Monitor] Received event:', data.type, data);
+            }
+            // Adiciona na fila para processamento suave durante o loop de jogo
+            liveEventQueue.push(data);
+            if (liveEventQueue.length > 200) liveEventQueue.shift(); // Evita estouro da fila
+        }
+
+        function applyDamage(userName, amount) {
+            var ps = persistentScores[userName];
+            if (!ps) return;
+            var now = Date.now();
+            if (now - (lastHeartDamage[userName] || 0) < DAMAGE_COOLDOWN) return;
+            lastHeartDamage[userName] = now;
+
+            sfxPlayerHurt();
+
+            var p = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+
+            if (ps.health > 0) {
+                ps.health = Math.max(0, (ps.health || 0) - amount);
+                if (p) {
+                    spawnText(p.x, p.y - 40, '-' + amount + ' ❤️', '#ff4444');
+                    p.hurtTimer = 10;
+                }
+                if (ps.health <= 0) {
+                    sfxMoneyLoss();
+                    if (p) spawnText(p.x, p.y - 60, '💔 HEALTH ZERO!', '#ff0000');
+                }
+            } else {
+                // Already at 0 HP, deduct score directly
+                var penalty = Math.floor(amount * 400);
+                if (ps.score > 0) {
+                    ps.score = Math.max(0, (ps.score || 0) - penalty);
+                    ps.lastPointLossTime = now;
+                    sfxMoneyLoss();
+                    if (p) {
+                        spawnText(p.x, p.y - 40, '-' + penalty + ' pts 💸', '#ff4444');
+                        p.hurtTimer = 10;
+                    }
+                }
+            }
+        }
+
+        function updatePlayerHealthFromLikes(userName, newTotalLikes) {
+            var ps = persistentScores[userName];
+            if (!ps) return;
+
+            var oldLikes = ps.likes || 0;
+            var likesGained = newTotalLikes - oldLikes;
+
+            // Slots: +1 a cada 2000 likes (max 10)
+            var oldSlotsCount = INITIAL_HEART_SLOTS + Math.floor(oldLikes / LIKES_PER_SLOT);
+            var newSlotsCount = INITIAL_HEART_SLOTS + Math.floor(newTotalLikes / LIKES_PER_SLOT);
+            ps.slots = Math.min(MAX_HEART_SLOTS, newSlotsCount);
+
+            if (newSlotsCount > oldSlotsCount && ps.slots < MAX_HEART_SLOTS) {
+                var p = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+                if (p) spawnText(p.x, p.y - 120, '💖 NOVO SLOT DE VIDA!', '#ff88ff');
+            }
+
+            // Saúde: 50 likes = 1 coração cheio. 
+            if (likesGained > 0) {
+                var heartsGained = likesGained / LIKES_PER_HEART;
+                ps.health = Math.min(ps.slots, (ps.health || 0) + heartsGained);
+            }
+
+            // Atualiza o valor final de likes
+            ps.likes = newTotalLikes;
+        }
+
+        function processLiveEvent(data) {
+            // Deduplicação para evitar banners e contagens dobradas
+            var eventId = data.msgId || (data.type + '_' + data.user + '_' + (data.comment || '') + '_' + (data.diamondCount || 0) + '_' + (data.repeatCount || 0));
+            if (processedEventIds.has(eventId)) return;
+            processedEventIds.add(eventId);
+            if (processedEventIds.size > 200) {
+                var first = processedEventIds.values().next().value;
+                processedEventIds.delete(first);
+            }
+
+            var plat = data.platform || 'tiktok';
+            if (data.type === 'connected') {
+                if (data.ownerAvatar) {
+                    pick.userAvatarUrl = data.ownerAvatar;
+                    if (ownerName) {
+                        if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, likes: 0, giftsValue: 0, avatar: data.ownerAvatar };
+                        else persistentScores[ownerName].avatar = data.ownerAvatar;
+                    }
+                }
+                if (plat === 'tiktok') {
+                    _ttConnected = true;
+                    if (data.availableGifts && data.availableGifts.length > 0) {
+                        localStorage.setItem('pd_cached_gifts', JSON.stringify(data.availableGifts));
+                        applyGiftImages(data.availableGifts);
+                    }
+                }
+                _gameStarted = true; hideApiSetup(); dismissApiBanner(); updateStatusDots();
+            }
+            else if (data.type === 'error') {
+                var errEl = document.getElementById('apiSetupError');
+                if (errEl && _apiSetupShown) { errEl.style.display = 'block'; errEl.textContent = data.message; }
+                var bTT = document.getElementById('btnConnectTT');
+                if (bTT) { bTT.textContent = 'Connect'; bTT.disabled = false; }
+                if (!_apiSetupShown && _gameStarted) showApiBanner(data.message);
+            }
+            else if (data.type === 'disconnected' || data.type === 'streamEnd') {
+                if (plat === 'tiktok') _ttConnected = false; updateStatusDots();
+                if (data.type === 'streamEnd') spawnText(canvas.width / 2, camY + canvas.height / 2, plat.toUpperCase() + ' ENDED', '#ff4444');
+            }
+            else if (data.type === 'chat') {
+                var cUser = (data.user || data.nickname || '').toLowerCase();
+                if (cUser && cUser.charAt(0) !== '@') cUser = '@' + cUser; if (!cUser || cUser === '@') return;
+                var cAvatar = data.avatar || '', cText = data.comment || '';
+                lastActivity[cUser] = Date.now();
+                if (cAvatar) loadAvatar(cAvatar);
+                var isOwner = ownerName && cUser === ownerName;
+                if (isOwner && cAvatar) { pick.userAvatarUrl = cAvatar; if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: cAvatar, color: '#ffdd44' }; else persistentScores[ownerName].avatar = cAvatar; }
+
+                // Qualque interação no chat coloca o jogador no jogo
+                spawnUserPickaxe(cUser, cAvatar);
+
+                var msg = cText.toLowerCase();
+                var words = msg.split(/\s+/).slice(0, 5); // Process up to 5 words/commands
+                var uPick = isOwner ? pick : userPicks.find(function (up) { return up.userName === cUser; });
+                var tx = uPick ? uPick.x : undefined, ty = uPick ? uPick.y : undefined;
+
+                words.forEach(function (word) {
+                    var cmd = word.trim().replace(/^!/, ''); // Remove prefixo ! se houver
+                    if (cmd === 'play' || cmd === 'join') { /* já foi spawnado acima */ }
+                    else if (cmd === 'sr') activateSpin(cUser, 'right');
+                    else if (cmd === 'sl') activateSpin(cUser, 'left');
+                    else if (cmd === 'su') activateSpin(cUser, 'up');
+                    else if (cmd === 'sd') activateSpin(cUser, 'down');
+                    else if (cmd === 'mega' || cmd === 'powertnt') activateMegaTNT(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'tnt') activateTNT(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'clone' || cmd === 'clonar') spawnClone(cUser, cAvatar);
+                    else if (cmd === 'thor' || cmd === 'raio') activateThor(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'sword' || cmd === 'espada') activateSword(uPick);
+                    else if (cmd === 'nuke' || cmd === 'nuclear') activateNuke(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'pp' || cmd === 'storm' || cmd === 'tempestade') activateStorm(uPick);
+                    else if (cmd === 'bh' || cmd === 'blackhole' || cmd === 'buraco') activateBlackHole(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'creeper') {
+                        var cdKey = cUser + '_creeper';
+                        if (!(skillCooldowns[cdKey] > 0)) {
+                            skillCooldowns[cdKey] = creeperCooldown;
+                            // Gera 10 creepers ao redor do jogador
+                            for (var ci = 0; ci < 10; ci++) {
+                                var cx = (tx !== undefined) ? tx + (Math.random() - 0.5) * TILE * 4 : undefined;
+                                var cy = (ty !== undefined) ? ty - Math.random() * TILE * 2 : undefined;
+                                activateCreeper(cx, cy, cUser);
+                            }
+                            console.log('[Command] Creeper spawned for', cUser);
+                        }
+                    }
+                    else if (cmd === 'big' || cmd === 'grande') activateBig(cUser);
+                    else if (cmd === 'roleta' || cmd === 'roulette') {
+                        var ps = persistentScores[cUser];
+                        if (ps && ps.coins > 0) {
+                            ps.coins--;
+                            spawnRoulette(cUser);
+                            updateLeaderboard();
+                        } else {
+                            spawnText(tx || canvas.width / 2, (ty || camY + 100) - 30, '❌ Sem moedas!', '#ff4444');
+                        }
+                    }
+                    else if (cmd === 'bot20ok') { for (var bi = 0; bi < 20; bi++) { var bn = '@Bot_' + (1 + Math.floor(Math.random() * 9999)); spawnUserPickaxe(bn, ''); } spawnText(canvas.width / 2, camY + 100, '20 BOTS!', '#ffff00'); }
+                });
+
+                // Flags System: check if msg is a country code or name
+                var potentialCode = msg.replace('!', '').trim();
+
+                // Anti-conflict: ignore flags if text matches a game command (e.g., 'bh', 'pp')
+                var isFlagForbidden = /^(sr|sl|su|sd|tnt|mega|big|clone|thor|nuke|bh|play|join|pp|creeper|sword|espada)$/i.test(potentialCode);
+
+                var foundCode = null;
+                if (!isFlagForbidden) {
+                    if (countryMapping[potentialCode]) {
+                        foundCode = potentialCode;
+                    } else if (nameToCountryCode[potentialCode]) {
+                        foundCode = nameToCountryCode[potentialCode];
+                    }
+                }
+                if (foundCode) {
+                    if (!persistentScores[cUser]) persistentScores[cUser] = { score: 0, avatar: cAvatar, color: '#ffdd44' };
+                    persistentScores[cUser].countryCode = foundCode;
+                    getFlagImage(foundCode); // Preload
+                    spawnText(tx || (uPick ? uPick.x : pick.x), ty || (uPick ? uPick.y : pick.y), '🚩 ' + countryMapping[foundCode].toUpperCase(), '#ffffff');
+                }
+
+                // TTS: Read non-command messages
+                if (_ttsEnabled && cText.length > 2) {
+                    var commandList = ['sr', 'sl', 'su', 'sd', 'tnt', 'mega', 'powertnt', 'clone', 'clonar', 'thor', 'raio', 'nuke', 'nuclear', 'pp', 'storm', 'tempestade', 'bh', 'blackhole', 'buraco', 'creeper', 'big', 'grande', 'play', 'join', 'sword', 'espada'];
+                    var isPureCommand = words.every(function (w) { return commandList.indexOf(w) !== -1; });
+
+                    if (!isPureCommand) {
+                        if (cText.startsWith('!')) {
+                            speakTTS(data.nickname + ' disse: ' + cText.substring(1), 'pt-BR-FranciscaNeural');
+                        } else {
+                            speakTTS(data.nickname + ' said: ' + cText);
+                        }
+                    }
+                }
+            }
+            else if (data.type === 'superchat') {
+                var scUser = (data.user || 'unknown').toLowerCase(); if (scUser.charAt(0) !== '@') scUser = '@' + scUser;
+                var scAvatar = data.avatar || ''; lastActivity[scUser] = Date.now(); if (scAvatar) loadAvatar(scAvatar);
+                spawnUserPickaxe(scUser, scAvatar);
+                var scPick = userPicks.find(function (up) { return up.userName === scUser; });
+                var refP = (pick.active) ? pick : (camTarget || pick);
+                var scx = scPick ? scPick.x : refP.x;
+                var scy = scPick ? scPick.y : refP.y;
+                var numVal = parseFloat((data.amount || '1').replace(/[^0-9.]/g, '')) || 1;
+                for (var sci = 0; sci < Math.min(20, Math.floor(numVal)); sci++) activateTNT(scx + (Math.random() - 0.5) * TILE * 4, scy, scUser, scAvatar);
+                if (numVal >= 10) activateMegaTNT(scx, scy, scUser, scAvatar, true);
+                spawnText(scx, scy - 30, '💰 ' + (data.amount || '') + ' SUPER CHAT!', '#ffdd00');
+                var superchatScore = Math.floor(numVal * 10);
+                if (pick.active) score += superchatScore;
+                // Contabilizar superchat como presente no ranking
+                if (!persistentScores[scUser]) persistentScores[scUser] = { score: 0, avatar: scAvatar, color: '#ffdd44', likes: 0, giftsValue: 0 };
+                persistentScores[scUser].score += superchatScore;
+                persistentScores[scUser].giftsValue = (persistentScores[scUser].giftsValue || 0) + numVal;
+                addCycleScore(scUser, superchatScore);
+                // Also add to owner score for daily total
+                if (pick.active && ownerName && persistentScores[ownerName]) {
+                    persistentScores[ownerName].score += superchatScore;
+                }
+                triggerBotrixEvent('superchat', scUser, scAvatar);
+            }
+            else if (data.type === 'member') {
+                var mUserRaw = data.user || '';
+                var mUser = (mUserRaw.charAt(0) === '@' ? mUserRaw : '@' + mUserRaw).toLowerCase();
+                if (mUser === '@') return;
+                lastActivity[mUser] = Date.now();
+                if (data.avatar) loadAvatar(data.avatar);
+                // Não chama spawnUserPickaxe aqui, conforme solicitado
+            }
+            else if (data.type === 'subscribe') {
+                var mUserRaw = data.user || '';
+                var mUser = (mUserRaw.charAt(0) === '@' ? mUserRaw : '@' + mUserRaw).toLowerCase();
+                if (mUser === '@') return;
+                lastActivity[mUser] = Date.now();
+                if (data.avatar) loadAvatar(data.avatar);
+
+                // --- Proteção Contra Spam de Inscrição ---
+                if (!persistentScores[mUser]) persistentScores[mUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', subscribeCount: 0 };
+                persistentScores[mUser].subscribeCount = (persistentScores[mUser].subscribeCount || 0) + 1;
+
+                if (persistentScores[mUser].subscribeCount > 1 || persistentScores[mUser].isChicken) {
+                    persistentScores[mUser].isChicken = true;
+                    var sPick = (ownerName && mUser === ownerName) ? pick : userPicks.find(function (up) { return up.userName === mUser; });
+
+                    if (sPick) {
+                        sPick.isChicken = true;
+                        if (_audioStarted) {
+                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+                            snd.volume = 0.6;
+                            snd.play().catch(function (e) { });
+                        }
+                        spawnText(sPick.x, sPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                    } else {
+                        spawnUserPickaxe(mUser, data.avatar || '');
+                        var newP = userPicks.find(up => up.userName === mUser);
+                        if (newP) {
+                            newP.isChicken = true;
+                            if (_audioStarted) chickenSounds[0].play().catch(e => { });
+                            spawnText(newP.x, newP.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                        }
+                    }
+                    return;
+                }
+
+                // Inscrição válida: Entra no jogo e ganha chuva de bombas
+                spawnUserPickaxe(mUser, data.avatar || '');
+                var mPick = userPicks.find(function (up) { return up.userName === mUser; });
+
+                var fx = mPick ? mPick.x : (pick.active ? pick.x : (camTarget ? camTarget.x : canvas.width / 2));
+                var fy = mPick ? mPick.y : (pick.active ? pick.y : (camTarget ? camTarget.y : camY + canvas.height / 2));
+
+                for (var fi = 0; fi < 15; fi++) activateTNT(fx + (Math.random() - 0.5) * TILE * 4, fy, mUser, data.avatar || '');
+                for (var mi = 0; mi < 10; mi++) activateMegaTNT(fx + (Math.random() - 0.5) * TILE * 3, fy, mUser, data.avatar || '', true);
+
+                spawnText(fx, fy - 40, '💎 SUBSCRIBER! 15💥+10🔥', '#00ffff');
+                triggerBotrixEvent('subscribe', mUser, data.avatar || '');
+            }
+            else if (data.type === 'gift') {
+                var gUserRaw = data.user || 'unknown';
+                var gUser = (gUserRaw.charAt(0) === '@' ? gUserRaw : '@' + gUserRaw).toLowerCase(), gAvatar = data.avatar || '', giftName = (data.giftName || '').toLowerCase();
+                var gUrl = data.giftPictureUrl || '';
+                
+                // --- Deduplicação de presentes repetidos em curto intervalo ---
+                var giftSig = gUser + '_' + giftName + '_' + (data.repeatCount || 1);
+                var now = Date.now();
+                var lastGift = lastGiftProcessed.get(giftSig);
+                if (lastGift && (now - lastGift.time < 500)) {
+                    console.log('[WS Monitor] Ignorando presente duplicado:', giftSig);
+                    return;
+                }
+                lastGiftProcessed.set(giftSig, { time: now });
+
+                lastActivity[gUser] = Date.now(); if (gAvatar) loadAvatar(gAvatar); spawnUserPickaxe(gUser, gAvatar);
+                var gPick = userPicks.find(function (up) { return up.userName === gUser; });
+                var refP = (pick.active) ? pick : (camTarget || pick);
+                var gx = gPick ? gPick.x : refP.x;
+                var gy = gPick ? gPick.y : refP.y;
+                var diamonds = data.diamondCount || 1, repeat = data.repeatCount || 1;
+                if (data.platform === 'youtube') { repeat = 1; }
+
+                // --- Lógica Incremental para Combos (TikTok) ---
+                var streakKey = gUser + '_' + giftName;
+                var incrementalRepeat = 0;
+                if (repeat === 1) {
+                    incrementalRepeat = 1;
+                    lastGiftRepeat[streakKey] = 1;
+                } else {
+                    var lastRep = lastGiftRepeat[streakKey] || 0;
+                    if (repeat <= lastRep) {
+                        incrementalRepeat = repeat;
+                    } else {
+                        incrementalRepeat = repeat - lastRep;
+                    }
+                    lastGiftRepeat[streakKey] = repeat;
+                }
+                // Limpeza periódica do tracker se crescer demais (segurança)
+                if (Object.keys(lastGiftRepeat).length > 500) lastGiftRepeat = {};
+
+                var resultingPickaxe = null;
+
+                if (giftName.includes('perfume')) {
+                    if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                    persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (1 * incrementalRepeat);
+
+                    spawnText(gx, gy - 30, '✨ UPGRADE!', '#00ffff');
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName || '').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
+                }
+                else if (giftName.includes('hat and mustache') || giftName.includes('chapéu e bigode')) {
+                    if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                    persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (7 * incrementalRepeat);
+
+                    spawnText(gx, gy - 30, '🎩 MAX PICKAXE!', '#ff00ff');
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName || '').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
+                }
+                else if (giftName.includes('rose') || giftName.includes('rosa')) {
+                    var count = 20 * incrementalRepeat;
+                    if (count > 100) count = 100;
+                    for (var gi = 0; gi < count; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar);
+                    spawnText(gx, gy - 30, '🌹 ' + count + ' TNT!', '#ff6688'); if (pick.active) score += 1 * incrementalRepeat;
+                }
+                else if (giftName.includes('gg')) {
+                    var count = 10 * incrementalRepeat;
+                    if (count > 50) count = 50;
+                    for (var gi = 0; gi < count; gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar, true);
+                    spawnText(gx, gy - 30, '🎮 ' + count + ' MEGA TNT!', '#44ff44'); if (pick.active) score += 10 * incrementalRepeat;
+                }
+                else if (giftName.includes('creeper')) {
+                    for (var gi = 0; gi < Math.min(incrementalRepeat, 3); gi++) activateCreeper(gx + (Math.random() - 0.5) * TILE * 2, gy, gUser);
+                    spawnText(gx, gy - 30, '💣 CREEPER!', '#44ff44'); if (pick.active) score += 5 * incrementalRepeat;
+                }
+                else if (giftName.includes('donut') || giftName.includes('rosquinha')) {
+                    var count = 100 * incrementalRepeat;
+                    spawnText(gx, gy - 30, '🍩 ' + count + ' CREEPERS!', '#00ff00');
+                    if (pick.active) score += 100 * incrementalRepeat;
+                    triggerCreeperRain(gx, gy, gUser, count);
+                    giftName = 'donut';
+                    resultingPickaxe = { img: 'block/creeper.png' };
+                }
+                else if (giftName.includes('urso misha') || giftName.includes('misha bear') || giftName.includes('🧸')) {
+                    for (var ri = 0; ri < incrementalRepeat; ri++) {
+                        activateDiamondSwords(gUser);
+                    }
+                }
+                else if (giftName.includes('heart with hands') || giftName.includes('coração com mão')) {
+                    for (var ri = 0; ri < incrementalRepeat; ri++) {
+                        activateGoldSwords(gUser);
+                    }
+                }
+                else if (giftName.includes('heart me') || giftName.includes('heart_me') || giftName.includes('coração') || giftName.includes('heart')) {
+                    var count = 30 * incrementalRepeat;
+                    if (count > 150) count = 150;
+                    for (var gi = 0; gi < count; gi++) activateHeartTNT(gx + (Math.random() - 0.5) * TILE * 4, gy, gUser, gAvatar);
+                    spawnText(gx, gy - 30, '❤️ ' + count + ' CORAÇÕES!', '#ff6688'); if (pick.active) score += 3 * incrementalRepeat;
+                }
+                else if (giftName.includes('fatia de bolo') || giftName.includes('cake slice')) {
+                    var targetPlayer = gPick || (gUser === (pick.userName || '').toLowerCase() ? pick : null);
+                    if (targetPlayer) {
+                        targetPlayer.isChicken = !targetPlayer.isChicken;
+                        if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0, health: 0, slots: INITIAL_HEART_SLOTS };
+                        persistentScores[gUser].isChicken = targetPlayer.isChicken;
+
+                        var statusMsg = targetPlayer.isChicken ? '🐔 MODO GALINHA ATIVADO!' : '👨‍🌾 MODO GALINHA DESATIVADO!';
+                        var statusColor = targetPlayer.isChicken ? '#ffff00' : '#00ff88';
+                        spawnText(gx, gy - 30, statusMsg, statusColor);
+
+                        if (_audioStarted) {
+                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+                            snd.volume = 0.6;
+                            snd.play().catch(function (e) { });
+                        }
+                    }
+                    resultingPickaxe = { img: 'galinha/galinha.png/a3c8870fc87a45f4a67b28b8181a8133bAEgRDEP5hXtghXy-0.png' };
+                }
+                else if (giftName.includes('presente incrivel')) {
+                    var targetPlayer = gPick || (gUser === (pick.userName || '').toLowerCase() ? pick : null);
+                    if (targetPlayer) {
+                        targetPlayer.isSteve = !targetPlayer.isSteve;
+                        if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                        persistentScores[gUser].isSteve = targetPlayer.isSteve;
+
+                        var statusMsg = targetPlayer.isSteve ? '💎 STEVE TIME!' : '⛏ MODO NORMAL!';
+                        var statusColor = targetPlayer.isSteve ? '#00ffff' : '#00ffff';
+                        spawnText(gx, gy - 30, statusMsg, statusColor);
+
+                        if (_audioStarted && targetPlayer.isSteve) {
+                            sfxPickaxeChange();
+                        }
+                    }
+                    resultingPickaxe = { img: 'stev/steve.png/ff386735e41a46b7f9a2ffa9f0184c93h0LWpOeylH7DLyFh-0.png' };
+                }
+                else if (giftName.includes('homer')) {
+                    var targetPlayer = gPick || (gUser === (pick.userName || '').toLowerCase() ? pick : null);
+                    if (targetPlayer) {
+                        targetPlayer.isHomer = !targetPlayer.isHomer;
+                        if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                        persistentScores[gUser].isHomer = targetPlayer.isHomer;
+
+                        var statusMsg = targetPlayer.isHomer ? '🍩 HOMER TIME!' : '⛏ MODO NORMAL!';
+                        var statusColor = targetPlayer.isHomer ? '#ffdd00' : '#00ffff';
+                        spawnText(gx, gy - 30, statusMsg, statusColor);
+
+                        if (_audioStarted && targetPlayer.isHomer) {
+                            sfxPickaxeChange();
+                            homerSound.volume = 0.6;
+                            homerSound.play().catch(function (e) { });
+                        }
+                    }
+                    resultingPickaxe = HOMER_PICKAXE;
+                }
+                else if (giftName.includes('like')) {
+                    for (var gi = 0; gi < Math.min(incrementalRepeat, 5); gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar, true);
+                    spawnText(gx, gy - 30, '❤️ MEGA!', '#ff4488'); if (pick.active) score += 5 * incrementalRepeat;
+                }
+                else {
+                    // Fallback para qualquer presente: 10 TNTs para cada 1 moeda
+                    var tntCount = (diamonds * 10) * incrementalRepeat;
+                    if (tntCount > 150) tntCount = 150; // Cap de segurança para performance
+                    for (var gi = 0; gi < tntCount; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar);
+                    spawnText(gx, gy - 30, '🎁 ' + tntCount + ' TNT!', '#ffaa44');
+                    if (pick.active) score += Math.floor(diamonds * 0.5) * incrementalRepeat;
+                }
+
+                // --- PROCESSAMENTO FINAL DO PRESENTE ---
+                if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0, health: 0, slots: INITIAL_HEART_SLOTS };
+
+                var giftScoreValue = diamonds * incrementalRepeat;
+                persistentScores[gUser].score += giftScoreValue;
+                addCycleScore(gUser, giftScoreValue);
+
+                if (!data.isRoulette) {
+                    persistentScores[gUser].giftsValue = (persistentScores[gUser].giftsValue || 0) + giftScoreValue;
+
+                    // --- Moedas por Presentes (2 presentes = 1 coin) ---
+                    persistentScores[gUser].giftCoinTracker = (persistentScores[gUser].giftCoinTracker || 0) + incrementalRepeat;
+                    var newCoins = Math.floor(persistentScores[gUser].giftCoinTracker / 2);
+                    if (newCoins > 0) {
+                        persistentScores[gUser].giftCoinTracker %= 2;
+                        setTimeout(function() {
+                            persistentScores[gUser].coins = (persistentScores[gUser].coins || 0) + newCoins;
+                            showCoinBanner(gUser, newCoins);
+                            updateLeaderboard();
+                        }, 4500);
+                    }
+
+                    showGiftAlert(gUser, gAvatar, giftName, gUrl, resultingPickaxe);
+                }
+
+                // --- APRENDIZADO DE NOVAS IMAGENS DE PRESENTES ---
+                if (giftName && gUrl) {
+                    var cachedGiftsStr = localStorage.getItem('pd_cached_gifts') || '[]';
+                    var cachedGifts = JSON.parse(cachedGiftsStr);
+                    var existing = cachedGifts.find(function (cg) { return cg.name === giftName; });
+                    if (!existing) {
+                        cachedGifts.push({ name: giftName, url: gUrl });
+                        localStorage.setItem('pd_cached_gifts', JSON.stringify(cachedGifts));
+                        // Tenta aplicar imediatamente se for uma das skills visíveis
+                        applyGiftImages([{ name: giftName, url: gUrl }]);
+                    } else if (existing.url !== gUrl) {
+                        // Atualiza URL se mudou
+                        existing.url = gUrl;
+                        localStorage.setItem('pd_cached_gifts', JSON.stringify(cachedGifts));
+                        applyGiftImages([{ name: giftName, url: gUrl }]);
+                    }
+                }
+            }
+            else if (data.type === 'follow') {
+                var fUserRaw = data.user || 'unknown';
+                var fUser = (fUserRaw.charAt(0) === '@' ? fUserRaw : '@' + fUserRaw).toLowerCase(); lastActivity[fUser] = Date.now();
+                if (data.avatar) loadAvatar(data.avatar);
+
+                console.log('[Follow Event] User:', fUser);
+
+                // --- Proteção Contra Spam de Follow/Unfollow ---
+                if (!persistentScores[fUser]) persistentScores[fUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', followCount: 0 };
+                persistentScores[fUser].followCount = (persistentScores[fUser].followCount || 0) + 1;
+                console.log('[Follow Event] Count for', fUser, 'is', persistentScores[fUser].followCount);
+
+                if (persistentScores[fUser].followCount > 1 || persistentScores[fUser].isChicken) {
+                    console.warn('[Follow Event] Blocked by SPAM protection:', fUser);
+                    persistentScores[fUser].isChicken = true;
+                    var fPick = (ownerName && fUser === ownerName) ? pick : userPicks.find(function (up) { return up.userName === fUser; });
+
+                    if (fPick) {
+                        fPick.isChicken = true;
+                        if (_audioStarted) {
+                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+                            snd.volume = 0.6;
+                            snd.play().catch(function (e) { });
+                        }
+                        spawnText(fPick.x, fPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                    } else {
+                        // Força a entrada como galinha se não estiver no jogo
+                        spawnUserPickaxe(fUser, data.avatar || '');
+                        var newP = userPicks.find(up => up.userName === fUser);
+                        if (newP) {
+                            newP.isChicken = true;
+                            if (_audioStarted) chickenSounds[0].play().catch(e => { });
+                            spawnText(newP.x, newP.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                        }
+                    }
+                    return; // Bloqueia a chuva de bombas para spammers
+                }
+
+                // Seguidor válido: Entra na partida e ganha chuva de bombas
+                spawnUserPickaxe(fUser, data.avatar || '');
+                var fPick = userPicks.find(function (up) { return up.userName === fUser; });
+
+                // Posição da chuva: no seguidor ou na câmera
+                var fx = fPick ? fPick.x : (pick.active ? pick.x : (camTarget ? camTarget.x : canvas.width / 2));
+                var fy = fPick ? fPick.y : (pick.active ? pick.y : (camTarget ? camTarget.y : camY + canvas.height / 2));
+
+                console.log('[Follow Event] Spawning TNT rain at:', fx, fy);
+                for (var fi = 0; fi < 10; fi++) activateTNT(fx + (Math.random() - 0.5) * TILE * 4, fy, fUser, data.avatar || '');
+                for (var mi = 0; mi < 5; mi++) activateMegaTNT(fx + (Math.random() - 0.5) * TILE * 3, fy, fUser, data.avatar || '', true);
+
+                spawnText(fx, fy - 40, '👤 NEW FOLLOWER! 10💥+5🔥', '#44ff88');
+                triggerBotrixEvent('follow', fUser, data.avatar || '');
+            }
+            else if (data.type === 'like') {
+                var lNameRaw = data.user || '';
+                if (!lNameRaw) return; var lUser = (lNameRaw.charAt(0) === '@' ? lNameRaw : '@' + lNameRaw).toLowerCase();
+                var lAvatar = data.avatar || ''; lastActivity[lUser] = Date.now(); if (lAvatar) loadAvatar(lAvatar);
+                spawnUserPickaxe(lUser, lAvatar);
+                var lPick = userPicks.find(function (up) { return up.userName === lUser; });
+                var refP = (pick.active) ? pick : (camTarget || pick);
+                var lx = lPick ? lPick.x : refP.x;
+                var ly = lPick ? lPick.y : refP.y;
+                var likeCount = data.likeCount || 1;
+                var likePts = Math.min(likeCount, 10) * 0.5;
+                if (pick.active) score += likePts;
+                // Gerar heartTNT apenas se não estiver no período de ignoração inicial
+                if (Date.now() >= _ignoreLikesUntil) {
+                    activateHeartTNT(lx, ly, lUser, lAvatar);
+                }
+                spawnParts(lx, ly, '#ff4488', Math.min(likeCount, 5));
+                spawnText(lx, ly - 20, '+' + likePts + ' ❤', '#ff4488');
+                // Contabilizar likes no ranking
+                if (!persistentScores[lUser]) persistentScores[lUser] = { score: 0, avatar: lAvatar, color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0 };
+
+                var oldLikes = persistentScores[lUser].likes || 0;
+                var newLikes = oldLikes + likeCount;
+
+                // Milestone: Cada 1000 likes ganha um upgrade de picareta
+                if (Math.floor(newLikes / 1000) > Math.floor(oldLikes / 1000)) {
+                    persistentScores[lUser].giftsCount = (persistentScores[lUser].giftsCount || 0) + 1;
+                    var newPick = getPickaxeForGifts(lUser);
+
+                    // Atualiza a picareta visual do jogador se ele estiver em jogo
+                    if (lPick) {
+                        lPick.pickaxe = newPick;
+                        spawnText(lPick.x, lPick.y - 100, '🚀 UPGRADE POR LIKES!', '#ff4488');
+                    }
+
+                    // Se for o host, atualiza a picareta principal
+                    if (ownerName && lUser === ownerName) {
+                        currentPickaxe = newPick || PICKAXES[0];
+                        pick.pickaxe = currentPickaxe;
+                        safeUpdate('pickaxeDisplay', '⛏ ' + currentPickaxe.name, currentPickaxe.color);
+                        if (_audioStarted) sfxPickaxeChange();
+                    }
+
+                    // Exibe banner de upgrade
+                    if (typeof showGiftAlert === 'function') {
+                        showGiftAlert(lUser, lAvatar, '1000 LIKES!', 'block/heart_tnt.png', newPick);
+                    }
+                }
+
+                updatePlayerHealthFromLikes(lUser, newLikes);
+                persistentScores[lUser].score = (persistentScores[lUser].score || 0) + likePts;
+                // Atualiza cycle scores
+                if (!_cycleScores[lUser]) _cycleScores[lUser] = { score: 0, kills: 0, items: 0, balls: 0, likes: 0, avatar: persistentScores[lUser].avatar || '' };
+                _cycleScores[lUser].score += likePts;
+                _cycleScores[lUser].likes += likeCount;
+                // Also add to owner score for daily total
+                if (pick.active && ownerName && persistentScores[ownerName]) {
+                    persistentScores[ownerName].score += likePts;
+                }
+            }
+            else if (data.type === 'share') {
+                var sUserRaw = data.user || 'unknown';
+                var sUser = (sUserRaw.charAt(0) === '@' ? sUserRaw : '@' + sUserRaw).toLowerCase(); lastActivity[sUser] = Date.now();
+                var sPick = userPicks.find(function (up) { return up.userName === sUser; });
+                var refP = (pick.active) ? pick : (camTarget || pick);
+                var sx = sPick ? sPick.x : refP.x;
+                var sy = sPick ? sPick.y : refP.y;
+                activateTNT(sx, sy, sUser, data.avatar || ''); if (pick.active) score += 10; spawnText(sx, sy - 30, '+10 SHARE!', '#44ddff');
+            }
+        }
+
+        // ── Initial flow ──
+        (function () {
+            var savedTT = localStorage.getItem('pd_tiktok_username');
+            var savedTTSid = localStorage.getItem('pd_tiktok_sessionid');
+            var savedYT = localStorage.getItem('pd_youtube_id');
+            if (savedTT) {
+                _tiktokUsername = savedTT;
+                var ttInput = document.getElementById('tiktokUsernameInput');
+                if (ttInput) ttInput.value = savedTT;
+                ownerName = '@' + savedTT.toLowerCase();
+                pick.userName = ownerName;
+                if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: '', color: '#ffdd44' };
+            }
+            if (savedTTSid) {
+                var ttsInput = document.getElementById('tiktokSessionInput');
+                if (ttsInput) ttsInput.value = savedTTSid;
+            }
+            if (savedYT) {
+                _youtubeId = savedYT;
+                var ytInput = document.getElementById('youtubeIdInput');
+                if (ytInput) ytInput.value = savedYT;
+            }
+            // Restore avatars
+            var keys = Object.keys(persistentScores);
+            for (var i = 0; i < keys.length; i++) { var av = persistentScores[keys[i]].avatar; if (av) loadAvatar(av); }
+            if (ownerName && persistentScores[ownerName] && persistentScores[ownerName].avatar) pick.userAvatarUrl = persistentScores[ownerName].avatar;
+            showApiSetup();
+        })();
+
+        function spawnUserPickaxe(userName, avatarUrl) {
+            userName = userName.replace(/^@@+/, '@');
+            if (ownerName && userName === ownerName) return;
+            // O limite de 30 já é tratado abaixo com shift(), removendo o return fixo de 50 para garantir rotação.
+            if (userPicks.some(up => up.userName === userName)) return;
+
+            // Fallback: get avatar from persistentScores if not provided
+            if (!avatarUrl && persistentScores[userName] && persistentScores[userName].avatar) {
+                avatarUrl = persistentScores[userName].avatar;
+            }
+
+            // Precarrega avatar
+            if (avatarUrl) loadAvatar(avatarUrl);
+
+            var refP = (pick.active) ? pick : (camTarget || pick);
+            var p = {
+                x: refP.x,
+                y: refP.y,
+                vx: (Math.random() - 0.5) * 12,
+                vy: -2 - Math.random() * 8,
+                ang: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 0.4,
+                halfSize: PICK_HALF,
+                userName: userName,
+                userAvatarUrl: avatarUrl,
+                joinTime: Date.now(),
+                pickaxe: getPickaxeForGifts(userName),
+                score: (persistentScores[userName] ? persistentScores[userName].score : 0),
+                isChicken: (persistentScores[userName] && persistentScores[userName].isChicken),
+                isSteve: (persistentScores[userName] && persistentScores[userName].isSteve),
+                isHomer: (persistentScores[userName] && persistentScores[userName].isHomer),
+                stormTimer: 0,
+                color: (persistentScores[userName] && persistentScores[userName].color)
+                    ? persistentScores[userName].color
+                    : 'hsl(' + Math.floor(Math.random() * 360) + ', 100%, 70%)',
+                companions: []
+            };
+
+            // Garante que está na persistência
+            if (!persistentScores[userName]) {
+                persistentScores[userName] = {
+                    score: p.score, avatar: avatarUrl, color: p.color,
+                    likes: 0, giftsValue: 0, giftsCount: 0,
+                    health: 0, slots: INITIAL_HEART_SLOTS
+                };
+            } else {
+                if (avatarUrl) persistentScores[userName].avatar = avatarUrl;
+                if (!persistentScores[userName].color) persistentScores[userName].color = p.color;
+                if (persistentScores[userName].likes === undefined) persistentScores[userName].likes = 0;
+                if (persistentScores[userName].giftsValue === undefined) persistentScores[userName].giftsValue = 0;
+                if (persistentScores[userName].giftsCount === undefined) persistentScores[userName].giftsCount = 0;
+                if (persistentScores[userName].health === undefined) persistentScores[userName].health = 0;
+                if (persistentScores[userName].slots === undefined) persistentScores[userName].slots = INITIAL_HEART_SLOTS;
+            }
+
+            // Limitar userPicks a no máximo 30 para performance
+            if (userPicks.length >= 30) {
+                userPicks.shift(); // Remove o mais antigo
+            }
+            userPicks.push(p);
+
+            // Sincroniza companheiros imediatamente se o bot já tiver "nível"
+            var inv = getPlayerInventory(userName);
+            if (inv.length > 1) syncCompanions(p, inv);
+
+            lastActivity[userName] = Date.now();
+            if (!userName.startsWith('@Bot_')) {
+                spawnText(p.x, p.y, userName + ' JOINED!', '#00ff88');
+            }
+            if (_audioStarted) sfxSkillActivate();
+        }
+
+        var CLONE_DURATION = 600; // 10 seconds at 60fps
+
+        function spawnClone(userName, avatarUrl) {
+            userName = userName.replace(/^@@+/, '@');
+            var cdKey = userName + '_clone';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+            var sourcePick = (ownerName && userName === ownerName) ? pick : (pick.userName === userName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+            if (!sourcePick) sourcePick = pick; // fallback to main pick for offline play
+
+            skillCooldowns[cdKey] = cloneCooldown;
+            for (var i = 0; i < 5; i++) {
+                extraPicks.push({
+                    x: sourcePick.x + (Math.random() - 0.5) * 60,
+                    y: sourcePick.y - 40 - Math.random() * 40,
+                    vx: sourcePick.vx + (Math.random() - 0.5) * 8,
+                    vy: sourcePick.vy - 4 - Math.random() * 6,
+                    ang: sourcePick.ang + Math.random(),
+                    spin: (Math.random() - 0.5) * 0.4,
+                    stuck: false, stuckTimer: 0,
+                    userName: userName, // attribute points to owner
+                    userAvatarUrl: avatarUrl || sourcePick.userAvatarUrl || '',
+                    cloneOwner: userName,
+                    owner: sourcePick, // Referência direta para redirecionamento de minerais
+                    isCompanion: true,
+                    cloneAvatar: avatarUrl || sourcePick.userAvatarUrl || '',
+                    cloneTimer: cloneCooldown, // sincronizado com o cooldown visual
+                    clonePickaxe: sourcePick.pickaxe || currentPickaxe,
+                    cloneColor: sourcePick.color || persistentScores[userName] && persistentScores[userName].color || '#44ddff',
+                    stormTimer: sourcePick.stormTimer || 0
+                });
+            }
+            spawnText(sourcePick.x, sourcePick.y - 30, '👥 CLONE ARMY!', '#44ffaa');
+            if (typeof sfxSkillActivate === 'function') sfxSkillActivate();
+        }
+
+        function activateNuke(tx, ty, userName) {
+            var cdKey = userName + '_nuke';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+            skillCooldowns[cdKey] = nukeCooldown;
+
+            var targetX = tx !== undefined ? tx : pick.x;
+            var targetY = ty !== undefined ? ty : pick.y;
+
+            var b = {
+                x: targetX,
+                y: targetY - 40,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -5 - Math.random() * 3,
+                ang: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 0.2,
+                blinkTimer: 0,
+                fuse: 150,
+                mega: false, nuke: true,
+                userName: userName
+            };
+            tntBlocks.push(b);
+
+            spawnText(targetX, targetY - 40, '☢️ MINI-NUKE!', '#ff0000');
+            shakeAmt = Math.max(shakeAmt, 10);
+            if (typeof sfxTNT === 'function') sfxTNT();
+        }
+
+        function activateBlackHole(tx, ty, userName) {
+            var cdKey = userName + '_blackhole';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+
+            var sourcePlayer = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+            if (!sourcePlayer) sourcePlayer = pick;
+
+            var bx = tx !== undefined ? tx : sourcePlayer.x;
+            var by = ty !== undefined ? ty : sourcePlayer.y;
+
+            skillCooldowns[cdKey] = blackholeCooldown;
+            activeBlackHoles.push({ id: Math.random(), x: bx, y: by, timer: BLACKHOLE_DURATION, userName: userName });
+            spawnText(bx, by - 40, '🕳️ BLACK HOLE!', '#8800ff');
+            shakeAmt = Math.max(shakeAmt, 12);
+            sfxBlackHole();
+        }
+
+        function sfxBlackHole() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            // Deep descending rumble
+            var osc = ac.createOscillator(), g = ac.createGain();
+            osc.type = 'sine'; osc.frequency.setValueAtTime(120, t);
+            osc.frequency.exponentialRampToValueAtTime(20, t + 2);
+            g.gain.setValueAtTime(0.0001, t);
+            g.gain.linearRampToValueAtTime(0.5, t + 0.1);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 2);
+            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 2.1);
+            // Whoosh
+            var nLen = Math.ceil(ac.sampleRate * 1.5);
+            var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / nLen, 2);
+            var src = ac.createBufferSource(); src.buffer = buf;
+            var filt = ac.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 200; filt.Q.value = 2;
+            var ng = ac.createGain(); ng.gain.setValueAtTime(0.3, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
+        }
+
+        function sfxBlackHoleClose() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            // Rising implosion whine
+            var osc = ac.createOscillator(), g = ac.createGain();
+            osc.type = 'sine'; osc.frequency.setValueAtTime(60, t);
+            osc.frequency.exponentialRampToValueAtTime(800, t + 0.8);
+            g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 1);
+            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 1);
+            // Final pop/flash
+            var pop = ac.createOscillator(), pg = ac.createGain();
+            pop.type = 'triangle'; pop.frequency.setValueAtTime(1200, t + 0.8);
+            pop.frequency.exponentialRampToValueAtTime(200, t + 1.2);
+            pg.gain.setValueAtTime(0.0001, t + 0.8); pg.gain.linearRampToValueAtTime(0.25, t + 0.85);
+            pg.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+            pop.connect(pg); pg.connect(ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
+        }
+
+        function updateBlackHoles() {
+            for (var i = activeBlackHoles.length - 1; i >= 0; i--) {
+                var bh = activeBlackHoles[i];
+                bh.timer--;
+                var expired = bh.timer <= 0;
+
+                var R = BLACKHOLE_RADIUS;
+                var progress = 1 - Math.max(0, bh.timer) / BLACKHOLE_DURATION;
+                var hasCaptured = false;
+
+                // Helper to apply black hole suction to entities
+                function applyBHSuck(list, devourDist) {
+                    for (var j = list.length - 1; j >= 0; j--) {
+                        var obj = list[j];
+                        if (obj.state === 'dead' || obj.active === false) continue;
+                        var dx = bh.x - obj.x, dy = bh.y - obj.y;
+                        var dist = Math.sqrt(dx * dx + dy * dy);
+
+                        // Check if captured by THIS black hole specifically
+                        if (dist < R || obj._bhCapturedBy === bh.id) {
+                            hasCaptured = true;
+                            obj._bhCapturedBy = bh.id;
+                            var closeness = 1 - Math.min(dist, R) / R;
+                            var nx = dx / (dist || 1), ny = dy / (dist || 1);
+                            var targetSpeed = 1.5 + closeness * 4;
+                            var orbitRatio = Math.max(0.1, 0.5 - closeness * 0.4);
+
+                            var tvx = nx * targetSpeed * (1 - orbitRatio) + ny * targetSpeed * orbitRatio;
+                            var tvy = ny * targetSpeed * (1 - orbitRatio) - nx * targetSpeed * orbitRatio;
+                            var blend = 0.07 + closeness * 0.12;
+
+                            obj.vx = obj.vx * (1 - blend) + tvx * blend;
+                            obj.vy = obj.vy * (1 - blend) + tvy * blend;
+                            obj._bhScale = Math.max(0.05, Math.min(1, dist / R));
+                            obj._bhSpin = (obj._bhSpin || 0) + 0.15 * closeness;
+
+                            if (dist < devourDist) {
+                                obj.hp = 0; obj.state = 'dead';
+                                if (obj.animTimer !== undefined) obj.animTimer = 0;
+                                obj.deadTimer = 80; obj._bhScale = 0;
+                                obj._bhCapturedBy = null; // Died, clear capture
+                                if (pick.active || (bh.userName && bh.userName !== ownerName)) score += (obj.pts || 0);
+                                if (bh.userName) {
+                                    if (!persistentScores[bh.userName]) persistentScores[bh.userName] = { score: 0, avatar: '' };
+                                    if (pick.active || (bh.userName && bh.userName !== ownerName)) persistentScores[bh.userName].score += (obj.pts || 0);
+                                }
+                                spawnText(bh.x, bh.y - 30, '+' + (obj.pts || 0), '#cc44ff');
+                                sfxZombieDeath();
+                            }
+                        } else {
+                            // If it was captured by THIS black hole but now it's out of range and BH is active?
+                            // Actually _bhCapturedBy keeps them in the "if" until BH closes.
+                        }
+                    }
+                }
+
+                applyBHSuck(bats, 18);
+                applyBHSuck(zombies, 25);
+                applyBHSuck(spiders, 25);
+                applyBHSuck(witherSkeletons, 25);
+
+                // ── Gradual block destruction ──
+                if (!expired) {
+                    var destroyR = R * progress;
+                    if (bh.timer % 6 === 0) {
+                        var cr = Math.floor(bh.y / TILE), cc = Math.floor(bh.x / TILE);
+                        var tileR = Math.ceil(destroyR / TILE);
+                        var pts = 0;
+                        for (var r = cr - tileR; r <= cr + tileR; r++) {
+                            for (var c = cc - tileR; c <= cc + tileR; c++) {
+                                var cell = getCell(r, c);
+                                if (!cell || cell.t === E || cell.t === BEDROCK) continue;
+                                var bx2 = (c + 0.5) * TILE - bh.x, by2 = (r + 0.5) * TILE - bh.y;
+                                var blockDist = Math.sqrt(bx2 * bx2 + by2 * by2);
+                                if (blockDist < destroyR) {
+                                    var dmg = Math.max(1, Math.floor(3 * (1 - blockDist / destroyR)));
+                                    cell.hp -= dmg;
+                                    cell.cr = Math.min(1, 1 - cell.hp / BDEF[cell.t].hp);
+                                    if (cell.hp <= 0) {
+                                        pts += (BDEF[cell.t].pts || 0);
+                                        var dbx = c * TILE + TILE / 2, dby = r * TILE + TILE / 2;
+                                        var dAng = Math.atan2(bh.y - dby, bh.x - dbx);
+                                        for (var di = 0; di < 3; di++) {
+                                            debris.push({
+                                                x: dbx + (Math.random() - 0.5) * TILE * 0.4,
+                                                y: dby + (Math.random() - 0.5) * TILE * 0.4,
+                                                vx: Math.cos(dAng + (Math.random() - 0.5) * 1.5) * (2 + Math.random() * 2) + Math.sin(dAng) * 3,
+                                                vy: Math.sin(dAng + (Math.random() - 0.5) * 1.5) * (2 + Math.random() * 2) - Math.cos(dAng) * 3,
+                                                t: cell.t, size: 6 + Math.random() * 6,
+                                                ang: Math.random() * Math.PI * 2,
+                                                spin: (Math.random() - 0.5) * 0.5,
+                                                age: 0, followFrames: 0, life: 1, _bhTarget: bh
+                                            });
+                                        }
+                                        cell.t = E; cell.hp = 0; cell.cr = 0;
+                                    }
+                                }
+                            }
+                        }
+                        if (pts > 0) {
+                            if (bh.userName) {
+                                if (!persistentScores[bh.userName]) persistentScores[bh.userName] = { score: 0, avatar: '' };
+                                if (pick.active || (bh.userName && bh.userName !== ownerName)) persistentScores[bh.userName].score += pts;
+                                addCycleScore(bh.userName, pts, 'block');
+                            }
+                        }
+                    }
+                }
+
+                // ── Spiral particles ──
+                if (!expired && bh.timer % 2 === 0) {
+                    for (var pi = 0; pi < 3; pi++) {
+                        var angle = Math.random() * Math.PI * 2, pr = R * (0.4 + Math.random() * 0.6);
+                        parts.push({
+                            x: bh.x + Math.cos(angle) * pr, y: bh.y + Math.sin(angle) * pr,
+                            vx: -Math.cos(angle) * 4 + Math.sin(angle) * 2, vy: -Math.sin(angle) * 4 - Math.cos(angle) * 2,
+                            life: 1, dec: 0.04, c: Math.random() < 0.3 ? '#ffffff' : (Math.random() < 0.5 ? '#8800ff' : '#cc44ff'), r: 2 + Math.random() * 3
+                        });
+                    }
+                }
+
+                // Close logic
+                if (expired && !hasCaptured && !bh._collapsing) {
+                    bh._collapsing = true; bh._collapseTimer = 60;
+                    sfxBlackHoleClose();
+                }
+
+                if (bh._collapsing) {
+                    bh._collapseTimer--;
+                    if (bh._collapseTimer <= 0) {
+                        // FINAL RESET: objects that survived recover state
+                        function recover(list) {
+                            list.forEach(function (o) {
+                                if (o._bhCapturedBy === bh.id) {
+                                    o._bhCapturedBy = null;
+                                    o._bhScale = undefined;
+                                    o._bhSpin = 0;
+                                }
+                            });
+                        }
+                        recover(bats); recover(zombies); recover(spiders); recover(witherSkeletons);
+
+                        activeBlackHoles.splice(i, 1);
+                        continue;
+                    }
+                }
+                if (bh.timer < -240) {
+                    // Safety recovery even on forced remove
+                    function recoverSafe(list) {
+                        list.forEach(function (o) {
+                            if (o._bhCapturedBy === bh.id) {
+                                o._bhCapturedBy = null;
+                                o._bhScale = undefined;
+                                o._bhSpin = 0;
+                            }
+                        });
+                    }
+                    recoverSafe(bats); recoverSafe(zombies); recoverSafe(spiders); recoverSafe(witherSkeletons);
+                    activeBlackHoles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawBlackHoles() {
+            for (var i = 0; i < activeBlackHoles.length; i++) {
+                var bh = activeBlackHoles[i];
+                var t = Date.now() * 0.006;
+                var pulse = 0.7 + Math.sin(bh.timer * 0.15) * 0.3;
+
+                // Calculate visual radius — shrinks during collapse
+                var R = BLACKHOLE_RADIUS;
+                if (bh._collapsing) {
+                    var collapseProgress = 1 - (bh._collapseTimer / 60);
+                    R *= Math.max(0.02, 1 - collapseProgress);
+                    pulse = 1; // bright during collapse
+                }
+
+                ctx.save();
+
+                // Collapse flash glow
+                if (bh._collapsing) {
+                    var flashAlpha = Math.min(1, (1 - bh._collapseTimer / 60) * 2);
+                    ctx.fillStyle = 'rgba(200, 150, 255, ' + (flashAlpha * 0.3) + ')';
+                    ctx.beginPath(); ctx.arc(bh.x, bh.y, R * 2, 0, Math.PI * 2); ctx.fill();
+                }
+
+                // Outer distortion field
+                var grad = ctx.createRadialGradient(bh.x, bh.y, 0, bh.x, bh.y, R);
+                grad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+                grad.addColorStop(0.15, 'rgba(30, 0, 80, 0.6)');
+                grad.addColorStop(0.35, 'rgba(100, 0, 200, ' + (0.25 * pulse) + ')');
+                grad.addColorStop(0.6, 'rgba(160, 40, 255, ' + (0.1 * pulse) + ')');
+                grad.addColorStop(1, 'rgba(136, 0, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(bh.x, bh.y, R, 0, Math.PI * 2); ctx.fill();
+
+                // Spinning accretion rings (spin faster during collapse)
+                var spinSpeed = bh._collapsing ? t * 3 : t;
+                for (var ri = 0; ri < 4; ri++) {
+                    var rr = R * (0.15 + ri * 0.12);
+                    var ringAlpha = (0.5 - ri * 0.1) * pulse;
+                    ctx.strokeStyle = 'rgba(200, 100, 255, ' + ringAlpha + ')';
+                    ctx.lineWidth = 3 - ri * 0.5;
+                    ctx.beginPath();
+                    ctx.arc(bh.x, bh.y, rr, spinSpeed + ri * 1.5, spinSpeed + ri * 1.5 + Math.PI * 1.2);
+                    ctx.stroke();
+                    ctx.strokeStyle = 'rgba(255, 200, 255, ' + (ringAlpha * 0.5) + ')';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(bh.x, bh.y, rr * 0.8, -spinSpeed * 1.3 + ri, -spinSpeed * 1.3 + ri + Math.PI * 0.8);
+                    ctx.stroke();
+                }
+
+                // Event horizon core
+                var coreR = Math.max(2, (bh._collapsing ? R * 0.3 : 12) + Math.sin(t * 2) * 3);
+                var coreGrad = ctx.createRadialGradient(bh.x, bh.y, 0, bh.x, bh.y, coreR);
+                coreGrad.addColorStop(0, bh._collapsing ? '#ffffff' : '#000000');
+                coreGrad.addColorStop(0.7, bh._collapsing ? 'rgba(200, 150, 255, 0.8)' : 'rgba(0, 0, 0, 0.95)');
+                coreGrad.addColorStop(1, 'rgba(80, 0, 160, 0.5)');
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath(); ctx.arc(bh.x, bh.y, coreR, 0, Math.PI * 2); ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        function activateThor(tx, ty, userName) {
+            var cdKey = userName + '_thor';
+            if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
+
+            // Robust source identification (correcting ReferenceError)
+            var sourcePlayer = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+            if (!sourcePlayer) sourcePlayer = pick;
+
+            var startX = tx !== undefined ? tx : sourcePlayer.x;
+            var startY = ty !== undefined ? ty : sourcePlayer.y;
+
+            var inWater = isInWater(startX, startY);
+            var submergedEnemies = [];
+            if (inWater) {
+                var allEnemies = [].concat(bats, zombies, spiders);
+                for (var ei = 0; ei < allEnemies.length; ei++) {
+                    var e = allEnemies[ei];
+                    if (!e || e.state === 'dead' || e.y < camY - 100 || e.y > camY + canvas.height + 100) continue;
+                    if (isInWater(e.x, e.y)) submergedEnemies.push(e);
+                }
+            }
+
+            var hasTarget = false;
+            var allTargets = [].concat(bats, zombies, spiders);
+            for (var i = 0; i < allTargets.length; i++) {
+                var b = allTargets[i];
+                if (b.state === 'dead' || b.y < camY - 200 || b.y > camY + canvas.height + 200) continue;
+                var dist = Math.sqrt((b.x - startX) * (b.x - startX) + (b.y - startY) * (b.y - startY));
+                if (dist <= 800) { hasTarget = true; break; }
+            }
+
+            if (!hasTarget && submergedEnemies.length === 0) {
+                spawnText(startX, startY - 40, 'NO TARGETS ⚡', '#ffaaaa');
+                return;
+            }
+
+            skillCooldowns[cdKey] = thorCooldown;
+
+            // 1. WATER SHOCK: Immediate hit for everyone in water!
+            if (inWater && submergedEnemies.length > 0) {
+                shakeAmt = Math.max(shakeAmt, 18);
+                // Bubbles at player origin
+                spawnParts(startX, startY, 'rgba(180,240,255,0.8)', 15);
+
+                for (var si = 0; si < submergedEnemies.length; si++) {
+                    var target = submergedEnemies[si];
+                    // Multi-beam effect for "Electricity shock" look
+                    for (var rcount = 0; rcount < 3; rcount++) {
+                        _thorBeams.push({ player: sourcePlayer, enemy: target, life: 40 + Math.random() * 20 });
+                    }
+
+                    var isZombie = zombies.indexOf(target) !== -1;
+                    var dmg = isZombie ? 3 : 2;
+
+                    target.hp -= dmg; target.hurtTimer = 18; target.state = 'hurt';
+                    registerComboHit(sourcePlayer, target.x, target.y);
+                    spawnText(target.x, target.y - 45, '-' + dmg + ' 🌊⚡', '#00ffff');
+
+                    // Bubbles and sparks on target
+                    spawnParts(target.x, target.y, '#ffffff', 8);
+                    spawnParts(target.x, target.y, '#00ffff', 12);
+
+                    if (target.hp <= 0 && isZombie) {
+                        target.state = 'dead'; target.animTimer = 0; target.deadTimer = 0;
+                        if (pick.active || (userName && userName !== ownerName)) score += (target.pts || 100);
+                        spawnText(target.x, target.y - 65, '+' + (target.pts || 100), '#ffdd44');
+                        if (userName) addCycleScore(userName, target.pts || 100, 'kill');
+                    }
+                }
+                spawnText(startX, startY - 60, '🌊 WATER SHOCK! ⚡', '#00ffff');
+            }
+
+            // 2. THOR STRIKES: Serial hits for all enemies
+            if (hasTarget) {
+                activeThorAttacks.push({
+                    userName: userName,
+                    x: startX,
+                    y: startY,
+                    hitsLeft: 10,
+                    timer: 0,
+                    lastBat: null
+                });
+                spawnText(startX, startY - 40, '⚡⚡ THOR 10x!', '#00ffff');
+            }
+
+            if (typeof sfxSkillActivate === 'function' && _audioStarted) sfxSkillActivate();
+        }
+        // ── Spin Skill Functions ──────────────────────────────────────────────────
+        function activateSpin(userName, direction) {
+            userName = userName.replace(/^@@+/, '@');
+            // Cooldown per direction
+            var cdKey = userName + '_' + direction;
+            if (spinCooldowns[cdKey] && spinCooldowns[cdKey] > 0) return;
+            // Find the player's pick
+            var targetPick = null;
+            if (pick && pick.userName === userName) targetPick = pick;
+            else targetPick = userPicks.find(function (up) { return up.userName === userName; });
+            if (!targetPick) targetPick = pick; // fallback for offline play
+
+            var dir = { x: 0, y: 0 };
+            if (direction === 'right') dir.x = 1;
+            else if (direction === 'left') dir.x = -1;
+            else if (direction === 'down') dir.y = 1;
+            else if (direction === 'up') dir.y = -1;
+            else return;
+
+            // Init queue for this player
+            if (!spinQueues[userName]) spinQueues[userName] = [];
+            // Don't exceed max queue
+            if (spinQueues[userName].length >= SPIN_MAX_QUEUE) return;
+            // Don't queue same direction twice in a row
+            var q = spinQueues[userName];
+            if (q.length > 0 && q[q.length - 1].direction === direction) return;
+
+            spinQueues[userName].push({ direction: direction, dir: dir, pick: targetPick });
+            spinCooldowns[cdKey] = SPIN_COOLDOWN;
+
+            // If no active spin for this player, start immediately
+            if (!activeSpins.some(function (s) { return s.userName === userName; })) {
+                startNextSpin(userName);
+            } else {
+                spawnText(targetPick.x, targetPick.y - 40, '🌀 +' + direction.toUpperCase(), '#cc44ff');
+            }
+        }
+
+        function startNextSpin(userName) {
+            if (!spinQueues[userName] || spinQueues[userName].length === 0) return;
+            var next = spinQueues[userName].shift();
+            var p = next.pick;
+            if (!p) return;
+
+            activeSpins.push({
+                pick: p,
+                userName: userName,
+                direction: next.direction,
+                dir: next.dir,
+                phase: 'charge',
+                timer: SPIN_CHARGE,
+                totalTimer: SPIN_CHARGE,
+                origSpin: p.spin,
+                color: p.color || '#ff44ff'
+            });
+            spawnText(p.x, p.y - 40, '🌀 SPIN ' + next.direction.toUpperCase() + '!', p.color || '#ff44ff');
+            if (_audioStarted) sfxSpinCharge();
+        }
+
+        function updateSpins() {
+            // Decrement cooldowns
+            for (var u in spinCooldowns) {
+                if (spinCooldowns[u] > 0) spinCooldowns[u]--;
+            }
+            for (var i = activeSpins.length - 1; i >= 0; i--) {
+                var s = activeSpins[i];
+                var p = s.pick;
+                if (!p) { activeSpins.splice(i, 1); continue; }
+
+                if (s.phase === 'charge') {
+                    p._spinLock = false;
+                    var chargeProgress = 1 - (s.timer / s.totalTimer);
+                    p.spin = s.origSpin + chargeProgress * 2.5;
+                    p.vx *= 0.85; p.vy *= 0.85;
+                    if (s.timer % 3 === 0) {
+                        var pa = Math.random() * Math.PI * 2;
+                        var pr = 20 + Math.random() * 20;
+                        parts.push({ x: p.x + Math.cos(pa) * pr, y: p.y + Math.sin(pa) * pr, vx: -Math.cos(pa) * 2, vy: -Math.sin(pa) * 2, life: 15, color: s.color, r: 3 + Math.random() * 3 });
+                    }
+                    s.timer--;
+                    if (s.timer <= 0) {
+                        s.phase = 'dash';
+                        s.timer = SPIN_DASH;
+                        p.stuck = false;
+                        p.stuckTimer = 0;
+                        if (_audioStarted) sfxSpinDash();
+                    }
+                } else if (s.phase === 'dash') {
+                    p._spinLock = true;
+                    // Lock rotation to spin direction: right=0, down=PI/2, left=PI, up=-PI/2
+                    var targetAng = Math.atan2(s.dir.y, s.dir.x);
+                    p.ang = targetAng + (s.timer * 0.8); // fast spin around the direction axis
+                    p.spin = 0; // we control ang directly
+                    p.stuck = false;
+                    p.stuckTimer = 0;
+                    var stepX = s.dir.x * SPIN_SPEED;
+                    var stepY = s.dir.y * SPIN_SPEED;
+                    p.x += stepX;
+                    p.y += stepY;
+                    // Lock velocity to spin direction only
+                    p.vx = stepX;
+                    p.vy = stepY;
+                    // Zero out the perpendicular axis so it doesn't drift
+                    if (s.dir.x !== 0) p.vy = 0;
+                    if (s.dir.y !== 0) p.vx = 0;
+                    if (s.dir.y <= 0) p.vy -= GRAVITY;
+                    var bpr = PICK_HALF + 10;
+                    var c0 = Math.floor((p.x - bpr) / TILE), c1 = Math.floor((p.x + bpr) / TILE);
+                    var r0 = Math.floor((p.y - bpr) / TILE), r1 = Math.floor((p.y + bpr) / TILE);
+                    for (var row = r0; row <= r1; row++) {
+                        if (!worldMap[row]) continue;
+                        for (var col = c0; col <= c1; col++) {
+                            if (col < 0 || col >= COLS) continue;
+                            var cell = worldMap[row] ? worldMap[row][col] : null;
+                            if (cell && cell.t !== E && cell.t !== BEDROCK) {
+                                var pPick = p.pickaxe || currentPickaxe;
+                                var dmg = Math.max(3, Math.floor(SPIN_DMG_MULT * (pPick ? pPick.damage : 1)));
+                                hitBlock(col, row, dmg, p);
+                            }
+                        }
+                    }
+                    if (s.timer % 2 === 0) {
+                        // Sparks flying outward
+                        for (var sp = 0; sp < 2; sp++) {
+                            var sparkAng = Math.atan2(s.dir.y, s.dir.x) + Math.PI + (Math.random() - 0.5) * 1.5;
+                            parts.push({
+                                x: p.x + (Math.random() - 0.5) * 16,
+                                y: p.y + (Math.random() - 0.5) * 16,
+                                vx: Math.cos(sparkAng) * (3 + Math.random() * 4),
+                                vy: Math.sin(sparkAng) * (3 + Math.random() * 4),
+                                life: 8 + Math.random() * 6,
+                                color: Math.random() < 0.5 ? '#ffaa00' : s.color,
+                                r: 1.5 + Math.random() * 2
+                            });
+                        }
+                    }
+                    if (p.x < PICK_HALF) { p.x = PICK_HALF; s.timer = 0; }
+                    if (p.x > COLS * TILE - PICK_HALF) { p.x = COLS * TILE - PICK_HALF; s.timer = 0; }
+                    if (p.y < PICK_HALF) { p.y = PICK_HALF; s.timer = 0; }
+                    s.timer--;
+                    if (s.timer <= 0) {
+                        p._spinLock = false;
+                        p._safetyTimer = 45; // safety destruction after dash to avoid getting stuck
+                        p.spin = s.origSpin;
+                        p.vx = s.dir.x * 3; p.vy = s.dir.y * 3;
+                        activeSpins.splice(i, 1);
+                        // Start next queued spin for this player
+                        startNextSpin(s.userName);
+                    }
+                }
+            }
+        }
+
+        function drawSpinAura(p) {
+            var spin = null;
+            for (var i = 0; i < activeSpins.length; i++) {
+                if (activeSpins[i].pick === p) { spin = activeSpins[i]; break; }
+            }
+            if (!spin) return;
+            var sc = spin.color || '#ff44ff';
+            ctx.save();
+            if (spin.phase === 'charge') {
+                var prog = 1 - (spin.timer / spin.totalTimer);
+                var r = 30 + prog * 20;
+                ctx.globalAlpha = 0.3 + prog * 0.4;
+                ctx.strokeStyle = sc;
+                ctx.lineWidth = 2 + prog * 3;
+                if (SHADOW_ENABLED) {
+                    ctx.shadowBlur = 10 + prog * 15;
+                    ctx.shadowColor = sc;
+                }
+                ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+                // Inner spinning ring
+                ctx.globalAlpha = 0.3 + prog * 0.5;
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.5;
+                if (SHADOW_ENABLED) {
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = sc;
+                }
+                var ringAng = Date.now() * 0.015;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, r * 0.6, ringAng, ringAng + Math.PI * 1.2);
+                ctx.stroke();
+                // Bright center glow
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = prog * 0.4;
+                ctx.fillStyle = 'rgba(255,255,255,' + (prog * 0.3) + ')';
+                ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.4, 0, Math.PI * 2); ctx.fill();
+            } else {
+                // Dash: speed lines in player color
+                var trailLen = 45;
+                var perpX = -spin.dir.y, perpY = spin.dir.x;
+                for (var li = 0; li < 5; li++) {
+                    var offset = (li - 2) * 10;
+                    var sx = p.x - spin.dir.x * trailLen + perpX * offset;
+                    var sy = p.y - spin.dir.y * trailLen + perpY * offset;
+                    ctx.globalAlpha = 0.15 + (2 - Math.abs(li - 2)) * 0.1;
+                    ctx.strokeStyle = sc;
+                    ctx.lineWidth = 3 - Math.abs(li - 2) * 0.5;
+                    if (SHADOW_ENABLED) {
+                        ctx.shadowBlur = 6;
+                        ctx.shadowColor = sc;
+                    }
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(p.x + perpX * offset, p.y + perpY * offset);
+                    ctx.stroke();
+                }
+                // Bright glow around pick
+                ctx.shadowBlur = 0;
+                var pulse = 0.7 + Math.sin(spin.timer * 0.6) * 0.3;
+                var gr = 32 * pulse;
+                var grd = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, gr);
+                grd.addColorStop(0, 'rgba(255,255,255,0.25)');
+                grd.addColorStop(0.4, 'rgba(255,255,255,0.12)');
+                grd.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.globalAlpha = 0.7;
+                ctx.fillStyle = grd;
+                ctx.beginPath(); ctx.arc(p.x, p.y, gr, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function spawnRoulette(userName) {
+            var container = document.getElementById('rouletteContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'rouletteContainer';
+                container.style.cssText = 'position: absolute; top: 80px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10000; flex-wrap: wrap; justify-content: center; width: auto; max-width: 90vw;';
+                document.body.appendChild(container);
+            }
+
+            var wheelDiv = document.createElement('div');
+            wheelDiv.style.cssText = 'width: 110px; height: 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; filter: drop-shadow(0 0 10px rgba(0, 242, 234, 0.8));';
+
+            var canvas = document.createElement('canvas');
+            canvas.width = 90;
+            canvas.height = 90;
+            wheelDiv.appendChild(canvas);
+
+            var pointer = document.createElement('div');
+            pointer.style.cssText = 'width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 12px solid #00f2ea; position: absolute; top: 5px; left: 50%; transform: translateX(-50%); z-index: 10; filter: drop-shadow(0 0 5px #00f2ea);';
+            wheelDiv.appendChild(pointer);
+
+            container.appendChild(wheelDiv);
+
+            var ctx = canvas.getContext('2d');
+            var prizes = [
+                { name: '2x', color: 'rgba(0, 242, 234, 0.6)', text: '🪙x2', imgId: null },
+                { name: 'rose', color: 'rgba(123, 97, 255, 0.6)', text: '🌹', imgId: 'imgGiftRose' },
+                { name: 'gg', color: 'rgba(0, 102, 255, 0.6)', text: '🎮', imgId: 'imgGiftGG' },
+                { name: 'donut', color: 'rgba(180, 70, 255, 0.6)', text: '🍩', imgId: 'imgGiftDonut' }
+            ];
+
+            var angle = 0;
+            var speed = 0.2 + Math.random() * 0.2;
+            var deceleration = 0.002;
+            var spinning = true;
+
+            function drawWheel() {
+                ctx.clearRect(0, 0, 90, 90);
+                var arc = Math.PI * 2 / prizes.length;
+                
+                ctx.save();
+                ctx.translate(45, 45);
+                ctx.rotate(angle);
+                
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#00f2ea';
+
+                for (var i = 0; i < prizes.length; i++) {
+                    ctx.beginPath();
+                    ctx.fillStyle = prizes[i].color;
+                    ctx.moveTo(0, 0);
+                    ctx.arc(0, 0, 43, i * arc, (i + 1) * arc);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Draw image or text
+                    ctx.save();
+                    ctx.rotate(i * arc + arc / 2);
+                    
+                    if (prizes[i].imgId) {
+                        var img = document.getElementById(prizes[i].imgId);
+                        if (img && img.src && img.style.display !== 'none') {
+                            // Draw image
+                            ctx.drawImage(img, 20, -10, 20, 20);
+                        } else {
+                            // Fallback to text
+                            ctx.fillStyle = '#000';
+                            ctx.font = 'bold 14px Arial';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(prizes[i].text, 28, 0);
+                        }
+                    } else {
+                        // Text for 2x
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 14px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(prizes[i].text, 28, 0);
+                    }
+                    ctx.restore();
+                }
+                ctx.restore();
+
+                // Draw Avatar in Center
+                var ps = persistentScores[userName];
+                if (ps && ps.avatar) {
+                    var avatarImg = avatarCache[ps.avatar];
+                    if (!avatarImg) {
+                        avatarImg = new Image();
+                        avatarImg.src = ps.avatar;
+                        avatarImg.onload = function() { avatarCache[ps.avatar] = avatarImg; };
+                    }
+                    
+                    if (avatarImg && avatarImg.complete) {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.arc(45, 45, 16, 0, Math.PI * 2);
+                        ctx.clip();
+                        ctx.drawImage(avatarImg, 29, 29, 32, 32);
+                        ctx.restore();
+                        
+                        // Border for avatar
+                        ctx.beginPath();
+                        ctx.arc(45, 45, 16, 0, Math.PI * 2);
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = '#fff';
+                        ctx.stroke();
+                    }
+                }
+
+                // Outer border
+                ctx.beginPath();
+                ctx.arc(45, 45, 43, 0, Math.PI * 2);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+            }
+
+            var lastPrizeIndex = -1;
+
+            function animate() {
+                if (!spinning) return;
+                
+                angle += speed;
+                speed -= deceleration;
+
+                var normalizedAngle = (angle % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+                var localAngle = (Math.PI * 1.5 - normalizedAngle);
+                if (localAngle < 0) localAngle += Math.PI * 2;
+                var arc = Math.PI * 2 / prizes.length;
+                var prizeIndex = Math.floor(localAngle / arc);
+
+                if (prizeIndex !== lastPrizeIndex) {
+                    if (typeof sfxRouletteTick === 'function') sfxRouletteTick();
+                    lastPrizeIndex = prizeIndex;
+                }
+
+                if (speed <= 0) {
+                    spinning = false;
+                    speed = 0;
+                    
+                    var prize = prizes[prizeIndex];
+
+                    setTimeout(function() {
+                        applyPrize(userName, prize.name);
+                        wheelDiv.style.borderColor = '#00ff00';
+                        setTimeout(function() {
+                            wheelDiv.remove();
+                            if (container.children.length === 0) container.remove();
+                        }, 2000);
+                    }, 500);
+                }
+
+                drawWheel();
+                if (spinning) requestAnimationFrame(animate);
+            }
+
+            animate();
+        }
+
+        function applyPrize(userName, prizeName) {
+            if (typeof sfxSkillActivate === 'function' && _audioStarted) sfxSkillActivate();
+            var ps = persistentScores[userName];
+            if (!ps) return;
+
+            var uPick = userPicks.find(function (up) { return up.userName === userName; });
+            var tx = uPick ? uPick.x : canvas.width / 2;
+            var ty = uPick ? uPick.y : camY + 100;
+
+            if (prizeName === '2x') {
+                ps.coins = (ps.coins || 0) + 2;
+                spawnText(tx, ty - 30, '🪙 Ganhou 2 Moedas!', '#ffdd44');
+                updateLeaderboard();
+            } else {
+                var avatar = ps.avatar || '';
+                if (prizeName === 'rose') {
+                    spawnText(tx, ty - 30, '🌹 Ganhou Rosa!', '#ff4466');
+                    processLiveEvent({ type: 'gift', user: userName, avatar: avatar, giftName: 'rose', diamondCount: 1, repeatCount: 1, msgId: 'roulette_' + Date.now(), isRoulette: true });
+                } else if (prizeName === 'gg') {
+                    spawnText(tx, ty - 30, '🎮 Ganhou GG!', '#44ff44');
+                    processLiveEvent({ type: 'gift', user: userName, avatar: avatar, giftName: 'gg', diamondCount: 1, repeatCount: 1, msgId: 'roulette_' + Date.now(), isRoulette: true });
+                } else if (prizeName === 'donut') {
+                    spawnText(tx, ty - 30, '🍩 Ganhou Rosquinha!', '#ff88ff');
+                    processLiveEvent({ type: 'gift', user: userName, avatar: avatar, giftName: 'donut', diamondCount: 1, repeatCount: 1, msgId: 'roulette_' + Date.now(), isRoulette: true });
+                }
+            }
+        }
+
+        function sfxSpinCharge() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            var osc = ac.createOscillator(); var g = ac.createGain();
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(80, t);
+            osc.frequency.exponentialRampToValueAtTime(300, t + 0.45);
+            g.gain.setValueAtTime(0.18, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+            osc.connect(g); g.connect(ac.destination);
+            osc.start(t); osc.stop(t + 0.5);
+        }
+
+        function sfxSpinDash() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            var osc = ac.createOscillator(); var g = ac.createGain();
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(250, t);
+            osc.frequency.exponentialRampToValueAtTime(60, t + 0.35);
+            g.gain.setValueAtTime(0.22, t); g.gain.linearRampToValueAtTime(0, t + 0.45);
+            osc.connect(g); g.connect(ac.destination);
+            osc.start(t); osc.stop(t + 0.45);
+        }
+
+        function sfxRouletteTick() {
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
+            var osc = ac.createOscillator(); var g = ac.createGain();
+            osc.type = 'square'; osc.frequency.setValueAtTime(800, t);
+            g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0, t + 0.05);
+            osc.connect(g); g.connect(ac.destination);
+            osc.start(t); osc.stop(t + 0.05);
+        }
+
+        function getHeartsHtml(health, slots) {
+            var html = '';
+            for (var i = 1; i <= slots; i++) {
+                if (health >= i) {
+                    html += '❤️';
+                } else if (health >= i - 0.5) {
+                    html += '💛';
+                } else {
+                    html += '🖤';
+                }
+            }
+            return '<span style="font-size:12px; letter-spacing:1px;">' + html + '</span>';
+        }
+
+        function updateLeaderboard() {
+            if (_cycleOverlay) return; // Skip update if ranking overlay is active
+
+            for (var i = 0; i < userPicks.length; i++) {
+                userPicks[i].pickaxe = getPickaxeForGifts(userPicks[i].userName);
+            }
+
+            var list = document.getElementById('leaderboardList');
+            if (!list) return;
+
+            try {
+                // Ensure all in-game players are in persistentScores
+                var inGamePlayers = {};
+                if (ownerName && pick.active) {
+                    inGamePlayers[ownerName] = true;
+                    if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, likes: 0, giftsValue: 0, avatar: pick.userAvatarUrl || '', health: 0, slots: INITIAL_HEART_SLOTS };
+                    if (pick.userAvatarUrl && persistentScores[ownerName].avatar !== pick.userAvatarUrl) {
+                        persistentScores[ownerName].avatar = pick.userAvatarUrl;
+                    }
+                }
+                for (var j = 0; j < userPicks.length; j++) {
+                    var uname = userPicks[j].userName;
+                    inGamePlayers[uname] = true;
+                    if (!persistentScores[uname]) persistentScores[uname] = { score: 0, likes: 0, giftsValue: 0, avatar: userPicks[j].userAvatarUrl || '', health: 0, slots: INITIAL_HEART_SLOTS };
+                }
+
+                // Get all players sorted by global score (ignoring skeletons)
+                var allSorted = Object.keys(persistentScores)
+                    .filter(function (name) { return name !== 'Esqueleto Wither'; })
+                    .map(function (name) {
+                        var ps = persistentScores[name];
+                        return {
+                            userName: name, score: ps.score || 0, likes: ps.likes || 0,
+                            giftsValue: ps.giftsValue || 0, coins: ps.coins || 0, avatar: ps.avatar || '',
+                            health: ps.health || 0, slots: ps.slots || INITIAL_HEART_SLOTS,
+                            lastPointLossTime: ps.lastPointLossTime || 0
+                        };
+                    })
+                    .sort(function (a, b) { return b.score - a.score; });
+
+                var globalRankMap = {};
+                allSorted.forEach(function (p, idx) { globalRankMap[p.userName] = idx + 1; });
+
+                var playersInGame = allSorted
+                    .filter(function (p) { return inGamePlayers[p.userName]; })
+                    .map(function (p) {
+                        var pTier = PICKAXES[0];
+                        var extraCount = 0;
+                        var goldTime = 0;
+                        var diamondTime = 0;
+                        var nameLower = p.userName.toLowerCase();
+
+                        if (ownerName && ownerName.toLowerCase() === nameLower) {
+                            pTier = currentPickaxe;
+                            extraCount = pick.extraPicksCount || 0;
+                            goldTime = pick.goldSwordsTimer || 0;
+                            diamondTime = pick.diamondSwordsTimer || 0;
+                            aSwords = pick.activeSwords || [];
+                        } else {
+                            for (var k = 0; k < userPicks.length; k++) {
+                                var up = userPicks[k];
+                                if (up.userName && up.userName.toLowerCase() === nameLower) {
+                                    pTier = up.pickaxe || PICKAXES[0];
+                                    extraCount = up.extraPicksCount || 0;
+                                    goldTime = up.goldSwordsTimer || 0;
+                                    diamondTime = up.diamondSwordsTimer || 0;
+                                    aSwords = up.activeSwords || [];
+                                    break;
+                                }
+                            }
+                        }
+                        var cs = _cycleScores[p.userName] || {};
+                        return {
+                            userName: p.userName, globalRank: globalRankMap[p.userName] || 0,
+                            score: p.score, kills: cs.kills || 0, items: cs.items || 0,
+                            sheep: cs.sheep || 0, pig: cs.pig || 0,
+                            likes: p.likes, giftsValue: p.giftsValue, coins: p.coins || 0, userAvatarUrl: p.avatar, pickaxe: pTier,
+                            extraCount: extraCount, goldTime: goldTime, diamondTime: diamondTime,
+                            aSwords: aSwords, health: p.health, slots: p.slots,
+                            lastPointLossTime: p.lastPointLossTime || 0
+                        };
+                    }).slice(0, 10);
+
+                var rankEmoji = ['🥇', '🥈', '🥉'];
+                var html = '';
+
+                playersInGame.forEach(function (u, i) {
+                    var av = u.userAvatarUrl || '';
+                    var cachedImg = avatarCache[av];
+                    var avSrc = (cachedImg && cachedImg.src && cachedImg.naturalWidth > 0) ? cachedImg.src : av;
+                    var pickColor = u.pickaxe ? u.pickaxe.color : '#c8a464';
+                    var rankLabel = i < 3 ? rankEmoji[i] : '#' + u.globalRank;
+                    var displayName = u.userName.replace(/^@/, '');
+
+                    var stats = '';
+                    if (u.kills > 0) stats += '<img src="slime/Slime.png" style="width:14px;height:14px;vertical-align:middle;">' + u.kills + ' ';
+                    if (u.sheep > 0) stats += '<img src="animais bonus/ovelha/ovo ovelha.png" style="width:14px;height:14px;vertical-align:middle;">' + u.sheep + ' ';
+                    if (u.pig > 0) stats += '<img src="pig/Pig eg.png" style="width:14px;height:14px;vertical-align:middle;">' + u.pig + ' ';
+                    if (u.likes > 0) stats += '❤️' + u.likes + ' ';
+                    if (u.giftsValue > 0) stats += '🎁' + u.giftsValue + ' ';
+
+                    var shadow = i < 3 ? 'box-shadow: inset 0 0 10px rgba(255,215,0,0.2); background: rgba(255,215,0,0.1); border-radius: 8px; padding: 4px;' : '';
+                    var font = i < 3 ? 'text-shadow: 0 0 5px rgba(255,255,255,0.5);' : '';
+
+                    var stroke = 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; ';
+                    var fontBase = 'font-family: \\\'Inter\\\', Arial, sans-serif; ';
+
+                    html += '<div class="lb-item" style="display:flex; align-items:center; gap:6px; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05); ' + shadow + ' ' + font + '">';
+                    html += '  <span style="' + fontBase + ' font-size:12px; width:18px; font-weight:900; color:#aaa; ' + stroke + '">' + rankLabel + '</span>';
+                    html += '  <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">';
+                    html += '    <img src="' + avSrc + '" style="width:20px; height:20px; border-radius:50%; border:1px solid rgba(255,255,255,0.4); box-shadow: 0 0 4px #000;" onerror="this.style.display=\'none\'">';
+                    if (u.coins > 0) {
+                        html += '    <span style="font-size:10px; font-weight:bold; color:#ffdd44; text-shadow: 1px 1px 0 #000;">🪙' + u.coins + '</span>';
+                    }
+                    html += '  </div>';
+                    html += '  <div style="flex:1; display:flex; flex-direction:column; overflow:hidden; line-height:1.1;">';
+                    var hearts = getHeartsHtml(u.health, u.slots);
+                    html += '    <div style="margin-bottom:2px;">' + hearts + '</div>';
+                    html += '    <span style="' + fontBase + ' font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#fff; ' + stroke + '">' + displayName + '</span>';
+                    html += '    <div style="' + fontBase + ' font-size:11px; font-weight:700; opacity:0.9; ' + stroke + '">' + stats + '</div>';
+                    html += '  </div>';
+                    var pImg = u.pickaxe ? u.pickaxe.img : 'pickaxe/wooden_pickaxe.png';
+                    var extraHtml = '';
+                    if (u.extraCount > 0) {
+                        extraHtml += '<img src="' + pImg + '" style="width:12px; height:12px; vertical-align:middle; filter:drop-shadow(0 0 2px #fff);"> <span style="font-size:10px; color:#fff;">x' + u.extraCount + '</span> ';
+                    }
+                    if (u.goldTime > 0) {
+                        var sec = Math.ceil(u.goldTime / 1000);
+                        extraHtml += '<img src="sword/Golden_Sword.png" style="width:12px; height:12px; vertical-align:middle; filter:drop-shadow(0 0 2px #ffd700);"> <span style="font-size:10px; color:#ffd700;">' + sec + 's</span> ';
+                    }
+                    if (u.diamondTime > 0) {
+                        var sec = Math.ceil(u.diamondTime / 1000);
+                        extraHtml += '<img src="sword/Diamond_Sword.png" style="width:12px; height:12px; vertical-align:middle; filter:drop-shadow(0 0 2px #00ffff);"> <span style="font-size:10px; color:#00ffff;">' + sec + 's</span> ';
+                    }
+                    if (u.aSwords && u.aSwords.length > 0) {
+                        u.aSwords.forEach(function (s) {
+                            var sec = Math.ceil(s.timer / 1000);
+                            var sImg = (SWORD_ASSETS[s.type] && SWORD_ASSETS[s.type].src) ? SWORD_ASSETS[s.type].src : 'sword/Wooden_Sword.png';
+                            extraHtml += '<img src="' + sImg + '" style="width:12px; height:12px; vertical-align:middle; filter:drop-shadow(0 0 2px ' + s.color + ');"> <span style="font-size:10px; color:' + s.color + ';">' + sec + 's</span> ';
+                        });
+                    }
+
+                    var isLosing = (Date.now() - u.lastPointLossTime < 1000);
+                    var scoreColor = isLosing ? '#ff4444' : pickColor;
+                    html += '  <div style="text-align:right; min-width:65px;">';
+                    html += '    <span style="' + fontBase + ' font-size:15px; font-weight:900; color:' + scoreColor + '; ' + stroke + '"><img src="' + pImg + '" style="width:18px; height:18px; vertical-align:middle; margin-right:2px; filter: drop-shadow(0 0 2px #000);"> ' + Math.floor(u.score) + '</span>';
+                    if (extraHtml) {
+                        html += '    <div style="' + fontBase + ' font-size:10px; font-weight:800; ' + stroke + '">' + extraHtml + '</div>';
+                    }
+                    html += '  </div>';
+                    html += '</div>';
+                });
+
+                list.innerHTML = html || '<div style="text-align:center; opacity:0.5; font-size:11px;">Aguardando... (uPicks: ' + userPicks.length + ', sorted: ' + allSorted.length + ', inGame: ' + playersInGame.length + ')</div>';
+            } catch (e) {
+                list.innerHTML = '<div style="color:red; font-size:12px;">ERR: ' + e.message + '</div>';
+                console.error("Leaderboard Premium Error:", e);
+            }
+        }
+        setInterval(updateLeaderboard, 1000);
+
+        // Remove inactive players every 30s
+        setInterval(function () {
+            var now = Date.now();
+            for (var i = userPicks.length - 1; i >= 0; i--) {
+                var up = userPicks[i];
+                if (up.isStorm) continue; // storm picks are not real players
+                var last = lastActivity[up.userName] || 0;
+                if (now - last > INACTIVE_MS) {
+                    userPicks.splice(i, 1);
+                }
+            }
+        }, 30000); // atualiza a cada 1s
+
+        // ── UI de Alerta de Presente (Global Banner) ─────────────────────────
+        function showGiftAlert(userName, userAvatar, giftName, giftImgUrl, rewardInfo) {
+            var resultingPickaxe = rewardInfo;
+            var container = document.getElementById('giftAlertContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'giftAlertContainer';
+                container.style.position = 'absolute';
+                container.style.top = '50%';
+                container.style.left = '50%';
+                container.style.transform = 'translate(-50%, -50%)';
+                container.style.display = 'flex';
+                container.style.flexDirection = 'column';
+                container.style.gap = '10px';
+                container.style.zIndex = '1000';
+                container.style.pointerEvents = 'none';
+                document.body.appendChild(container);
+            }
+
+            var alertEl = document.createElement('div');
+            alertEl.style.background = 'linear-gradient(135deg, rgba(20,20,30,0.5) 0%, rgba(40,15,30,0.5) 100%)';
+            alertEl.style.border = '1px solid rgba(255, 68, 136, 0.4)';
+            alertEl.style.borderRadius = '50px';
+            alertEl.style.padding = '8px 24px 8px 8px';
+            alertEl.style.display = 'flex';
+            alertEl.style.alignItems = 'center';
+            alertEl.style.gap = '12px';
+            alertEl.style.color = '#fff';
+            alertEl.style.fontFamily = "'Inter', Arial, sans-serif";
+            alertEl.style.fontSize = '17px';
+            alertEl.style.fontWeight = '800';
+            alertEl.style.textShadow = '0 2px 4px rgba(0,0,0,0.8)';
+            alertEl.style.boxShadow = '0 0 15px rgba(255, 68, 136, 0.3), inset 0 0 8px rgba(255, 68, 136, 0.1)';
+            alertEl.style.animation = 'slideInDown 0.4s ease-out forwards, giftPulse 2s infinite ease-in-out 0.4s';
+            alertEl.style.transition = 'transform 0.2s';
+            alertEl.style.backdropFilter = 'blur(4px)'; // Adds a premium glassmorphism effect without heavy cost if small
+
+            var defAvatar = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="%23ccc"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
+            var defGift = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="%23ffaa00"><path d="M20 6h-2.18c.11-.31.18-.65.18-1 0-1.66-1.34-3-3-3-1.05 0-1.96.54-2.5 1.35l-.5.67-.5-.68C10.96 2.54 10.05 2 9 2 7.34 2 6 3.34 6 5c0 .35.07.69.18 1H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-5-2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zM9 4c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm11 15H4v-2h16v2zm0-5H4V8h5.08L7 10.83 8.62 12 11 8.76l1-1.36 1 1.36L15.38 12 17 10.83 14.92 8H20v6z"/></svg>';
+
+            var av = document.createElement('img');
+            av.src = getProxyUrl(userAvatar) || defAvatar;
+            av.style.width = '40px';
+            av.style.height = '40px';
+            av.style.borderRadius = '50%';
+            av.style.objectFit = 'cover';
+            av.style.border = '2px solid #fff';
+
+            var textWrap = document.createElement('div');
+            textWrap.innerHTML = '<span style="color:#ffdd44;">' + userName + '</span> enviou <span style="color:#00ffff;">' + giftName.toUpperCase() + '</span>!';
+
+            var giftImg = document.createElement('img');
+            if (giftImgUrl && !giftImgUrl.endsWith('/')) {
+                giftImg.src = getProxyUrl(giftImgUrl);
+            } else {
+                giftImg.src = defGift;
+            }
+            giftImg.style.width = '40px';
+            giftImg.style.height = '40px';
+            giftImg.style.objectFit = 'contain';
+
+            alertEl.appendChild(av);
+            alertEl.appendChild(textWrap);
+            alertEl.appendChild(giftImg);
+
+            if (rewardInfo) {
+                var separator = document.createElement('span');
+                separator.innerText = '➔';
+                separator.style.fontSize = '20px';
+                separator.style.color = '#fff';
+                separator.style.margin = '0 4px';
+                alertEl.appendChild(separator);
+
+                if (rewardInfo.img) {
+                    var rImg = document.createElement('img');
+                    rImg.src = rewardInfo.img;
+                    rImg.style.width = '32px';
+                    rImg.style.height = '32px';
+                    rImg.style.objectFit = 'contain';
+                    rImg.style.verticalAlign = 'middle';
+                    alertEl.appendChild(rImg);
+                }
+
+                if (rewardInfo.qty) {
+                    var rQty = document.createElement('span');
+                    rQty.innerText = ' x ' + rewardInfo.qty;
+                    rQty.style.fontSize = '20px';
+                    rQty.style.fontWeight = '900';
+                    alertEl.appendChild(rQty);
+                }
+
+                if (rewardInfo.symbol) {
+                    var rSym = document.createElement('span');
+                    rSym.innerText = ' ' + rewardInfo.symbol + ' ';
+                    rSym.style.fontSize = '20px';
+                    rSym.style.fontWeight = '900';
+                    alertEl.appendChild(rSym);
+                }
+
+                if (rewardInfo.img2) {
+                    var rImg2 = document.createElement('img');
+                    rImg2.src = rewardInfo.img2;
+                    rImg2.style.width = '32px';
+                    rImg2.style.height = '32px';
+                    rImg2.style.objectFit = 'contain';
+                    rImg2.style.verticalAlign = 'middle';
+                    alertEl.appendChild(rImg2);
+                }
+            } else if (resultingPickaxe && resultingPickaxe.img) {
+                var eq = document.createElement('span');
+                eq.innerText = '=';
+                eq.style.fontSize = '24px';
+                eq.style.color = '#fff';
+                eq.style.margin = '0 4px';
+
+                var pickImg = document.createElement('img');
+                pickImg.src = resultingPickaxe.img;
+                pickImg.style.width = '40px';
+                pickImg.style.height = '40px';
+                pickImg.style.objectFit = 'contain';
+
+                alertEl.appendChild(eq);
+                alertEl.appendChild(pickImg);
+            }
+
+            container.appendChild(alertEl);
+
+            setTimeout(function () {
+                alertEl.style.animation = 'slideOutUp 0.3s ease-in forwards';
+                setTimeout(function () { alertEl.remove(); }, 300);
+            }, 2500);
+        }
+
+        // ── Eventos do Botrix (follow, superchat, member, gift) ──
+        function triggerBotrixEvent(type, name, avatar) {
+            var refP = (pick.active) ? pick : (camTarget || pick);
+            var cx = refP.x;
+            var cy = refP.y;
+            var config = {
+                follow: { icon: '⭐', title: 'NEW FOLLOWER!', color: '#44ff88', pts: 20, dur: 150 },
+                superchat: { icon: '💎', title: 'SUPER CHAT!', color: '#ffdd44', pts: 100, dur: 200 },
+                subscribe: { icon: '⚡', title: 'NEW SUBSCRIBER!', color: '#00ffff', pts: 150, dur: 220 },
+                member: { icon: '👑', title: 'WELCOME BACK!', color: '#ff44ff', pts: 50, dur: 180 },
+                gift: { icon: '🎁', title: 'GIFTED MEMBERSHIP!', color: '#44ddff', pts: 80, dur: 200 }
+            };
+            var cfg = config[type];
+            if (!cfg) return;
+
+            if (!avatar) {
+                var up = userPicks.find(function (u) { return u.userName === name; });
+                if (up && up.avatarUrl) { avatar = up.avatarUrl; }
+                if (!avatar && persistentScores[name] && persistentScores[name].avatar) {
+                    avatar = persistentScores[name].avatar;
+                }
+                if (!avatar && rankingData.length > 0) {
+                    var rk = rankingData.find(function (r) { return r.user === name || r.user === '@' + name; });
+                    if (rk && rk.avatarUrl) avatar = rk.avatarUrl;
+                }
+            }
+            var avatarHtml = '';
+            if (avatar) {
+                avatarHtml = '<img class="announce-avatar" src="' + avatar + '" style="border-color:' + cfg.color + ';box-shadow:0 0 12px ' + cfg.color + '" />';
+            } else {
+                avatarHtml = '<div class="announce-avatar-placeholder" style="border-color:' + cfg.color + ';box-shadow:0 0 12px ' + cfg.color + '">' + cfg.icon + '</div>';
+            }
+
+            var overlay = document.getElementById('announceOverlay');
+            var card = document.createElement('div');
+            card.className = 'announce-card';
+            card.style.border = '2px solid ' + cfg.color;
+            card.style.boxShadow = '0 0 30px ' + cfg.color + ', inset 0 0 20px rgba(0,0,0,0.3)';
+            card.innerHTML =
+                avatarHtml +
+                '<div class="announce-title" style="color:' + cfg.color + ';text-shadow:0 0 12px ' + cfg.color + '">' + cfg.title + '</div>' +
+                '<div class="announce-name">' + name + '</div>' +
+                '<div class="announce-pts" style="color:' + cfg.color + '">+' + cfg.pts + ' pts</div>';
+            overlay.appendChild(card);
+
+            var displayMs = cfg.dur * 16.67;
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 500);
+            }, displayMs);
+
+            if (pick.active) { score += cfg.pts; }
+            spawnText(cx, cy + 15, '+' + cfg.pts, cfg.color);
+            if (_audioStarted) sfxSkillActivate();
+
+            var confettiColors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff', '#ff8800', '#ffffff'];
+            for (var ci = 0; ci < 40; ci++) {
+                parts.push({
+                    x: cx + (Math.random() - 0.5) * canvas.width * 0.8,
+                    y: cy - 200 - Math.random() * 300,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: 1 + Math.random() * 3,
+                    life: 1, dec: 0.005 + Math.random() * 0.005,
+                    r: 3 + Math.random() * 4,
+                    c: confettiColors[Math.floor(Math.random() * confettiColors.length)]
+                });
+            }
+        }
+
+        async function generateScoreReport() {
+            console.log('Generating Score Report...');
+            var now = new Date();
+            var dateStr = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+            spawnText(canvas.width / 2, camY + canvas.height / 2, '📦 PREPARING REPORT...', '#00ff88');
+
+            function getLeaderboardSrc(url) {
+                if (!url) return 'pickaxe/default_avatar.png';
+                var cached = avatarCache[url];
+                if (cached && cached.src && cached.naturalWidth > 0) return cached.src;
+                return url;
+            }
+
+            var hostUser = ownerName || ('@' + (localStorage.getItem('pd_tiktok_username') || '').toLowerCase());
+            var hAvUrl = (persistentScores[hostUser] && persistentScores[hostUser].avatar) ? persistentScores[hostUser].avatar : 'pickaxe/default_avatar.png';
+            const hostAvatarSrc = getLeaderboardSrc(hAvUrl);
+
+            var players = Object.keys(persistentScores).map(function (n) {
+                var p = persistentScores[n];
+                return { name: n, score: p.score || 0, likes: p.likes || 0, gifts: p.giftsValue || 0, avatar: p.avatar };
+            }).filter(function (p) {
+                return p.name.toLowerCase() !== hostUser.toLowerCase();
+            }).sort(function (a, b) { return b.score - a.score; }).slice(0, 10);
+
+            if (players.length === 0) {
+                alert('Nenhum jogador encontrado para o relatório.');
+                return;
+            }
+
+            var playersHTML = players.map(function (p, idx) {
+                var medal = (idx === 0) ? 'gold' : (idx === 1 ? 'silver' : (idx === 2 ? 'bronze' : ''));
+                var stats = [];
+                if (p.likes > 0) stats.push('❤️' + p.likes);
+                if (p.gifts > 0) stats.push('🎁' + p.gifts);
+                var displaySrc = getLeaderboardSrc(p.avatar || 'pickaxe/default_avatar.png');
+                return `
+                <div class="item">
+                    <div class="rank ${medal}">${idx < 3 ? '' : '#' + (idx + 1)}</div>
+                    <img class="avatar" src="${displaySrc}" onerror="this.src='pickaxe/default_avatar.png'">
+                    <div class="info">
+                        <div class="name">${p.name.replace(/^@/, '')}</div>
+                        <div class="stats">${stats.join(' • ')}</div>
+                    </div>
+                    <div class="score">${Math.floor(p.score)}</div>
+                </div>`;
+            }).join('');
+
+            var assetPaths = ['block/creeper.png', 'block/tnt.png', 'item/diamond.png', 'pickaxe/diamond_pickaxe.png', 'slime/Slime.png'];
+            var decoHTML = '';
+            for (var i = 0; i < 30; i++) {
+                var path = assetPaths[Math.floor(Math.random() * assetPaths.length)];
+                var t = Math.random() * 100, l = Math.random() * 100, s = 80 + Math.random() * 150, r = Math.random() * 360, o = 0.05 + Math.random() * 0.1;
+                decoHTML += `<img src="${path}" class="deco" style="top:${t}%; left:${l}%; width:${s}px; transform:rotate(${r}deg); opacity:${o};" onerror="this.style.display='none'">`;
+            }
+
+            var htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ranking Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body { background: #000; margin: 0; padding: 0; width: 1080px; height: 1920px; font-family: 'Inter', sans-serif; overflow: hidden; color: #fff; }
+        .container { width: 1080px; height: 1920px; background: linear-gradient(180deg, #0a0a1a 0%, #050510 100%); position: relative; padding: 60px 40px; display: flex; flex-direction: column; overflow: hidden; }
+        .deco { position: absolute; pointer-events: none; z-index: 1; }
+        .content { position: relative; z-index: 10; display: flex; flex-direction: column; height: 100%; width: 100%; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { font-size: 100px; font-weight: 900; margin: 0; color: #00ff88; text-transform: uppercase; letter-spacing: -2px; }
+        .header p { font-size: 32px; opacity: 0.5; margin: 5px 0 0; font-weight: 700; }
+        .list { flex: 1; display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; }
+        .item { display: flex; align-items: center; background: rgba(255,255,255,0.04); padding: 15px 25px; border-radius: 25px; border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(10px); height: 105px; }
+        .rank { font-size: 32px; font-weight: 900; color: #555; width: 60px; text-align: center; }
+        .rank.gold { color: #ffd700; font-size: 45px; } .rank.gold::after { content: '🥇'; }
+        .rank.silver { color: #ccc; font-size: 40px; } .rank.silver::after { content: '🥈'; }
+        .rank.bronze { color: #cd7f32; font-size: 40px; } .rank.bronze::after { content: '🥉'; }
+        .avatar { width: 75px; height: 75px; border-radius: 18px; margin: 0 20px; object-fit: cover; border: 2px solid rgba(255,255,255,0.2); background: #111; }
+        .info { flex: 1; min-width: 0; }
+        .name { font-weight: 900; font-size: 34px; margin-bottom: 0px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stats { font-size: 20px; opacity: 0.7; font-weight: 700; color: #00ff88; }
+        .score { text-align: right; font-weight: 900; color: #ffd700; font-size: 38px; margin-left: 20px; }
+        .thanks { background: linear-gradient(135deg, rgba(0,255,136,0.1) 0%, rgba(0,255,136,0.02) 100%); border-radius: 35px; border: 2px solid rgba(0,255,136,0.2); padding: 25px; text-align: center; backdrop-filter: blur(5px); }
+        .host-av { width: 130px; height: 130px; border-radius: 50%; border: 6px solid #00ff88; margin-bottom: 15px; object-fit: cover; box-shadow: 0 0 30px rgba(0,255,136,0.4); background: #111; }
+        .thanks h2 { font-size: 44px; font-weight: 900; margin: 0; color: #fff; }
+        .thanks p { font-size: 26px; opacity: 0.8; margin: 5px 0 0; line-height: 1.2; }
+        .footer { text-align: center; margin-top: 30px; font-size: 20px; opacity: 0.2; font-weight: 900; letter-spacing: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        ${decoHTML}
+        <div class="content">
+            <div class="header">
+                <h1>TOP RANKING</h1>
+                <p>PICKAXE DROP • ${dateStr}</p>
+            </div>
+            <div class="list">${playersHTML}</div>
+            <div class="thanks">
+                <img src="${hostAvatarSrc}" class="host-av" onerror="this.src='pickaxe/default_avatar.png'">
+                <h2>THANK YOU ALL!</h2>
+                <p>Thanks for participating in our stream!<br>Follow us for the next match!</p>
+            </div>
+            <div class="footer">GENERATED BY PICKAXE DROP SERVER</div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+            var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'ranking_' + now.getTime() + '.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            spawnText(canvas.width / 2, camY + canvas.height / 2, '✅ REPORT GENERATED!', '#00ff88');
+        }
+
+        async function generateCommemorativeImage() {
+            var players = Object.keys(_cycleScores).map(function (n) {
+                var cs = _cycleScores[n];
+                var av = cs.avatar || (persistentScores[n] ? persistentScores[n].avatar : '');
+                var giftsTotal = (persistentScores[n] && persistentScores[n].giftsValue !== undefined) ? persistentScores[n].giftsValue : 0;
+                return { name: n, score: cs.score || 0, kills: cs.kills || 0, items: cs.items || 0, balls: cs.balls || 0, likes: cs.likes || 0, giftsValue: giftsTotal, userAvatarUrl: av };
+            }).sort(function (a, b) { return b.score - a.score; });
+
+            if (players.length === 0) {
+                // Fallback to general ranking if match ranking is empty
+                players = Object.keys(persistentScores).map(function (n) {
+                    var ps = persistentScores[n];
+                    return { name: n, score: ps.score || 0, kills: ps.kills || 0, items: 0, balls: 0, likes: ps.likes || 0, giftsValue: ps.giftsValue || 0, userAvatarUrl: ps.avatar };
+                }).sort(function (a, b) { return b.score - a.score; });
+            }
+
+            if (players.length === 0) {
+                alert('Nenhum dado de ranking disponível.');
+                return;
+            }
+
+            spawnText(canvas.width / 2, camY + canvas.height / 2, '🎨 GERANDO IMAGEM...', '#00ff88');
+
+            const W = 1080, H = 1920;
+            const c = document.createElement('canvas');
+            c.width = W; c.height = H;
+            const x = c.getContext('2d');
+
+            // 1. Background Gradient
+            var grad = x.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W);
+            grad.addColorStop(0, '#1a1a3a');
+            grad.addColorStop(1, '#050510');
+            x.fillStyle = grad;
+            x.fillRect(0, 0, W, H);
+
+            // 2. Subtle Grid/Pattern
+            x.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            x.lineWidth = 1;
+            for (var i = 0; i < W; i += 60) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, H); x.stroke(); }
+            for (var i = 0; i < H; i += 60) { x.beginPath(); x.moveTo(0, i); x.lineTo(W, i); x.stroke(); }
+
+            // 3. Title
+            x.textAlign = 'center';
+            x.fillStyle = '#fff';
+            x.font = '900 80px Inter, Arial';
+            x.shadowColor = '#ffd700';
+            x.shadowBlur = 20;
+            x.fillText('PICKAXE DROP', W / 2, 180);
+
+            x.shadowBlur = 0;
+            x.font = '800 40px Inter, Arial';
+            x.fillStyle = '#ffd700';
+            x.fillText('RANKING DA PARTIDA', W / 2, 250);
+
+            // 4. Draw Podium (Top 3)
+            const top3 = players.slice(0, 3);
+            const podiumPositions = [
+                { x: W / 2, y: 700, scale: 1.4, color: '#ffd700', label: '1º', medal: '🥇' }, // 1st
+                { x: W / 2 - 320, y: 850, scale: 1.1, color: '#c0c0c0', label: '2º', medal: '🥈' }, // 2nd
+                { x: W / 2 + 320, y: 880, scale: 1.0, color: '#cd7f32', label: '3º', medal: '🥉' }  // 3rd
+            ];
+
+            // Helper to resolve image with CORS support
+            async function resolveAvatarImage(url) {
+                const rawUrl = url || 'pickaxe/default_avatar.png';
+                return new Promise((resolve) => {
+                    // 1. Check data cache
+                    if (_avatarDataCache[rawUrl]) {
+                        const img = new Image();
+                        img.onload = () => resolve(img);
+                        img.onerror = () => resolve(null);
+                        img.src = _avatarDataCache[rawUrl];
+                        return;
+                    }
+                    // 2. Check if already data URL
+                    if (rawUrl.startsWith('data:')) {
+                        const img = new Image();
+                        img.onload = () => resolve(img);
+                        img.onerror = () => resolve(null);
+                        img.src = rawUrl;
+                        return;
+                    }
+                    // 3. Check avatarCache for safe sources
+                    if (avatarCache[rawUrl] && avatarCache[rawUrl].complete && avatarCache[rawUrl].naturalWidth > 0) {
+                        const cached = avatarCache[rawUrl];
+                        if (cached.src.startsWith('data:') || cached.src.startsWith('blob:') || !cached.src.startsWith('http')) {
+                            return resolve(cached);
+                        }
+                    }
+                    // 4. Local files
+                    if (!rawUrl.startsWith('http')) {
+                        const img = new Image();
+                        img.onload = () => resolve(img);
+                        img.onerror = () => resolve(null);
+                        img.src = rawUrl;
+                        return;
+                    }
+                    // 5. Proxy external
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.onload = () => resolve(img);
+                    img.onerror = () => resolve(null);
+                    img.src = '/proxy-image?url=' + encodeURIComponent(rawUrl);
+                });
+            }
+
+            // Reorder for drawing (3rd, 2nd, then 1st on top)
+            const drawOrder = [2, 1, 0];
+
+            for (let idx of drawOrder) {
+                const p = top3[idx];
+                if (!p) continue;
+                const pos = podiumPositions[idx];
+
+                // Base / Glow
+                var pGrad = x.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 250 * pos.scale);
+                pGrad.addColorStop(0, pos.color + '33');
+                pGrad.addColorStop(1, 'transparent');
+                x.fillStyle = pGrad;
+                x.beginPath(); x.arc(pos.x, pos.y, 250 * pos.scale, 0, Math.PI * 2); x.fill();
+
+                // Avatar
+                const avSize = 180 * pos.scale;
+                x.save();
+                x.beginPath(); x.arc(pos.x, pos.y - 100, avSize / 2, 0, Math.PI * 2); x.clip();
+
+                try {
+                    const avImg = await resolveAvatarImage(p.userAvatarUrl);
+                    if (avImg) {
+                        x.drawImage(avImg, pos.x - avSize / 2, pos.y - 100 - avSize / 2, avSize, avSize);
+                    } else {
+                        x.fillStyle = '#333'; x.fillRect(pos.x - avSize / 2, pos.y - 100 - avSize / 2, avSize, avSize);
+                        x.fillStyle = '#fff'; x.font = '60px Arial'; x.textAlign = 'center'; x.fillText('👤', pos.x, pos.y - 80);
+                    }
+                } catch (e) { console.error(e); }
+                x.restore();
+
+                // Avatar Border
+                x.strokeStyle = pos.color;
+                x.lineWidth = 10;
+                x.beginPath(); x.arc(pos.x, pos.y - 100, avSize / 2, 0, Math.PI * 2); x.stroke();
+
+                // Medal
+                x.font = '80px Arial';
+                x.textAlign = 'center';
+                x.fillText(pos.medal, pos.x + avSize / 2.5, pos.y - 100 + avSize / 3);
+
+                // Name & Score
+                x.fillStyle = '#fff';
+                x.font = '900 ' + (45 * pos.scale) + 'px Inter, Arial';
+                x.fillText(p.name.replace(/^@/, '').toUpperCase(), pos.x, pos.y + 60);
+
+                x.fillStyle = pos.color;
+                x.font = '800 ' + (35 * pos.scale) + 'px Inter, Arial';
+                x.fillText(Math.floor(p.score) + ' PTS', pos.x, pos.y + 110);
+            }
+
+            // 5. Divider
+            x.strokeStyle = 'rgba(255,255,255,0.1)';
+            x.lineWidth = 2;
+            x.beginPath(); x.moveTo(100, 1050); x.lineTo(W - 100, 1050); x.stroke();
+
+            // 6. List Top 10 (from 4th to 10th or just top 10 if match is small)
+            x.textAlign = 'left';
+            x.fillStyle = 'rgba(255,255,255,0.6)';
+            x.font = '800 30px Inter, Arial';
+            x.fillText('TOP GERAL DA RODADA', 120, 1110);
+
+            const listPlayers = players.slice(3, 11);
+            let curY = 1180;
+            for (let i = 0; i < listPlayers.length; i++) {
+                const p = listPlayers[i];
+                const rank = i + 4;
+                x.fillStyle = 'rgba(255,255,255,0.1)';
+                x.beginPath(); x.roundRect(100, curY - 45, W - 200, 70, 15); x.fill();
+
+                x.fillStyle = '#aaa';
+                x.font = '900 35px Inter, Arial';
+                x.fillText('#' + rank, 130, curY);
+
+                // Avatar in list
+                const listAvImg = await resolveAvatarImage(p.userAvatarUrl);
+                if (listAvImg) {
+                    x.save();
+                    x.beginPath(); x.roundRect(200, curY - 35, 50, 50, 12); x.clip();
+                    x.drawImage(listAvImg, 200, curY - 35, 50, 50);
+                    x.restore();
+                    x.strokeStyle = 'rgba(255,255,255,0.2)';
+                    x.lineWidth = 2;
+                    x.beginPath(); x.roundRect(200, curY - 35, 50, 50, 12); x.stroke();
+                }
+
+                x.fillStyle = '#fff';
+                x.font = '800 35px Inter, Arial';
+                x.fillText(p.name.replace(/^@/, ''), listAvImg ? 270 : 220, curY);
+
+                x.textAlign = 'right';
+                x.fillStyle = '#ffd700';
+                x.fillText(Math.floor(p.score) + ' PTS', W - 130, curY);
+                x.textAlign = 'left';
+
+                curY += 85;
+            }
+
+            // 7. Footer
+            x.textAlign = 'center';
+            x.fillStyle = 'rgba(255,255,255,0.3)';
+            x.font = '700 25px Inter, Arial';
+            var now = new Date();
+            var dateStr = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            x.fillText('GERADO EM: ' + dateStr, W / 2, H - 100);
+
+            if (ownerName) {
+                x.fillStyle = '#00f2ea';
+                x.font = '800 30px Inter, Arial';
+                x.fillText('LIVE DE ' + ownerName.toUpperCase(), W / 2, H - 150);
+            }
+
+            // 8. Auto-save to Server & Local Download
+            try {
+                const dataUrl = c.toDataURL('image/png');
+                const fname = 'ranking_partida_' + now.getTime() + '.png';
+
+                // Local download (optional, but kept for insurance)
+                const link = document.getElementById('downloadLink');
+                link.href = dataUrl;
+                link.download = fname;
+                link.click();
+
+                // Server-side save (The "Automatic" way)
+                saveRankingToServer(dataUrl, fname);
+
+                spawnText(canvas.width / 2, camY + canvas.height / 2, '✅ IMAGEM SALVA!', '#00ff88');
+            } catch (e) {
+                console.error('Erro ao exportar imagem:', e);
+                alert('Erro ao exportar imagem. Tente novamente.');
+            }
+        }
+
+        function saveRankingToServer(dataUrl, filename) {
+            fetch('/save-ranking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: dataUrl, filename: filename })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    console.log('Ranking saved to server:', data.path);
+                })
+                .catch(err => {
+                    console.error('Failed to save ranking to server:', err);
+                });
+        }
+
+
+        // ── Zerar todas as pontuações ──
+        function resetAllScores() {
+            if (!confirm('Tem certeza que deseja ZERAR todas as ponões?\n\nEsta ação nãser desfeita.')) return;
+
+            persistentScores = {};
+            _cycleScores = {};
+            localStorage.removeItem('pd_cycle_scores');
+
+            // Força atualização do leaderboard
+            updateLeaderboard();
+
+            spawnText(canvas.width / 2, canvas.height / 2, '🔄 PONTUAÇÕES ZERADAS!', '#ff4444');
+        }
+
+        // ── Inicialização dos controles de UI ───────────────────────────────────────
+        (function initUIControls() {
+            var btn = document.getElementById('btnMusic');
+            var input = document.getElementById('bgmFileInput');
+            if (!btn || !input) return;
+            btn.addEventListener('click', function () {
+                if (customBGM && customBGM.src) {
+                    toggleCustomBGM();
+                    btn.textContent = customBGMPlaying ? '🎵 Trilha' : '⏸️ Pausa';
+                } else {
+                    input.click();
+                }
+            });
+            input.addEventListener('change', function () {
+                handleBGMUpload(this);
+            });
+        })();
+
+        // ── TTS Manager ──────────────────────────────────────────────────────
+        var _ttsEnabled = false;
+        var _ttsQueue = [];
+        var _isSpeaking = false;
+
+        // Configuração de anúncios periódicos
+        var TTS_ANNOUNCEMENTS = [
+            {
+                id: 'rules',
+                text: "Attention miners! The rules of Pickaxe Drop are simple: 1. Join the mess! 2. Use commands like 's u' to scroll up or 's r' to give that push to the right! 3. The goal is to fall with style and collect the maximum points. 4. Want to cause chaos? Send gifts to release legendary pickaxes and explosive powers! Have fun!",
+                intervalMin: 5,
+                lastSent: Date.now()
+            },
+            {
+                id: 'commands',
+                text: "Time to release the chaos! Did you know you have free powers? Use 'tnt' for a small explosion or 'mega' for a respectable bang! Invoke the fury with 'thor' or clear the map with 'nuke'! Want company? Use 'clone' to create helpers or 'p.p' to jump very high through the map! If you want to disappear with everything, the 'bh' creates a black hole, and the 'big' makes you giant to crush the blocks! Try it now!",
+                intervalMin: 8,
+                lastSent: Date.now()
+            },
+            {
+                id: 'taptap',
+                text: "Did you know that your 'tap tap' on the screen has explosive power? Each like launches a heart with the force of a TNT! It's infinite, free, and helps to collect many points quickly. Release your finger on the like and spread this bombastic love!",
+                intervalMin: 6,
+                lastSent: Date.now()
+            },
+            {
+                id: 'gifts',
+                text: "Want to level up? Gifts unlock incredible abilities! The 'Rose' brings 10 TNTs and pickaxe upgrade, 'GG' guarantees 20 TNTs, 'Creeper' invokes 10 explosives, and 'Heart Me' launches 30 bombastic hearts! All this with an upgrade to your pickaxe. It costs you nothing, and it could be everything for our game! Try sending one now!",
+                intervalMin: 10,
+                lastSent: Date.now()
+            }
+        ];
+
+        function toggleTTS(enabled) {
+            _ttsEnabled = enabled;
+            localStorage.setItem('pd_tts_enabled', enabled);
+            if (enabled) {
+                speakTTS('Chat voice activated');
+            } else {
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                _ttsQueue = [];
+                _isSpeaking = false;
+            }
+        }
+
+        var _ttsMode = 'browser';
+        var _ttsVoice = 'en-US-GuyNeural';
+
+        function saveTTSSettings() {
+            _ttsMode = document.getElementById('ttsMode').value;
+            _ttsVoice = document.getElementById('ttsVoice').value;
+            localStorage.setItem('pd_tts_mode', _ttsMode);
+            localStorage.setItem('pd_tts_voice', _ttsVoice);
+            document.getElementById('ttsVoice').style.display = (_ttsMode === 'tiktok' ? 'block' : 'none');
+        }
+
+        function speakTTS(text, customVoice) {
+            if (!_ttsEnabled) return;
+            // Se for modo nativo, verifica suporte
+            if (_ttsMode === 'browser' && !window.speechSynthesis) return;
+
+            _ttsQueue.push({ text: text, voice: customVoice || _ttsVoice });
+            if (!_isSpeaking) processTTSQueue();
+        }
+
+        function processTTSQueue() {
+            if (_ttsQueue.length === 0) { _isSpeaking = false; return; }
+            _isSpeaking = true;
+            var item = _ttsQueue.shift();
+            var text = item.text;
+            var voice = item.voice;
+
+            if (_ttsMode === 'tiktok') {
+                var audio = new Audio('/tts?text=' + encodeURIComponent(text) + '&voice=' + voice);
+                audio.onended = function () {
+                    setTimeout(processTTSQueue, 300);
+                };
+                audio.onerror = function () {
+                    console.error('TikTok TTS Error');
+                    _isSpeaking = false;
+                    processTTSQueue();
+                };
+                audio.play().catch(function (e) {
+                    console.error('TTS Play Blocked/Error:', e);
+                    _isSpeaking = false;
+                    processTTSQueue();
+                });
+            } else {
+                var utterance = new SpeechSynthesisUtterance(text);
+                var voices = window.speechSynthesis.getVoices();
+                var selectedVoice;
+
+                if (voice && voice.startsWith('pt-BR')) {
+                    selectedVoice = voices.find(function (v) { return v.lang.includes('pt-BR'); });
+                } else {
+                    selectedVoice = voices.find(function (v) { return v.lang.includes('en-US') && v.name.includes('Google'); }) ||
+                        voices.find(function (v) { return v.lang.includes('en-US'); }) ||
+                        voices.find(function (v) { return v.lang.includes('en'); });
+                }
+
+                if (selectedVoice) utterance.voice = selectedVoice;
+                utterance.rate = 1.1;
+                utterance.pitch = 1.0;
+
+                utterance.onend = function () {
+                    setTimeout(processTTSQueue, 200);
+                };
+                utterance.onerror = function () {
+                    _isSpeaking = false;
+                    processTTSQueue();
+                };
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        var _announcementMode = 'tts';
+        var _mp3Playlist = [];
+        var _mp3Index = 0;
+        var _lastMp3Time = 0;
+        var MP3_INTERVAL = 120000; // 2 minutos em ms
+
+        function saveAnnouncementSettings() {
+            _announcementMode = document.getElementById('announcementMode').value;
+            localStorage.setItem('pd_announcement_mode', _announcementMode);
+            if (_announcementMode === 'mp3') loadMp3Announcements();
+            spawnText(canvas.width / 2, camY + 100, 'MODO: ' + _announcementMode.toUpperCase(), '#00ffff');
+        }
+
+        function loadMp3Announcements() {
+            fetch('/messages-list').then(r => r.json()).then(data => {
+                _mp3Playlist = data.files || [];
+                console.log('MP3 Messages loaded:', _mp3Playlist.length);
+            }).catch(e => console.error('Error loading MP3 messages:', e));
+        }
+
+        function playMp3Announcement(url) {
+            if (_isSpeaking) return;
+            _isSpeaking = true;
+            var audio = new Audio(url);
+            audio.onended = function () { _isSpeaking = false; };
+            audio.onerror = function () { _isSpeaking = false; };
+            audio.play().catch(function (e) { console.error('MP3 Play error:', e); _isSpeaking = false; });
+        }
+
+        // Verifica anúncios periódicos a cada 10 segundos
+        setInterval(function () {
+            if (!_ttsEnabled) return;
+            var now = Date.now();
+
+            if (_announcementMode === 'tts') {
+                TTS_ANNOUNCEMENTS.forEach(function (ann) {
+                    var elapsedMin = (now - ann.lastSent) / (1000 * 60);
+                    if (elapsedMin >= ann.intervalMin) {
+                        speakTTS(ann.text);
+                        ann.lastSent = now;
+                    }
+                });
+            } else if (_announcementMode === 'mp3') {
+                if (_mp3Playlist.length > 0 && (now - _lastMp3Time >= MP3_INTERVAL)) {
+                    if (_isSpeaking) return;
+                    playMp3Announcement(_mp3Playlist[_mp3Index]);
+                    _mp3Index = (_mp3Index + 1) % _mp3Playlist.length;
+                    _lastMp3Time = now;
+                }
+            }
+        }, 10000);
+
+        // Carregar estado do TTS e Anúncios
+        (function () {
+            var saved = localStorage.getItem('pd_tts_enabled') === 'true';
+            var savedMode = localStorage.getItem('pd_tts_mode') || 'browser';
+            var savedVoice = localStorage.getItem('pd_tts_voice') || 'en-US-GuyNeural';
+            var savedAnnMode = localStorage.getItem('pd_announcement_mode') || 'tts';
+
+            _ttsEnabled = saved;
+            _ttsMode = savedMode;
+            _ttsVoice = savedVoice;
+            _announcementMode = savedAnnMode;
+
+            setTimeout(function () {
+                var el = document.getElementById('ttsToggle');
+                if (el) el.checked = saved;
+
+                var modeEl = document.getElementById('ttsMode');
+                if (modeEl) modeEl.value = savedMode;
+
+                var voiceEl = document.getElementById('ttsVoice');
+                if (voiceEl) {
+                    voiceEl.value = savedVoice;
+                    voiceEl.style.display = (savedMode === 'tiktok' ? 'block' : 'none');
+                }
+
+                var annEl = document.getElementById('announcementMode');
+                if (annEl) annEl.value = savedAnnMode;
+
+                if (savedAnnMode === 'mp3') loadMp3Announcements();
+
+                if (window.speechSynthesis) window.speechSynthesis.getVoices();
+            }, 1000);
+        })();
+
+        // ── Load Cached Gifts ──────────────────────────────────────────────────────
+        function applyGiftImages(gifts) {
+            if (!gifts || !gifts.length) return;
+            gifts.forEach(function (g) {
+                if (g.name.includes('rose') || g.name.includes('rosa')) {
+                    var el = document.getElementById('imgGiftRose');
+                    var txt = document.getElementById('txtGiftRose');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name === 'gg') {
+                    var el = document.getElementById('imgGiftGG');
+                    var txt = document.getElementById('txtGiftGG');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('hat and mustache') || g.name.includes('chapéu e bigode')) {
+                    var el = document.getElementById('imgGiftHatMustache');
+                    var txt = document.getElementById('txtGiftHatMustache');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('urso misha') || g.name.includes('misha bear')) {
+                    var el = document.getElementById('imgGiftMisha');
+                    var txt = document.getElementById('txtGiftMisha');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('heart with hands') || g.name.includes('coração com mão')) {
+                    var el = document.getElementById('imgGiftHeartHands');
+                    var txt = document.getElementById('txtGiftHeartHands');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                } else if (g.name.includes('heart me') || g.name.includes('heart') || g.name.includes('coração')) {
+                    var el = document.getElementById('imgGiftHeart');
+                    var txt = document.getElementById('txtGiftHeart');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('perfume')) {
+                    var el = document.getElementById('imgGiftPerfume');
+                    var txt = document.getElementById('txtGiftPerfume');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('donut') || g.name.includes('rosquinha')) {
+                    var el = document.getElementById('imgGiftDonut');
+                    var txt = document.getElementById('txtGiftDonut');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('fatia de bolo') || g.name.includes('cake slice')) {
+                    var el = document.getElementById('imgGiftCake');
+                    var txt = document.getElementById('txtGiftCake');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('presente incrivel')) {
+                    var el = document.getElementById('imgGiftSteve');
+                    var txt = document.getElementById('txtGiftSteve');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+                if (g.name.includes('homer')) {
+                    var el = document.getElementById('imgGiftHomer');
+                    var txt = document.getElementById('txtGiftHomer');
+                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
+                }
+            });
+        }
+        (function () {
+            var cachedGiftsStr = localStorage.getItem('pd_cached_gifts');
+            if (cachedGiftsStr) {
+                try {
+                    applyGiftImages(JSON.parse(cachedGiftsStr));
+                } catch (e) { console.error('Failed to load cached gifts', e); }
+            }
+        })();
+
+
+
+    
