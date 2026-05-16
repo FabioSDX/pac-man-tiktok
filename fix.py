@@ -45,7 +45,7 @@ pristine_block = """
                 var scy = scPick ? scPick.y : refP.y;
                 var numVal = parseFloat((data.amount || '1').replace(/[^0-9.]/g, '')) || 1;
                 for (var sci = 0; sci < Math.min(20, Math.floor(numVal)); sci++) activateTNT(scx + (Math.random() - 0.5) * TILE * 4, scy, scUser, scAvatar);
-                if (numVal >= 10) activateMegaTNT(scx, scy, scUser, scAvatar);
+                if (numVal >= 10) activateMegaTNT(scx, scy, scUser, scAvatar, true);
                 spawnText(scx, scy - 30, '💰 ' + (data.amount || '') + ' SUPER CHAT!', '#ffdd00');
                 var superchatScore = Math.floor(numVal * 10);
                 if (pick.active) score += superchatScore;
@@ -75,31 +75,57 @@ pristine_block = """
                 
                 var resultingPickaxe = null;
 
-                if (giftName.includes('ice cream') || giftName.includes('sorvete')) {
+                if (giftName.includes('perfume')) {
+                    if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
                     persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (1 * repeat);
-                    spawnText(gx, gy - 30, '🍦 UPGRADE!', '#00ffff');
-                    resultingPickaxe = getPickaxeForGifts(gUser);
-                    if (gPick) gPick.pickaxe = resultingPickaxe;
+                    spawnText(gx, gy - 30, '✨ UPGRADE!', '#00ffff');
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName || '').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
                 }
-                else if (giftName.includes('finger heart') || giftName.includes('coração com os dedos')) {
-                    persistentScores[gUser].giftsCount = PICKAXES.length - 1;
-                    spawnText(gx, gy - 30, '🤞 MAX PICKAXE!', '#ff00ff');
-                    resultingPickaxe = getPickaxeForGifts(gUser);
-                    if (gPick) gPick.pickaxe = resultingPickaxe;
+                else if (giftName.includes('hat and mustache') || giftName.includes('chapéu e bigode')) {
+                    if (!persistentScores[gUser]) persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0 };
+                    persistentScores[gUser].giftsCount = (persistentScores[gUser].giftsCount || 0) + (7 * repeat);
+                    spawnText(gx, gy - 30, '🎩 MAX PICKAXE!', '#ff00ff');
+                    var inv = getPlayerInventory(gUser);
+                    resultingPickaxe = inv[0];
+                    if (gPick) {
+                        gPick.pickaxe = resultingPickaxe;
+                        syncCompanions(gPick, inv);
+                    }
+                    if (gUser === (pick.userName || '').toLowerCase()) {
+                        pick.pickaxe = resultingPickaxe;
+                        syncCompanions(pick, inv);
+                    }
                 }
                 else if (giftName.includes('rose') || giftName.includes('rosa')) { 
-                    var count = 10 * Math.min(repeat, 5); 
+                    var count = 20 * Math.min(repeat, 5); 
                     for (var gi = 0; gi < count; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar); 
                     spawnText(gx, gy - 30, '🌹 ' + count + ' TNT!', '#ff6688'); if (pick.active) score += 1 * repeat; 
                 }
                 else if (giftName.includes('gg')) { 
-                    var count = 20 * Math.min(repeat, 3);
-                    for (var gi = 0; gi < count; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar); 
-                    spawnText(gx, gy - 30, '🎮 ' + count + ' TNT!', '#44ff44'); if (pick.active) score += 4 * repeat; 
+                    var count = 10 * Math.min(repeat, 3);
+                    for (var gi = 0; gi < count; gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar, true); 
+                    spawnText(gx, gy - 30, '🎮 ' + count + ' MEGA TNT!', '#44ff44'); if (pick.active) score += 10 * repeat; 
                 }
                 else if (giftName.includes('creeper')) { 
                     for (var gi = 0; gi < Math.min(repeat, 3); gi++) activateCreeper(gx + (Math.random()-0.5)*TILE*2, gy, gUser); 
                     spawnText(gx, gy - 30, '💣 CREEPER!', '#44ff44'); if (pick.active) score += 5 * repeat; 
+                }
+                else if (giftName.includes('donut') || giftName.includes('rosquinha')) { 
+                    var count = 100 * repeat;
+                    spawnText(gx, gy - 30, '🍩 ' + count + ' CREEPERS!', '#00ff00'); 
+                    if (pick.active) score += 100 * repeat;
+                    for (var gi = 0; gi < count; gi++) activateCreeper(gx + (Math.random() - 0.5) * TILE * 6, gy - Math.random() * TILE * 4, gUser); 
+                    giftName = 'donut';
+                    resultingPickaxe = { img: 'block/creeper.png' };
                 }
                 else if (giftName.includes('heart me') || giftName.includes('heart_me') || giftName.includes('coração') || giftName.includes('heart')) { 
                     var count = 30 * Math.min(repeat, 3);
@@ -107,7 +133,7 @@ pristine_block = """
                     spawnText(gx, gy - 30, '❤️ ' + count + ' CORAÇÕES!', '#ff6688'); if (pick.active) score += 3 * repeat; 
                 }
                 else if (giftName.includes('like')) { 
-                    for (var gi = 0; gi < Math.min(repeat, 5); gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar); 
+                    for (var gi = 0; gi < Math.min(repeat, 5); gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar, true); 
                     spawnText(gx, gy - 30, '❤️ MEGA!', '#ff4488'); if (pick.active) score += 5 * repeat; 
                 }
                 else { 

@@ -9,10 +9,12 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3000;
+app.use(express.json({ limit: '10mb' }));
+
 
 // Silenciar console.log para mensagens repetitivas
 const originalLog = console.log;
-console.log = function(...args) {
+console.log = function (...args) {
   const msg = args.join(' ');
   if (msg.includes('JOINED') || msg.includes('connected') || msg.includes('viewerCount')) return;
   originalLog.apply(console, args);
@@ -92,12 +94,12 @@ function connectTikTok(ws, username, sessionId) {
     if (session.tiktok) session.tiktok.connected = true;
     var gifts = [];
     if (state.availableGifts) {
-      gifts = state.availableGifts.map(function(g) { 
+      gifts = state.availableGifts.map(function (g) {
         return { name: g.name ? g.name.toLowerCase() : '', url: (g.image && g.image.url_list) ? g.image.url_list[0] : '' };
       });
     }
     var hostAvatar = '';
-    try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch(e) {}
+    try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch (e) { }
     send(ws, { type: 'connected', platform: 'tiktok', username: username, roomId: state.roomId, availableGifts: gifts, ownerAvatar: hostAvatar });
   }).catch(function (err) {
     console.error('[TikTok] Failed:', err.message);
@@ -114,12 +116,12 @@ function connectTikTok(ws, username, sessionId) {
         if (session.tiktok) session.tiktok.connected = true;
         var gifts = [];
         if (state.availableGifts) {
-          gifts = state.availableGifts.map(function(g) { 
+          gifts = state.availableGifts.map(function (g) {
             return { name: g.name ? g.name.toLowerCase() : '', url: (g.image && g.image.url_list) ? g.image.url_list[0] : '' };
           });
         }
         var hostAvatar = '';
-        try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch(e) {}
+        try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch (e) { }
         send(ws, { type: 'connected', platform: 'tiktok', username: username, roomId: state.roomId, availableGifts: gifts, ownerAvatar: hostAvatar });
       }).catch(function (err2) {
         console.error('[TikTok] Polling also failed:', err2.message);
@@ -138,14 +140,14 @@ function attachTikTokEvents(ws, tiktok, username, session) {
   tiktok.on('chat', function (data) {
     var u = data.user || {}, uid = getUser(u, data, username), nick = getNick(u, data, uid), av = getAvatar(u, data);
     var chatEv = { type: 'chat', platform: 'tiktok', user: uid, nickname: nick, avatar: av, comment: data.comment || '', msgId: data.msgId };
-    
+
     if (!session.chatBuffer) session.chatBuffer = [];
     session.chatBuffer.push(chatEv);
 
     if (!session.chatTimeout) {
       session.chatTimeout = setTimeout(function () {
         if (session.chatBuffer) {
-          session.chatBuffer.forEach(function(msg) { send(ws, msg); });
+          session.chatBuffer.forEach(function (msg) { send(ws, msg); });
           session.chatBuffer = [];
         }
         session.chatTimeout = null;
@@ -155,6 +157,10 @@ function attachTikTokEvents(ws, tiktok, username, session) {
   tiktok.on('member', function (data) {
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (uid) send(ws, { type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+  });
+  tiktok.on('subscribe', function (data) {
+    var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
+    if (uid) send(ws, { type: 'subscribe', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('gift', function (data) {
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
@@ -189,6 +195,7 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     }
   });
   tiktok.on('follow', function (data) {
+    console.log('[TikTok] Follow event detected:', data.uniqueId || (data.user && data.user.uniqueId));
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     send(ws, { type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
@@ -197,8 +204,14 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     send(ws, { type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('social', function (data) {
+    console.log('[TikTok] Social event:', data.displayType, 'from', data.uniqueId || (data.user && data.user.uniqueId));
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) send(ws, { type: 'social', platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social', msgId: data.msgId });
+    if (uid) {
+      // If it's a follow label, treat as follow
+      var isFollow = data.displayType && (data.displayType.includes('follow') || data.displayType.includes('seguidor'));
+      var type = isFollow ? 'follow' : 'social';
+      send(ws, { type: type, platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social', msgId: data.msgId });
+    }
   });
   tiktok.on('roomUser', function (data) { send(ws, { type: 'roomUser', platform: 'tiktok', viewerCount: data.viewerCount || 0 }); });
   tiktok.on('streamEnd', function () {
@@ -382,10 +395,21 @@ async function getEdgeTTS(text, voice) {
   });
 }
 
+const imageCache = new Map();
+const CACHE_MAX_ITEMS = 500;
+
 // ── Image Proxy (to allow drawing external avatars on canvas) ──
 app.get('/proxy-image', function (req, res) {
   var url = req.query.url;
   if (!url) return res.status(400).send('URL is required');
+
+  if (imageCache.has(url)) {
+    const cached = imageCache.get(url);
+    res.set('Content-Type', cached.contentType);
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.send(cached.data);
+  }
 
   const https = require('https');
   const http = require('http');
@@ -397,9 +421,24 @@ app.get('/proxy-image', function (req, res) {
     if (pRes.statusCode !== 200) {
       return res.status(pRes.statusCode).send('Proxy Error');
     }
-    res.set('Content-Type', pRes.headers['content-type']);
-    res.set('Access-Control-Allow-Origin', '*');
-    pRes.pipe(res);
+
+    let chunks = [];
+    pRes.on('data', chunk => chunks.push(chunk));
+    pRes.on('end', () => {
+      let buffer = Buffer.concat(chunks);
+      let cType = pRes.headers['content-type'];
+
+      if (imageCache.size > CACHE_MAX_ITEMS) {
+        const firstKey = imageCache.keys().next().value;
+        imageCache.delete(firstKey);
+      }
+      imageCache.set(url, { data: buffer, contentType: cType });
+
+      res.set('Content-Type', cType);
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.send(buffer);
+    });
   }).on('error', (err) => {
     res.status(500).send('Proxy Error: ' + err.message);
   });
@@ -438,7 +477,7 @@ app.get('/tts', async function (req, res) {
     // Fallback final Google Translate (Proxy to avoid CORS/Referer issues)
     let tl = voice.startsWith('pt-BR') ? 'pt-br' : 'en';
     var googleUrl = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(text) + '&tl=' + tl + '&client=tw-ob';
-    
+
     const https = require('https');
     https.get(googleUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0' }
@@ -452,6 +491,30 @@ app.get('/tts', async function (req, res) {
       res.status(500).send('TTS Fallback Error: ' + err.message);
     });
   }
+});
+
+// ── Save Ranking Image Endpoint ────────────────────────────────────────────────
+app.post('/save-ranking', function (req, res) {
+  const { image, filename } = req.body;
+  if (!image) return res.status(400).send('Image data is required');
+
+  // Salvar na Área de Trabalho do Windows
+  const desktopDir = path.join(process.env.USERPROFILE, 'Desktop');
+  if (!fs.existsSync(desktopDir)) {
+    return res.status(500).send('Desktop directory not found');
+  }
+
+  const base64Data = image.replace(/^data:image\/png;base64,/, "");
+  const savePath = path.join(desktopDir, filename || `ranking_${Date.now()}.png`);
+
+  fs.writeFile(savePath, base64Data, 'base64', function (err) {
+    if (err) {
+      console.error('[Server] Error saving ranking image:', err);
+      return res.status(500).send('Error saving image');
+    }
+    console.log('[Server] Ranking image saved to Desktop:', savePath);
+    res.send({ status: 'ok', path: savePath });
+  });
 });
 
 server.listen(PORT, function () {

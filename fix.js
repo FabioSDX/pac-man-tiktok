@@ -35,14 +35,14 @@ const correctBlock = \                // Also add to owner score for daily total
                     if (gPick) gPick.pickaxe = resultingPickaxe;
                 }
                 else if (giftName.includes('rose') || giftName.includes('rosa')) { 
-                    var count = 10 * Math.min(repeat, 5); 
+                    var count = 20 * Math.min(repeat, 5); 
                     for (var gi = 0; gi < count; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 3, gy, gUser, gAvatar); 
                     spawnText(gx, gy - 30, '?? ' + count + ' TNT!', '#ff6688'); if (pick.active) score += 1 * repeat; 
                 }
                 else if (giftName.includes('gg')) { 
-                    var count = 20 * Math.min(repeat, 3);
-                    for (var gi = 0; gi < count; gi++) activateTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar); 
-                    spawnText(gx, gy - 30, '?? ' + count + ' TNT!', '#44ff44'); if (pick.active) score += 4 * repeat; 
+                    var count = 10 * Math.min(repeat, 3);
+                    for (var gi = 0; gi < count; gi++) activateMegaTNT(gx + (Math.random() - 0.5) * TILE * 5, gy, gUser, gAvatar, true); 
+                    spawnText(gx, gy - 30, '?? ' + count + ' MEGA TNT!', '#44ff44'); if (pick.active) score += 10 * repeat; 
                 }
                 else if (giftName.includes('creeper')) { 
                     for (var gi = 0; gi < Math.min(repeat, 3); gi++) activateCreeper(gx + (Math.random()-0.5)*TILE*2, gy, gUser); 
