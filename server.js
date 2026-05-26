@@ -97,6 +97,7 @@ function connectTikTok(ws, username, sessionId) {
       gifts = state.availableGifts.map(function (g) {
         return { name: g.name ? g.name.toLowerCase() : '', url: (g.image && g.image.url_list) ? g.image.url_list[0] : '' };
       });
+      console.log('[TikTok] Presentes disponíveis:', gifts.map(function(g){ return g.name; }).join(', '));
     }
     var hostAvatar = '';
     try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch (e) { }
@@ -119,6 +120,7 @@ function connectTikTok(ws, username, sessionId) {
           gifts = state.availableGifts.map(function (g) {
             return { name: g.name ? g.name.toLowerCase() : '', url: (g.image && g.image.url_list) ? g.image.url_list[0] : '' };
           });
+          console.log('[TikTok] Presentes disponíveis (polling):', gifts.map(function(g){ return g.name; }).join(', '));
         }
         var hostAvatar = '';
         try { hostAvatar = state.roomInfo.owner.avatar_thumb.url_list[0]; } catch (e) { }
