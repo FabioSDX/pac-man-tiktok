@@ -1,0 +1,17 @@
+
+/* --- VIDEO BACKGROUND FIX --- */
+#bgVideo {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    z-index: 0 !important;
+    pointer-events: none;
+}
+
+canvas, #gameCanvas {
+    position: relative !important;
+    z-index: 1 !important;
+}
