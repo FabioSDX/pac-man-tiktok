@@ -4,39 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Falling Pickaxe Drop</title>
-    <link rel="stylesheet" href="css/home.css">
+    <link rel="stylesheet" href="css/home.css?v=2">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>" />
 </head>
 <body>
     <!-- Título físico via Iframe do jogo em Tela Cheia -->
-    <iframe src="index.html?title_mode=1&v=36" id="titleIframe" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; border: none; pointer-events: none; overflow: hidden;"></iframe>
+    <iframe src="index.html?title_mode=1&v=37" id="titleIframe" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; border: none; pointer-events: none; overflow: hidden;"></iframe>
 
-    <div id="particles-container"></div>
-    <div id="enemies-container"></div>
-    <div id="pickaxe-falling-container"></div>
+    <div id="scroll-wrapper">
+        <div id="particles-container"></div>
+        <div id="enemies-container"></div>
+        <div id="pickaxe-falling-container"></div>
 
-    <div class="hero">
-        <h1 style="display:none;">FALLING PICKAXE DROP</h1> <!-- Fallback caso Iframe falhe -->
-        <p class="subtitle">O jogo interativo onde sua live pega fogo! 🔥</p>
-    </div>
-
-    <div class="main-content">
-        <div class="card offline-card">
-            <img src="pickaxe/golden_pickaxe.png" alt="Offline Mode" class="card-icon bounce">
-            <h2>Modo Offline</h2>
-            <p>Jogue sozinho para conhecer os comandos, treinar suas defesas e explorar os blocos do jogo! Sem precisar de internet.</p>
-            <div class="input-group">
-                <input type="text" id="offlineName" placeholder="Seu Nickname..." autocomplete="off">
-                <button id="btnPlayOffline" class="btn btn-primary">JOGAR OFFLINE</button>
-            </div>
+        <div class="hero">
+            <h1 style="display:none;">FALLING PICKAXE DROP</h1> <!-- Fallback caso Iframe falhe -->
+            <p class="subtitle">O jogo interativo onde sua live pega fogo! 🔥</p>
         </div>
 
-        <div class="card online-card">
-            <img src="tiktok.png" alt="TikTok Live" class="card-icon spin-slow">
-            <h2>Modo Live (Online)</h2>
-            <p>Conecte na sua live do <strong style="color: #ff0050;">TikTok</strong> ou <strong style="color: #ff0000;">YouTube</strong>. Ganhe muitos seguidores e presentes enquanto o chat interage com você!</p>
-            <button id="btnPlayOnline" class="btn btn-secondary">CONFIGURAR LIVE</button>
+        <div class="main-content">
+            <div class="card offline-card">
+                <img src="pickaxe/golden_pickaxe.png" alt="Offline Mode" class="card-icon bounce">
+                <h2>Modo Offline</h2>
+                <p>Jogue sozinho para conhecer os comandos, treinar suas defesas e explorar os blocos do jogo! Sem precisar de internet.</p>
+                <div class="input-group">
+                    <input type="text" id="offlineName" placeholder="Seu Nickname..." autocomplete="off">
+                    <button id="btnPlayOffline" class="btn btn-primary">JOGAR OFFLINE</button>
+                </div>
+            </div>
+
+            <div class="card online-card">
+                <img src="tiktok.png" alt="TikTok Live" class="card-icon spin-slow">
+                <h2>Modo Live (Online)</h2>
+                <p>Conecte na sua live do <strong style="color: #ff0050;">TikTok</strong> ou <strong style="color: #ff0000;">YouTube</strong>. Ganhe muitos seguidores e presentes enquanto o chat interage com você!</p>
+                <button id="btnPlayOnline" class="btn btn-secondary">CONFIGURAR LIVE</button>
+            </div>
         </div>
     </div>
 

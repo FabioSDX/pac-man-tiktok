@@ -2,12 +2,23 @@ body, html {
     margin: 0;
     padding: 0;
     width: 100%;
-    min-height: 100vh;
+    height: 100vh;
     background: #050505; /* Super dark */
     color: #e0e0e0;
     font-family: 'Inter', sans-serif;
-    overflow-x: hidden;
+    overflow: hidden; /* Stop global scrolling */
     position: relative;
+}
+
+#scroll-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 5;
 }
 
 /* Fundo com efeito radial */
