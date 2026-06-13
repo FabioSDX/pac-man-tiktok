@@ -14070,7 +14070,7 @@ var persistentScores = {};
                 'O': [" XX ", "X  X", "X  X", "X  X", " XX "],
             };
             var totalLines = 17;
-            var centerRow = Math.floor((VIS - totalLines) / 2);
+            var centerRow = Math.floor((VIS - totalLines) / 2) + Math.floor(VIS * 0.15); // Empurra 15% para baixo
             if (centerRow < 1) centerRow = 1;
 
             var titleWords = [
