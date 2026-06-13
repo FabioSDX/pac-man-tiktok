@@ -363,7 +363,7 @@ var persistentScores = {};
         var ctx = canvas.getContext('2d');
 
         // Resolução Tradicional (Vertical 9:16 aprox)
-        var TILE = window.IS_TITLE_MODE ? Math.min(60, Math.max(24, Math.floor(window.innerWidth / 38))) : 72;
+        var TILE = window.IS_TITLE_MODE ? Math.min(60, Math.max(12, Math.floor(window.innerWidth / 40))) : 72;
         var COLS = window.IS_TITLE_MODE ? Math.ceil(window.innerWidth / TILE) : 15;
         var VIS = window.IS_TITLE_MODE ? Math.ceil(window.innerHeight / TILE) : 27;
 

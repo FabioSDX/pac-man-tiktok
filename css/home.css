@@ -38,7 +38,7 @@ body::before {
     display: flex;
     flex-direction: column;
     align-items: center;
-    margin-top: 65vh; /* Empurra os painéis para baixo */
+    margin-top: 100vh; /* Empurra hero e painéis 100% para baixo */
 }
 
 /* Título estilo bloco Minecraft */
