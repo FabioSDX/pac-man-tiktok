@@ -14071,7 +14071,7 @@ var persistentScores = {};
             ];
 
             var titleSequence = [];
-            var titleTypes = [D, S, C, I, G, DIA];
+            var titleTypes = [1, 2, 3, 4, 5, 7]; // DIRT=1, STONE=2, COAL=3, IRON=4, GOLD=5, DIAMOND=7
 
             function buildSequence() {
                 titleSequence = [];
@@ -14130,10 +14130,10 @@ var persistentScores = {};
                         for (var cc = 0; cc < COLS; cc++) {
                             var isInTitleZone = (cc >= 1 && cc <= COLS - 2); 
                             if (isClearing && isInTitleZone) {
-                                worldMap[rr][cc] = { t: E, hp: 0, cr: 0 }; // Vazio
+                                worldMap[rr][cc] = { t: 0, hp: 0, cr: 0 }; // E = 0 (Vazio)
                             } else {
                                 // Background de blocos escuros/pedra
-                                worldMap[rr][cc] = { t: Math.random() > 0.8 ? D : S, hp: 9999, cr: 0 };
+                                worldMap[rr][cc] = { t: Math.random() > 0.8 ? 1 : 2, hp: 9999, cr: 0 }; // DIRT = 1, STONE = 2
                             }
                         }
                     }
