@@ -14171,5 +14171,4 @@ var persistentScores = {};
                     window.titleBlocks = null; // Impede render de blocos caindo
                 };
             }
-            }
         }
