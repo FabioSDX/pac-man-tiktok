@@ -358,9 +358,9 @@ var persistentScores = {};
         var ctx = canvas.getContext('2d');
 
         // Resolução Tradicional (Vertical 9:16 aprox)
-        var TILE = 72;
-        var COLS = window.IS_TITLE_MODE ? Math.max(15, Math.ceil(window.innerWidth / TILE)) : 15;
-        var VIS = window.IS_TITLE_MODE ? Math.max(27, Math.ceil(window.innerHeight / TILE)) : 27;
+        var TILE = window.IS_TITLE_MODE ? Math.min(60, Math.max(24, Math.floor(window.innerWidth / 38))) : 72;
+        var COLS = window.IS_TITLE_MODE ? Math.ceil(window.innerWidth / TILE) : 15;
+        var VIS = window.IS_TITLE_MODE ? Math.ceil(window.innerHeight / TILE) : 27;
 
         canvas.width = COLS * TILE;
         canvas.height = VIS * TILE;
@@ -14126,10 +14126,11 @@ var persistentScores = {};
                     // Preenche o mundo inteiro de blocos, exceto a clareira!
                     for (var rr = 0; rr < VIS; rr++) {
                         if (!worldMap[rr]) worldMap[rr] = genRow(rr);
-                        var isClearing = (rr >= 1 && rr <= 19); // Espaço limpo para o texto
+                        var isClearingRow = (rr >= 2 && rr <= 18); // Espaço limpo para o texto
                         for (var cc = 0; cc < COLS; cc++) {
-                            var isInTitleZone = (cc >= 1 && cc <= COLS - 2); 
-                            if (isClearing && isInTitleZone) {
+                            // Clareira centralizada no meio da tela
+                            var isClearingCol = (cc >= Math.floor((COLS - 35)/2) && cc <= Math.floor((COLS + 35)/2));
+                            if (isClearingRow && isClearingCol) {
                                 worldMap[rr][cc] = { t: 0, hp: 0, cr: 0 }; // E = 0 (Vazio)
                             } else {
                                 // Background de blocos escuros/pedra
