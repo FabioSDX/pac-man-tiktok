@@ -1,0 +1,971 @@
+﻿diff --git a/js/app.js b/js/app.js
+index a1f6131..2a93211 100644
+--- a/js/app.js
++++ b/js/app.js
+@@ -299,7 +299,7 @@ var persistentScores = {};
+         var BG_DETAIL = 0;
+         // ÔöÇÔöÇ Tipos ÔöÇÔöÇ
+         var E = 0, DIRT = 1, STONE = 2, COAL = 3, IRON = 4, GOLD = 5, REDSTONE = 6, DIAMOND = 7, EMERALD = 8, BEDROCK = 9,
+-            GRASS = 10, ANDESITE = 11, DIORITE = 12, GRANITE = 13, COBBLE = 14, MOSSY = 15, COPPER = 16, LAPIS = 17, OBSIDIAN = 18, BONUS_BOX = 19;
++            GRASS = 10, ANDESITE = 11, DIORITE = 12, GRANITE = 13, COBBLE = 14, MOSSY = 15, COPPER = 16, LAPIS = 17, OBSIDIAN = 18, BONUS_BOX = 19, AVATAR_BLOCK = 20, ROULETTE_BLOCK = 21;
+         var BDEF = {
+             1: { color: '#c4a423', glow: '#c88451', hp: 1, pts: 0.5, name: 'Dirt', img: 'block/dirt.png' },
+             2: { color: '#4a5a6a', glow: '#90b0c0', hp: 3, pts: 1, name: 'Stone', img: 'block/stone.png' },
+@@ -319,7 +319,9 @@ var persistentScores = {};
+             16: { color: '#b06030', glow: '#e08850', hp: 3, pts: 3, name: 'Copper', img: 'block/copper_ore.png' },
+             17: { color: '#1a3a8a', glow: '#4488ff', hp: 3, pts: 4.5, name: 'Lapis Lazuli', img: 'block/lapis_ore.png' },
+             18: { color: '#0a0a14', glow: '#4a2a6a', hp: 8, pts: 10, name: 'Obsidian', img: 'block/obsidian.png' },
+-            19: { color: '#ffdd44', glow: '#ffff88', hp: 4, pts: 5, name: 'Bonus Box', img: 'block/obsidian.png' }
++            19: { color: '#ffdd44', glow: '#ffff88', hp: 4, pts: 5, name: 'Bonus Box', img: 'block/obsidian.png' },
++            20: { color: '#442288', glow: '#fff', hp: 4, pts: 50, name: 'Avatar HD', img: 'block/obsidian.png' },
++            21: { color: '#aa22aa', glow: '#00f2ea', hp: 4, pts: 10, name: 'Roulette', img: 'block/obsidian.png' }
+         };
+ 
+         // ÔöÇÔöÇ Itens Colecion├íveis ÔöÇÔöÇ
+@@ -361,13 +363,8 @@ var persistentScores = {};
+                     c.height = h + d;
+                     var cx = c.getContext('2d');
+                     
+-                    // TOP FACE (Transform: shear X, scale Y)
+-                    cx.save();
+-                    cx.transform(1, 0, -d/h, d/h, d, 0);
+-                    cx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, 0, w, h);
+-                    cx.fillStyle = 'rgba(255,255,255,0.2)'; // Lighten top
+-                    cx.fillRect(0, 0, w, h);
+-                    cx.restore();
++                    // FRONT FACE
++                    cx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, d, w, h);
+ 
+                     // RIGHT FACE (Transform: scale X, shear Y)
+                     cx.save();
+@@ -377,8 +374,13 @@ var persistentScores = {};
+                     cx.fillRect(0, 0, w, h);
+                     cx.restore();
+ 
+-                    // FRONT FACE
+-                    cx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, d, w, h);
++                    // TOP FACE (Transform: shear X, scale Y)
++                    cx.save();
++                    cx.transform(1, 0, -d/h, d/h, d, 0);
++                    cx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, 0, w, h);
++                    cx.fillStyle = 'rgba(255,255,255,0.2)'; // Lighten top
++                    cx.fillRect(0, 0, w, h);
++                    cx.restore();
+                     
+                     B3D_TEX[k] = c;
+                 };
+@@ -869,7 +871,56 @@ var persistentScores = {};
+ 
+                     if (ITEM_DEFS[cell.t]) {
+                         spawnItem(c * TILE + TILE / 2, r * TILE + TILE / 2, cell.t, tntSource || pick);
+-                    } else if (cell.t === BONUS_BOX) {
++                    } else if (cell.t === ROULETTE_BLOCK) {
++                        var ar = r; var ac = c;
++                        if (r > 0 && getCell(r - 1, c) && getCell(r - 1, c).t === ROULETTE_BLOCK) ar = r - 1;
++                        if (c > 0 && getCell(ar, c - 1) && getCell(ar, c - 1).t === ROULETTE_BLOCK) ac = c - 1;
++                        for (var dr = 0; dr <= 1; dr++) {
++                            for (var dc = 0; dc <= 1; dc++) {
++                                var neighbor = getCell(ar + dr, ac + dc);
++                                if (neighbor && neighbor.t === ROULETTE_BLOCK) {
++                                    neighbor.t = E; neighbor.hp = 0; neighbor.cr = 0;
++                                    spawnParts((ac + dc) * TILE + TILE / 2, (ar + dr) * TILE + TILE / 2, '#00f2ea', 4);
++                                }
++                            }
++                        }
++                        sfxBreak(BONUS_BOX);
++                        spawnSpecialRoulette(tntSource || pick);
++                        checkFallingBlocks(ac, ar + 2, tntSource || pick);
++                        checkFallingBlocks(ac + 1, ar + 2, tntSource || pick);
++                        continue;
++                    }
++                    if (cell.t === AVATAR_BLOCK) {
++                        var ar = r; var ac = c;
++                        if (r > 0 && getCell(r - 1, c) && getCell(r - 1, c).t === AVATAR_BLOCK) ar = r - 1;
++                        if (c > 0 && getCell(ar, c - 1) && getCell(ar, c - 1).t === AVATAR_BLOCK) ac = c - 1;
++                        for (var dr = 0; dr <= 1; dr++) {
++                            for (var dc = 0; dc <= 1; dc++) {
++                                var neighbor = getCell(ar + dr, ac + dc);
++                                if (neighbor && neighbor.t === AVATAR_BLOCK) {
++                                    neighbor.t = E; neighbor.hp = 0; neighbor.cr = 0;
++                                    spawnParts((ac + dc) * TILE + TILE / 2, (ar + dr) * TILE + TILE / 2, '#fff', 4);
++                                    spawnDebris((ac + dc) * TILE + TILE / 2, (ar + dr) * TILE + TILE / 2, AVATAR_BLOCK, tntSource || pick);
++                                }
++                            }
++                        }
++                        sfxBreak(AVATAR_BLOCK);
++                        var ptsAmt = 50;
++                        if (pick && pick.active) score += ptsAmt;
++                        spawnText(ac * TILE + TILE, ar * TILE + TILE, '+' + ptsAmt, '#fff');
++                        var blockSource = tntSource || pick;
++                        if (blockSource && blockSource.userName) {
++                            var player = userPicks.find(function (u) { return u.userName === blockSource.userName; });
++                            if (player) player.score = (player.score || 0) + ptsAmt;
++                            if (!persistentScores[blockSource.userName]) persistentScores[blockSource.userName] = { score: 0, avatar: blockSource.userAvatarUrl || '' };
++                            persistentScores[blockSource.userName].score += ptsAmt;
++                            addCycleScore(blockSource.userName, ptsAmt, 'block');
++                        }
++                        checkFallingBlocks(ac, ar + 2, blockSource);
++                        checkFallingBlocks(ac + 1, ar + 2, blockSource);
++                        continue;
++                    }
++                if (cell.t === BONUS_BOX) {
+                         var aType = ((r + c) % 2 === 0) ? 'pig' : 'sheep';
+                         spawnBonusBalls(c * TILE + TILE / 2, r * TILE + TILE / 2, tntSource || pick, aType);
+                     }
+@@ -1717,6 +1768,237 @@ var persistentScores = {};
+             return true;
+         }
+ 
++        var availableAvatars = [];
++        function openAnimationPanel() {
++            var modal = document.getElementById('animationControlModal');
++            if (!modal) return;
++            /* no display toggle needed */
++            renderAnimationPanel();
++        }
++
++        function closeAnimationPanel() {
++            var modal = document.getElementById('animationControlModal');
++            
++        }
++
++        function renderAnimationPanel() {
++            var grid = document.getElementById('animGrid');
++            if (!grid) return;
++            
++            if (!availableAvatars || availableAvatars.length === 0) {
++                grid.innerHTML = '<div style="color:#aaa; text-align:center; width:100%;">Nenhum avatar em HD ainda.</div>';
++                return;
++            }
++
++            // Remove the empty message if it exists
++            if (grid.children.length === 1 && grid.children[0].innerText.includes('Nenhum')) {
++                grid.innerHTML = '';
++            }
++
++            var list = availableAvatars.slice().reverse();
++
++            // Track which ones exist to remove stale cards
++            var validIds = {};
++
++            list.forEach(function(url) {
++                var parts = url.split('/');
++                var fileName = parts[parts.length - 1];
++                var userId = fileName.split('_')[0];
++                validIds[userId] = true;
++
++                var cardId = 'anim-card-' + userId;
++                var card = document.getElementById(cardId);
++                var animInfo = avatarAnimCache[url];
++
++                if (!card) {
++                    card = document.createElement('div');
++                    card.id = cardId;
++                    card.className = 'anim-card';
++                    
++                    var mediaContainer = document.createElement('div');
++                    mediaContainer.className = 'anim-media';
++                    mediaContainer.id = 'anim-media-' + userId;
++                    card.appendChild(mediaContainer);
++
++                    var title = document.createElement('div');
++                    title.className = 'anim-title';
++                    title.innerText = userId;
++                    card.appendChild(title);
++
++                    var status = document.createElement('div');
++                    status.className = 'anim-status';
++                    status.id = 'anim-status-' + userId;
++                    card.appendChild(status);
++
++                    var btn = document.createElement('button');
++                    btn.className = 'anim-btn';
++                    btn.id = 'anim-btn-' + userId;
++                    card.appendChild(btn);
++
++                    grid.appendChild(card);
++                }
++
++                var mediaContainer = document.getElementById('anim-media-' + userId);
++                var status = document.getElementById('anim-status-' + userId);
++                var btn = document.getElementById('anim-btn-' + userId);
++
++                // Update Media (only if it needs changing)
++                var hasVideo = mediaContainer.querySelector('video') !== null;
++                var shouldHaveVideo = (animInfo && animInfo.status === 'done' && animInfo.videoEl);
++
++                if (shouldHaveVideo && !hasVideo) {
++                    mediaContainer.innerHTML = '';
++                    var v = animInfo.videoEl.cloneNode();
++                    v.style.width = '100%';
++                    v.style.height = '100%';
++                    v.style.objectFit = 'cover';
++                    v.muted = false;
++                    v.loop = false;
++                    v.autoplay = false;
++                    v.controls = true;
++                    mediaContainer.appendChild(v);
++                } else if (!shouldHaveVideo && hasVideo) {
++                    mediaContainer.innerHTML = '';
++                    var img = document.createElement('img');
++                    img.src = url;
++                    mediaContainer.appendChild(img);
++                } else if (!hasVideo && mediaContainer.innerHTML === '') {
++                    var img = document.createElement('img');
++                    img.src = url;
++                    mediaContainer.appendChild(img);
++                }
++
++                // Update Status & Button
++                btn.disabled = false;
++                btn.style.opacity = '1';
++
++                if (approved_animations[userId]) {
++                    if (animInfo && animInfo.status === 'done') {
++                        status.innerText = 'Ô£à Animado';
++                        status.style.color = '#00ff88';
++                        btn.innerText = 'Remover';
++                        btn.style.background = '#ff4444';
++                        btn.onclick = function() {
++                            delete approved_animations[userId];
++                            saveApprovedAnimations();
++                            renderAnimationPanel();
++                        };
++                    } else if (animInfo && animInfo.status === 'pending') {
++                        status.innerText = 'ÔÅ│ Processando...';
++                        status.style.color = '#ffaa00';
++                        btn.innerText = 'Gerando';
++                        btn.disabled = true;
++                        btn.style.opacity = '0.5';
++                        btn.style.background = '#666';
++                        btn.onclick = null;
++                    } else if (animInfo && animInfo.status === 'error') {
++                        status.innerText = 'ÔØî Erro';
++                        status.style.color = '#ff4444';
++                        btn.innerText = 'Tentar Novamente';
++                        btn.style.background = '#aa22aa';
++                        btn.onclick = function() {
++                            delete avatarAnimCache[url];
++                            requestAvatarAnimation(url, userId);
++                            renderAnimationPanel();
++                        };
++                    } else {
++                        status.innerText = 'ÔÅ│ Na fila...';
++                        status.style.color = '#ffdd44';
++                        btn.innerText = 'Aguarde';
++                        btn.disabled = true;
++                        btn.style.opacity = '0.5';
++                        btn.style.background = '#666';
++                    }
++                } else {
++                    status.innerText = 'ÔØî N├úo Animado';
++                    status.style.color = '#ffaa00';
++                    btn.innerText = 'Ô£¿ Animar';
++                    btn.style.background = '#aa22aa';
++                    btn.onclick = function() {
++                        approved_animations[userId] = true;
++                        saveApprovedAnimations();
++                        requestAvatarAnimation(url, userId);
++                        renderAnimationPanel();
++                    };
++                }
++
++                if (!card.parentNode) {
++                    grid.appendChild(card);
++                }
++            });
++
++            // Remove old cards
++            Array.from(grid.children).forEach(function(card) {
++                if (card.id && card.id.startsWith('anim-card-')) {
++                    var id = card.id.replace('anim-card-', '');
++                    if (!validIds[id]) {
++                        grid.removeChild(card);
++                    }
++                }
++            });
++        }
++        
++        // Auto-refresh the panel if it's open, to update status
++        setInterval(function() {
++            var modal = document.getElementById('animationControlModal');
++            if (modal && modal.style.display !== 'none') {
++                renderAnimationPanel();
++            }
++        }, 3000);
++
++
++        async function updateAvailableAvatars() {
++            try {
++                var response = await fetch('/avatar-list');
++                var data = await response.json();
++                if (data && data.files) {
++                    availableAvatars = data.files;
++                    
++                    if (data.videos) {
++                        data.videos.forEach(function(vidUrl) {
++                            var parts = vidUrl.split('/');
++                            var fileName = parts[parts.length - 1];
++                            var userId = fileName.split('_')[0];
++                            var hash = fileName.split('_')[1].replace('.mp4', '');
++                            var matchingImgUrl = 'avatares_hd/' + userId + '_' + hash + '.png';
++                            
++                            approved_animations[userId] = true;
++                            if (!avatarAnimCache[matchingImgUrl] || !avatarAnimCache[matchingImgUrl].videoEl) {
++                                var v = document.createElement('video');
++                                v.src = vidUrl;
++                                v.muted = true;
++                                v.loop = true;
++                                v.autoplay = true;
++                                v.playsInline = true;
++                                v.crossOrigin = 'anonymous';
++                                avatarAnimCache[matchingImgUrl] = { status: 'done', videoEl: v };
++                            }
++                        });
++                    }
++
++                    preloadApprovedAnimations(); renderAnimationPanel();
++                    availableAvatars.forEach(function(url) {
++                        if (!avatarCache[url] && !_avatarLoading[url]) {
++                            var img = new Image();
++                            _avatarLoading[url] = true;
++                            img.onload = function() {
++                                avatarCache[url] = img;
++                                _avatarLoading[url] = false;
++                            };
++                            img.onerror = function() {
++                                _avatarLoading[url] = false;
++                            };
++                            img.src = url;
++                        }
++                    });
++                }
++            } catch (e) {
++                console.error('[Client] Error fetching avatar list:', e);
++            }
++        }
++        updateAvailableAvatars();
++        setInterval(updateAvailableAvatars, 15000);
++
+         function genRow(r) {
+             var row = [];
+             var depth = r;
+@@ -1724,7 +2006,27 @@ var persistentScores = {};
+             var zoneStart = zone * CLEARING_INTERVAL;
+             var isNearClearing = (r >= zoneStart - 1 && r <= zoneStart + CLEARING_HEIGHT);
+ 
++            // Propagate bottom halves of 2x2 blocks from the row above
++            if (r > 0 && worldMap[r - 1]) {
++                for (var c = 0; c < COLS; c++) {
++                    var prevCell = worldMap[r - 1][c];
++                    if (prevCell && (prevCell.t === AVATAR_BLOCK || prevCell.t === ROULETTE_BLOCK) && prevCell.rowOffset === 0) {
++                        row[c] = {
++                            t: prevCell.t,
++                            hp: prevCell.hp,
++                            cr: 0,
++                            rowOffset: 1,
++                            colOffset: prevCell.colOffset,
++                            blockSize: 2,
++                            avatarUrl: prevCell.avatarUrl,
++                            anchor: { r: r - 1, c: prevCell.colOffset === 0 ? c : c - 1 }
++                        };
++                    }
++                }
++            }
++
+             for (var c = 0; c < COLS; c++) {
++                if (row[c] && (row[c].t === AVATAR_BLOCK || row[c].t === ROULETTE_BLOCK)) continue;
+                 var t;
+                 if (depth < 2) { t = E; }
+                 else if (isMegaClearingCell(r, c)) { t = E; }
+@@ -1734,6 +2036,52 @@ var persistentScores = {};
+                 row[c] = { t: t, hp: (t === E ? 0 : BDEF[t].hp), cr: 0 };
+             }
+ 
++            // Spawn new 2x2 blocks
++            for (var c = 0; c < COLS - 1; c++) {
++                var canSpawn2x2 = true;
++                for (var dr = 0; dr < 2; dr++) {
++                    for (var dc = 0; dc < 2; dc++) {
++                        var nr = r + dr;
++                        var nc = c + dc;
++                        var isClearing = (nr < 2) || isMegaClearingCell(nr, nc) || isClearingCell(nr, nc) || isMiniClearingCell(nr, nc);
++                        if (isClearing) { canSpawn2x2 = false; break; }
++                        if (dr === 0) {
++                            var cell = row[nc];
++                            if (!cell || cell.t === E || cell.t === BEDROCK || cell.t === BONUS_BOX || cell.t === AVATAR_BLOCK || cell.t === ROULETTE_BLOCK) {
++                                canSpawn2x2 = false; break;
++                            }
++                        }
++                    }
++                    if (!canSpawn2x2) break;
++                }
++                if (canSpawn2x2 && Math.random() < 0.05) { // 5% chance
++                    var isRoulette = Math.random() < 0.3; // 30% chance of roulette vs avatar
++                    var blockType = isRoulette ? ROULETTE_BLOCK : AVATAR_BLOCK;
++                    var randomUrl = availableAvatars ? availableAvatars[Math.floor(Math.random() * availableAvatars.length)] : '';
++                    var anchorObj = { r: r, c: c };
++                    
++                    // Automatic animation request removed. Will only animate if approved via Animation Control Panel.
++                    if (blockType === AVATAR_BLOCK && randomUrl) {
++                        var parts = randomUrl.split('/');
++                        var fileName = parts[parts.length - 1]; // e.g., "username_hash.png"
++                        var userId = fileName.split('_')[0]; // "username"
++                    }
++
++                    for (var dc = 0; dc < 2; dc++) {
++                        row[c + dc] = {
++                            t: blockType,
++                            hp: BDEF[AVATAR_BLOCK].hp,
++                            cr: 0,
++                            rowOffset: 0,
++                            colOffset: dc,
++                            blockSize: 2,
++                            avatarUrl: randomUrl,
++                            anchor: anchorObj
++                        };
++                    }
++                }
++            }
++
+             // Crystal decorations disabled for cleaner look
+             if (false && isNearClearing && zone >= 1) {
+                 if (!clearingCrystals[zone]) {
+@@ -4360,6 +4708,19 @@ var persistentScores = {};
+         function hitBlock(col, row, force, source) {
+             var cell = getCell(row, col);
+             if (!cell || cell.t === E) return false;
++            
++            // Redirect hits on 2x2 block components to the top-left anchor cell
++            if (cell.t === AVATAR_BLOCK || cell.t === ROULETTE_BLOCK) {
++                var ar = row - (cell.rowOffset || 0);
++                var ac = col - (cell.colOffset || 0);
++                var anchorCell = getCell(ar, ac);
++                if (anchorCell) {
++                    cell = anchorCell;
++                    row = ar;
++                    col = ac;
++                }
++            }
++
+             var def = BDEF[cell.t];
+             if (cell.t === BEDROCK) return true;
+             cell.hp -= force;
+@@ -4389,9 +4750,26 @@ var persistentScores = {};
+                     addCycleScore(source.userName, pts, ITEM_DEFS[cell.t] ? 'item' : 'block');
+                 }
+                 sfxBreak(cell.t);
+-                cell.t = E; cell.cr = 0;
+-                // Check neighbors for unsupported blocks ÔåÆ make them fall
+-                checkFallingBlocks(col, row, source);
++
++                // If it is a 2x2 block, clear all 4 cells of the block to prevent ghost solid cells
++                if (cell.t === AVATAR_BLOCK || cell.t === ROULETTE_BLOCK) {
++                    var blockType = cell.t;
++                    for (var dr = 0; dr <= 1; dr++) {
++                        for (var dc = 0; dc <= 1; dc++) {
++                            var neighbor = getCell(row + dr, col + dc);
++                            if (neighbor && (neighbor.t === AVATAR_BLOCK || neighbor.t === ROULETTE_BLOCK)) {
++                                neighbor.t = E;
++                                neighbor.hp = 0;
++                                neighbor.cr = 0;
++                            }
++                        }
++                    }
++                    checkFallingBlocks(col, row, source);
++                } else {
++                    cell.t = E; cell.cr = 0;
++                    checkFallingBlocks(col, row, source);
++                }
++
+                 // Chance to spawn zombie ÔÇö increases with depth
+                 var zDepth = row;
+                 var zChance = zDepth > 10 ? Math.min(0.04, 0.005 + zDepth * 0.0005) : 0;
+@@ -5752,6 +6130,124 @@ var persistentScores = {};
+                     if (!cell || cell.t === E) continue;
+                     var x = c * TILE;
+                     var y = r * TILE;
++
++                    if (cell.t === AVATAR_BLOCK || cell.t === ROULETTE_BLOCK) {
++                        if (cell.rowOffset !== 0 || cell.colOffset !== 0) continue;
++                        var size = TILE * 2;
++                        var isRoul = (cell.t === ROULETTE_BLOCK);
++                        var d = Math.floor(TILE * 0.3);
++
++                        // Helper to draw the front/top/right face content
++                        var drawFaceContent = function(faceCtx, fx, fy, fw, fh) {
++                            if (isRoul) {
++                                faceCtx.fillStyle = '#aa22aa';
++                                faceCtx.fillRect(fx, fy, fw, fh);
++                                faceCtx.fillStyle = '#ffffff';
++                                faceCtx.font = '64px sans-serif';
++                                faceCtx.textAlign = 'center';
++                                faceCtx.textBaseline = 'middle';
++                                faceCtx.fillText('­ƒÄü', fx + fw / 2, fy + fh / 2);
++                            } else {
++                                var avatarImg = avatarCache[cell.avatarUrl];
++                                var animInfo = avatarAnimCache[cell.avatarUrl];
++                                var hasVideo = animInfo && animInfo.status === 'done' && animInfo.videoEl && animInfo.videoEl.readyState >= 2;
++                                
++                                if (hasVideo) {
++                                    faceCtx.drawImage(animInfo.videoEl, fx, fy, fw, fh);
++                                } else if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
++                                    faceCtx.drawImage(avatarImg, fx, fy, fw, fh);
++                                } else {
++                                    faceCtx.fillStyle = '#442288';
++                                    faceCtx.fillRect(fx, fy, fw, fh);
++                                    faceCtx.fillStyle = '#ffffff';
++                                    faceCtx.font = '48px sans-serif';
++                                    faceCtx.textAlign = 'center';
++                                    faceCtx.textBaseline = 'middle';
++                                    faceCtx.fillText('HD', fx + fw / 2, fy + fh / 2);
++                                }
++                            }
++                        };
++
++                        // 1. Draw FRONT FACE (frontal)
++                        ctx.save();
++                        ctx.translate(x, y);
++                        drawFaceContent(ctx, 0, 0, size, size);
++                        ctx.restore();
++
++                        // 2. Draw RIGHT FACE (lateral)
++                        ctx.save();
++                        ctx.translate(x, y - d);
++                        ctx.transform(d / size, -d / size, 0, 1, size, d);
++                        drawFaceContent(ctx, 0, 0, size, size);
++                        ctx.fillStyle = 'rgba(0,0,0,0.5)'; // Darken right face
++                        ctx.fillRect(0, 0, size, size);
++                        ctx.restore();
++
++                        // 3. Draw TOP FACE (topo)
++                        ctx.save();
++                        ctx.translate(x, y - d);
++                        ctx.transform(1, 0, -d / size, d / size, d, 0);
++                        drawFaceContent(ctx, 0, 0, size, size);
++                        ctx.fillStyle = 'rgba(255,255,255,0.2)'; // Lighten top face
++                        ctx.fillRect(0, 0, size, size);
++                        ctx.restore();
++
++                        // Draw mining cracks on the FRONT face if being broken
++                        if (cell.cr > 0.01) {
++                            var stage = Math.min(9, Math.floor(cell.cr * 10));
++                            var dtex = DESTROY_TEX[stage];
++                            if (dtex && dtex.complete) {
++                                ctx.drawImage(dtex, x, y, size, size);
++                            }
++                        }
++
++                        // Fix layering: if there is a solid block at (r + 1, c + 2), redraw it so it stays in front of the 2x2 block's right face
++                        var adjR = r + 1;
++                        var adjC = c + 2;
++                        var adjCell = getCell(adjR, adjC);
++                        if (adjCell && adjCell.t !== E) {
++                            var adjX = adjC * TILE;
++                            var adjY = adjR * TILE;
++                            
++                            var adjTex3d = B3D_TEX[adjCell.t];
++                            var adjTex = BTEX[adjCell.t];
++                            if (adjTex3d) {
++                                var depth1x1 = Math.floor(TILE * 0.3);
++                                ctx.drawImage(adjTex3d, adjX, adjY - depth1x1, adjTex3d.width, adjTex3d.height);
++                                var gTex = BGLOW_TEX[adjCell.t];
++                                if (gTex && gTex.complete && gTex.naturalWidth > 0) {
++                                    ctx.save();
++                                    ctx.globalCompositeOperation = 'lighter';
++                                    ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.005 + adjX * 0.1 + adjY * 0.1) * 0.4;
++                                    ctx.drawImage(gTex, adjX, adjY, TILE, TILE);
++                                    ctx.restore();
++                                }
++                            } else if (adjTex && adjTex.complete && adjTex.naturalWidth > 0) {
++                                ctx.drawImage(adjTex, adjX - 0.5, adjY - 0.5, TILE + 1, TILE + 1);
++                                var gTex = BGLOW_TEX[adjCell.t];
++                                if (gTex && gTex.complete && gTex.naturalWidth > 0) {
++                                    ctx.save();
++                                    ctx.globalCompositeOperation = 'lighter';
++                                    ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.005 + adjX * 0.1 + adjY * 0.1) * 0.4;
++                                    ctx.drawImage(gTex, adjX - 0.5, adjY - 0.5, TILE + 1, TILE + 1);
++                                    ctx.restore();
++                                }
++                            } else {
++                                ctx.fillStyle = BDEF[adjCell.t].color;
++                                ctx.fillRect(adjX - 0.5, adjY - 0.5, TILE + 1, TILE + 1);
++                            }
++
++                            if (adjCell.cr > 0.01) {
++                                var adjStage = Math.min(9, Math.floor(adjCell.cr * 10));
++                                var adjDtex = DESTROY_TEX[adjStage];
++                                if (adjDtex && adjDtex.complete && adjDtex.naturalWidth > 0) {
++                                    ctx.drawImage(adjDtex, adjX, adjY, TILE, TILE);
++                                }
++                            }
++                        }
++                        continue;
++                    }
++
+                     var tex3d = B3D_TEX[cell.t];
+                     var tex = BTEX[cell.t];
+ 
+@@ -8456,6 +8952,202 @@ var persistentScores = {};
+ 
+         // ÔöÇÔöÇ ├üudio ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+         var AC = null;
++        
++        function triggerRouletteMassDestruction(sourcePick, targetBlockType, prizeColor) {
++            var targets = [];
++            for (var r in worldMap) {
++                var row = worldMap[r];
++                for (var c = 0; c < COLS; c++) {
++                    if (row[c] && row[c].t === targetBlockType) {
++                        targets.push({ r: parseInt(r), c: c });
++                    }
++                }
++            }
++            if (targets.length === 0) return;
++
++            var sortedTargets = targets.sort(function(a,b) {
++                if(a.r !== b.r) return b.r - a.r;
++                return Math.abs(a.c - COLS/2) - Math.abs(b.c - COLS/2);
++            });
++
++            var idx = 0;
++            function destroyNext() {
++                if (idx >= sortedTargets.length) return;
++                var batchSize = Math.min(3, sortedTargets.length - idx);
++                for(var i=0; i<batchSize; i++) {
++                    var tg = sortedTargets[idx++];
++                    var cell = getCell(tg.r, tg.c);
++                    if (cell && cell.t === targetBlockType) {
++                        cell.t = E;
++                        cell.hp = 0;
++                        cell.cr = 0;
++                        var tx = tg.c * TILE + TILE / 2;
++                        var ty = tg.r * TILE + TILE / 2;
++                        spawnParts(tx, ty, prizeColor, 5);
++                        spawnDebris(tx, ty, targetBlockType, sourcePick);
++
++                        var px = sourcePick ? sourcePick.x : tx;
++                        var py = sourcePick ? sourcePick.y : (camY - 100);
++                        _lightningPass.push({
++                            x1: px, y1: py,
++                            x2: tx, y2: ty,
++                            color: prizeColor,
++                            life: 15
++                        });
++
++                        sfxBreak(targetBlockType);
++                        var pts = BDEF[targetBlockType].pts || 1;
++                        if (sourcePick && sourcePick.active) score += pts;
++                        spawnText(tx, ty, '+' + pts, prizeColor);
++                        if (sourcePick && sourcePick.userName) {
++                            var p = userPicks.find(function(u){return u.userName === sourcePick.userName;});
++                            if (p) p.score = (p.score || 0) + pts;
++                            if (persistentScores[sourcePick.userName]) persistentScores[sourcePick.userName].score += pts;
++                            addCycleScore(sourcePick.userName, pts, 'block');
++                        }
++                        checkFallingBlocks(tg.c, tg.r + 1, sourcePick);
++                    }
++                }
++                if (idx < sortedTargets.length) {
++                    setTimeout(destroyNext, 80);
++                }
++            }
++            destroyNext();
++        }
++
++        function spawnSpecialRoulette(sourcePick) {
++            if (_rouletteActive) return;
++            _rouletteActive = true;
++
++            var container = document.getElementById('rouletteContainer');
++            if (!container) {
++                container = document.createElement('div');
++                container.id = 'rouletteContainer';
++                container.style.cssText = 'position: absolute; top: 80px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10000; flex-wrap: wrap; justify-content: center; width: 100%; max-width: 100%;';
++                (document.getElementById('gameWrapper') || document.body).appendChild(container);
++            }
++
++            var wheelDiv = document.createElement('div');
++            wheelDiv.style.cssText = 'width: 143px; height: 143px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: rgba(0, 0, 0, 0.4); border-radius: 50%;';
++
++            var wCanvas = document.createElement('canvas');
++            wCanvas.width = 117;
++            wCanvas.height = 117;
++            wCanvas.style.background = 'transparent';
++            wCanvas.style.borderRadius = '50%';
++            wheelDiv.appendChild(wCanvas);
++
++            var pointer = document.createElement('div');
++            pointer.style.cssText = 'width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 12px solid #ffd700; position: absolute; top: 5px; left: 50%; transform: translateX(-50%); z-index: 10; filter: drop-shadow(0 0 5px #ffd700);';
++            wheelDiv.appendChild(pointer);
++
++            container.appendChild(wheelDiv);
++
++            var wCtx = wCanvas.getContext('2d');
++            var prizes = [
++                { blockType: DIAMOND, color: 'rgba(0, 242, 234, 0.6)' },
++                { blockType: GOLD,    color: 'rgba(255, 200, 0, 0.6)' },
++                { blockType: EMERALD, color: 'rgba(50, 205, 50, 0.6)' },
++                { blockType: COPPER,  color: 'rgba(200, 100, 40, 0.6)' },
++                { blockType: LAPIS,   color: 'rgba(0, 102, 255, 0.6)' },
++                { blockType: COAL,    color: 'rgba(80, 80, 80, 0.6)'  }
++            ];
++
++            var angle = 0;
++            var speed = 0.2 + Math.random() * 0.2;
++            var deceleration = 0.002;
++            var spinning = true;
++
++            function drawWheel() {
++                wCtx.clearRect(0, 0, 117, 117);
++                var arc = Math.PI * 2 / prizes.length;
++
++                wCtx.save();
++                wCtx.translate(58.5, 58.5);
++                wCtx.rotate(angle);
++                wCtx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
++                wCtx.lineWidth = 1;
++
++                for (var i = 0; i < prizes.length; i++) {
++                    wCtx.beginPath();
++                    wCtx.fillStyle = prizes[i].color;
++                    wCtx.moveTo(0, 0);
++                    wCtx.arc(0, 0, 56, i * arc, (i + 1) * arc);
++                    wCtx.fill();
++                    wCtx.stroke();
++
++                    wCtx.save();
++                    wCtx.rotate(i * arc + arc / 2);
++                    var itemImg = ITEX[prizes[i].blockType];
++                    if (itemImg && itemImg.complete && itemImg.naturalWidth > 0) {
++                        wCtx.drawImage(itemImg, 26, -13, 26, 26);
++                    }
++                    wCtx.restore();
++                }
++                wCtx.restore();
++
++                wCtx.beginPath();
++                wCtx.arc(58.5, 58.5, 56, 0, Math.PI * 2);
++                wCtx.lineWidth = 2;
++                wCtx.strokeStyle = '#fff';
++                wCtx.stroke();
++
++                wCtx.beginPath();
++                wCtx.arc(58.5, 58.5, 21, 0, Math.PI * 2);
++                wCtx.fillStyle = 'rgba(0,0,0,0.7)';
++                wCtx.fill();
++                wCtx.lineWidth = 2;
++                wCtx.strokeStyle = '#ffd700';
++                wCtx.stroke();
++
++                wCtx.fillStyle = '#ffd700';
++                wCtx.font = 'bold 18px Arial';
++                wCtx.textAlign = 'center';
++                wCtx.textBaseline = 'middle';
++                wCtx.fillText('ÔÜí', 58.5, 58.5);
++            }
++
++            var lastPrizeIndex = -1;
++
++            function animate() {
++                if (!spinning) return;
++                angle += speed;
++                speed -= deceleration;
++
++                var normalizedAngle = (angle % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
++                var localAngle = (Math.PI * 1.5 - normalizedAngle);
++                if (localAngle < 0) localAngle += Math.PI * 2;
++                var arc = Math.PI * 2 / prizes.length;
++                var prizeIndex = Math.floor(localAngle / arc);
++
++                if (prizeIndex !== lastPrizeIndex) {
++                    if (typeof sfxRouletteTick === 'function') sfxRouletteTick();
++                    lastPrizeIndex = prizeIndex;
++                }
++
++                if (speed <= 0) {
++                    spinning = false;
++                    speed = 0;
++                    var prize = prizes[prizeIndex];
++
++                    setTimeout(function () {
++                        triggerRouletteMassDestruction(sourcePick, prize.blockType, prize.color);
++                        wheelDiv.style.borderColor = '#00ff00';
++                        setTimeout(function () {
++                            wheelDiv.remove();
++                            if (container.children.length === 0) container.remove();
++                            _rouletteActive = false;
++                        }, 2000);
++                    }, 500);
++                }
++
++                drawWheel();
++                if (spinning) requestAnimationFrame(animate);
++            }
++            animate();
++        }
++
++
+         function getAC() {
+             if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+             if (AC.state === 'suspended') AC.resume();
+@@ -9335,7 +10027,90 @@ var persistentScores = {};
+ 
+         var processedComments = new Set();
+         var avatarCache = {};
++
++        
++        var approved_animations = {};
++        try {
++            var stored = localStorage.getItem('approved_animations');
++            if (stored) {
++                approved_animations = JSON.parse(stored);
++            }
++        } catch(e){}
++
++        // FOR├çAR A LIMPEZA DAS ANIMA├ç├òES APROVADAS PARA QUEBRAR O LOOP
++        approved_animations = {};
++        localStorage.removeItem('approved_animations');
++
++        function saveApprovedAnimations() {
++            localStorage.setItem('approved_animations', JSON.stringify(approved_animations));
++        }
++
++        // We will call this once avatar list is loaded
++        function preloadApprovedAnimations() {
++            if (!availableAvatars) return;
++            availableAvatars.forEach(function(url) {
++                var parts = url.split('/');
++                var fileName = parts[parts.length - 1];
++                var userId = fileName.split('_')[0];
++                if (userId && approved_animations[userId]) {
++                    requestAvatarAnimation(url, userId);
++                }
++            });
++        }
++
++        var avatarAnimCache = {}; // { [avatarUrl]: { status:'pending'|'done'|'error', videoEl } }
++        function requestAvatarAnimation(url, userId) {
++            if (!url || !userId) return;
++            if (avatarAnimCache[url]) return; // J├í foi solicitado, finalizado ou deu erro
++
++            avatarAnimCache[url] = { status: 'pending', videoEl: null };
++            console.log(`[Animate] Requesting animation for ${userId}`);
++            renderAnimationPanel(); // Update immediately to show "Processando"
++
++            fetch(`/api/animate-face?url=${encodeURIComponent(url)}&id=${encodeURIComponent(userId)}`)
++                .then(res => res.json())
++                .then(data => {
++                    if (data && (data.status === 'success' || data.status === 'cached') && data.url) {
++                        var v = document.createElement('video');
++                        v.muted = true;
++                        v.loop = true;
++                        v.autoplay = true;
++                        v.playsInline = true;
++                        v.crossOrigin = 'anonymous';
++                        
++                        var finalizeVideo = function() {
++                            v.play().catch(e => console.warn('[Video] Play error:', e));
++                            avatarAnimCache[url].status = 'done';
++                            avatarAnimCache[url].videoEl = v;
++                            console.log(`[Animate] Video ready for ${userId}`);
++                            renderAnimationPanel(); // Update panel to show "Animado"
++                        };
++
++                        v.onloadeddata = finalizeVideo;
++                        v.oncanplay = finalizeVideo;
++                        
++                        v.onerror = function() {
++                            avatarAnimCache[url].status = 'error';
++                            console.error(`[Animate] Video load error for ${userId}`);
++                            renderAnimationPanel();
++                        };
++                        v.src = data.url;
++                    } else {
++                        avatarAnimCache[url].status = 'error';
++                        console.error(`[Animate] API error for ${userId}:`, data.error);
++                        renderAnimationPanel();
++                    }
++                })
++                .catch(e => {
++                    console.error('[Animate] Fetch error:', e);
++                    avatarAnimCache[url].status = 'error';
++                    renderAnimationPanel();
++                });
++        }
++
+         var _avatarLoading = {};
++        var _rouletteActive = false;
++        var _lightningPass = [];
+         var _avatarDataCache = {};
+         try { _avatarDataCache = JSON.parse(localStorage.getItem('pd_avatar_data') || '{}'); } catch (e) { _avatarDataCache = {}; }
+         function _saveAvatarDataCache() { try { var keys = Object.keys(_avatarDataCache); if (keys.length > 200) { var del = keys.slice(0, keys.length - 200); del.forEach(function (k) { delete _avatarDataCache[k]; }); } localStorage.setItem('pd_avatar_data', JSON.stringify(_avatarDataCache)); } catch (e) { } }
+@@ -10190,6 +10965,22 @@ var persistentScores = {};
+             // Precarrega avatar
+             if (avatarUrl) loadAvatar(avatarUrl);
+ 
++            // Gera avatar HD em segundo plano (se for URL do TikTok)
++            if (avatarUrl && !avatarUrl.includes('avatares_hd')) {
++                fetch(`/api/upscale?id=${encodeURIComponent(userName)}&url=${encodeURIComponent(avatarUrl)}`)
++                    .then(res => res.json())
++                    .then(data => {
++                        if (data && data.url && persistentScores[userName]) {
++                            persistentScores[userName].avatar = data.url;
++                            if (p && p.userAvatarUrl !== data.url) {
++                                p.userAvatarUrl = data.url;
++                                loadAvatar(data.url);
++                            }
++                        }
++                    })
++                    .catch(e => console.error('[Upscale] Erro:', e));
++            }
++
+             var refP = (pick.active) ? pick : (camTarget || pick);
+             var p = {
+                 x: refP.x,
+@@ -10914,6 +11705,34 @@ var persistentScores = {};
+                 ctx.beginPath(); ctx.arc(p.x, p.y, gr, 0, Math.PI * 2); ctx.fill();
+             }
+             ctx.restore();
++
++            // Thor Lightning Pass
++            ctx.save();
++            ctx.lineCap = 'round';
++            for (var i = _lightningPass.length - 1; i >= 0; i--) {
++                var l = _lightningPass[i];
++                l.life--;
++                if (l.life <= 0) {
++                    _lightningPass.splice(i, 1);
++                    continue;
++                }
++                var p = l.life / 15; // 1 to 0
++                ctx.beginPath();
++                ctx.moveTo(l.x1, l.y1 - camY);
++                ctx.lineTo(l.x2, l.y2 - camY);
++                ctx.strokeStyle = l.color;
++                ctx.lineWidth = 6 * p;
++                ctx.stroke();
++                
++                ctx.beginPath();
++                ctx.moveTo(l.x1, l.y1 - camY);
++                ctx.lineTo(l.x2, l.y2 - camY);
++                ctx.strokeStyle = '#fff';
++                ctx.lineWidth = 2 * p;
++                ctx.stroke();
++            }
++            ctx.restore();
++
+         }
+ 
+         function spawnRoulette(userName) {
+@@ -12548,6 +13367,10 @@ var persistentScores = {};
+             persistentScores = {};
+             _cycleScores = {};
+             localStorage.removeItem('pd_cycle_scores');
++            
++            // Limpa tamb├®m as anima├º├Áes aprovadas para evitar spam na API Replicate
++            approved_animations = {};
++            localStorage.removeItem('approved_animations');
+ 
+             // For├ºa atualiza├º├úo do leaderboard
+             updateLeaderboard();

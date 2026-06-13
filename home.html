@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Falling Pickaxe Drop</title>
+    <link rel="stylesheet" href="css/home.css">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>" />
+</head>
+<body>
+    <div id="particles-container"></div>
+    <div id="enemies-container"></div>
+    <div id="pickaxe-falling-container"></div>
+
+    <div class="hero">
+        <!-- Título feito com textura de bloco -->
+        <h1 id="game-title" class="block-text">
+            <span>F</span><span>A</span><span>L</span><span>L</span><span>I</span><span>N</span><span>G</span><br>
+            <span>P</span><span>I</span><span>C</span><span>K</span><span>A</span><span>X</span><span>E</span><br>
+            <span>D</span><span>R</span><span>O</span><span>P</span>
+        </h1>
+        <p class="subtitle">O jogo interativo onde sua live pega fogo! 🔥</p>
+    </div>
+
+    <div class="main-content">
+        <div class="card offline-card">
+            <img src="mario/mario.png" alt="Offline Mode" class="card-icon bounce">
+            <h2>Modo Offline</h2>
+            <p>Jogue sozinho para conhecer os comandos, treinar suas defesas e explorar os blocos do jogo! Sem precisar de internet.</p>
+            <div class="input-group">
+                <input type="text" id="offlineName" placeholder="Seu Nickname..." autocomplete="off">
+                <button id="btnPlayOffline" class="btn btn-primary">JOGAR OFFLINE</button>
+            </div>
+        </div>
+
+        <div class="card online-card">
+            <img src="tiktok.png" alt="TikTok Live" class="card-icon spin-slow">
+            <h2>Modo Live (Online)</h2>
+            <p>Conecte na sua live do <strong style="color: #ff0050;">TikTok</strong> ou <strong style="color: #ff0000;">YouTube</strong>. Ganhe muitos seguidores e presentes enquanto o chat interage com você!</p>
+            <button id="btnPlayOnline" class="btn btn-secondary">CONFIGURAR LIVE</button>
+        </div>
+    </div>
+
+    <script src="js/home.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+﻿diff --git a/index.html b/index.html
+index b0084df..484696e 100644
+--- a/index.html
++++ b/index.html
+@@ -321,7 +321,7 @@
+         <button class="ui-action-btn ui-btn-report" onclick="generateScoreReport()" style="background: #3a86ff; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">­ƒôè Relat├│rio</button>
+         <button class="ui-action-btn ui-btn-reset" onclick="resetAllScores()" style="background: #ef233c; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">­ƒöä Zerar</button>
+         <button class="ui-action-btn ui-btn-music" id="btnMusic" style="background: #8338ec; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">­ƒÄÁ Trilha</button>
+-        <button class="ui-action-btn ui-btn-video" onclick="cycleBgVideo()" style="background: #ff006e; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">­ƒô╣ V├¡deo</button>
++                <button class="ui-action-btn ui-btn-video" onclick="cycleBgVideo()" style="background: #ff006e; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">­ƒô╣ V├¡deo</button>
+         <input type="file" id="bgmFileInput" accept="audio/*" style="display:none">
+     </div>
+ 
+@@ -432,6 +432,16 @@
+         </div>
+     </div>
+ 
++    <!-- Animation Control Panel -->
++    <div id="animationControlModal" style="background: rgba(20, 20, 30, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 15px; margin-left: 10px; display: flex; flex-direction: column; gap: 10px; color: #fff; font-family: 'Inter', sans-serif; width: fit-content; max-width: 600px; height: fit-content; max-height: calc(100vh - 40px); align-self: flex-start; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
++        <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; color: #aa22aa; font-size: 14px; text-align: center;">­ƒÄ¡ ANIMA├ç├òES HD</h3>
++        
++        <div id="animGrid" style="flex:1; overflow-y:auto; overflow-x:hidden; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; align-content:start; padding-right: 5px;">
++            <!-- Cards renderizados via app.js -->
++        </div>
++    </div>
++
++
+     <!-- Player Management Panel -->
+     <div id="playerManagementPanel" style="background: rgba(20, 20, 30, 0.9); backdrop-filter: blur(10px); border-left: 1px solid rgba(255, 255, 255, 0.1); padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; font-family: 'Inter', sans-serif; width: 56.25vh; height: 100vh; position: fixed; right: 0; top: 0; box-shadow: -4px 0 15px rgba(0,0,0,0.5); z-index: 1000;">
+         <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; color: #ffdd44; font-size: 16px; text-align: center;">­ƒæÑ JOGADORES</h3>
+@@ -442,7 +452,9 @@
+     </div>
+     
+ 
+-    <script src="js/app.js"></script>
++    <script src="js/app.js?v=9"></script>
++
++
+ </body>
+ 
+ </html>

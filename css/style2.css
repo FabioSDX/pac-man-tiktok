@@ -333,8 +333,136 @@
             text-shadow: 0 1px 3px #000;
         }
 
-        #announceOverlay {
+        /* Custom banners for death and PvP kills */
+        .death-announce-card {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
+            margin-bottom: 10px;
+            animation: announceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #fff;
+        }
+
+        .death-announce-card.fade-out {
+            animation: announceOut 0.4s ease-in forwards;
+        }
+
+        .death-announce-card .avatar-container {
+            position: relative;
+        }
+
+        .death-announce-card .death-avatar {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            border: 2px solid #ff4444;
+            object-fit: cover;
+            box-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+        }
+
+        .death-announce-card .skull-icon {
             position: absolute;
+            bottom: -5px;
+            right: -5px;
+            font-size: 20px;
+            background: #222;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ff4444;
+        }
+
+        .death-announce-card .death-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .death-announce-card .death-title {
+            font-size: 14px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #ff6666;
+            text-shadow: 0 0 8px rgba(255, 102, 102, 0.6);
+        }
+
+        .death-announce-card .death-name {
+            font-size: 20px;
+            font-weight: 900;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+        }
+
+        .kill-announce-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: none;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
+            margin-bottom: 10px;
+            animation: comboPopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards;
+            font-family: 'Inter', Arial, sans-serif;
+            color: #fff;
+            max-width: 300px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .kill-announce-card.fade-out {
+            animation: comboPopOut 0.4s cubic-bezier(0.6, -0.28, 0.735, 0.045) forwards;
+        }
+
+        .kill-announce-card .killer-avatar {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            border: 3px solid #ffdd44;
+            object-fit: cover;
+            box-shadow: 0 0 12px rgba(255, 221, 68, 0.8);
+            transition: transform 0.2s;
+        }
+
+        .kill-announce-card .victim-avatar {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            border: 3px solid #ff4444;
+            object-fit: cover;
+            box-shadow: 0 0 12px rgba(255, 68, 68, 0.8);
+        }
+
+        .kill-announce-card .vs-swords {
+            font-size: 26px;
+            animation: swordsBounce 1.5s infinite ease-in-out;
+            filter: drop-shadow(0 0 10px #ffdd44);
+        }
+            max-width: 110px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        @keyframes swordsBounce {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            50% { transform: scale(1.25) rotate(15deg); }
+        }
+
+#announceOverlay {
+position: absolute;
             top: 0;
             left: 0;
             width: 100%;
@@ -451,14 +579,7 @@
         }
 
         .upgrade-glow-aura {
-            position: absolute;
-            width: 300px;
-            height: 300px;
-            background: radial-gradient(circle, rgba(0, 255, 136, 0.25) 0%, rgba(0, 0, 0, 0) 70%);
-            border-radius: 50%;
-            animation: auraPulse 2s infinite ease-in-out;
-            z-index: 1;
-            pointer-events: none;
+            display: none;
         }
 
         .upgrade-content-box {
@@ -483,9 +604,8 @@
             height: 100%;
             border-radius: 50%;
             border: 4px solid #fff;
-            box-shadow: 0 0 25px rgba(255, 215, 0, 0.8), inset 0 0 10px rgba(0,0,0,0.5);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
             object-fit: cover;
-            animation: avatarPulse 2.5s infinite ease-in-out;
         }
 
         .upgrade-pickaxes-container {
@@ -522,10 +642,9 @@
             color: #ffd700;
             text-transform: uppercase;
             letter-spacing: 2px;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 15px #ffd700;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
             margin-top: 10px;
             text-align: center;
-            animation: textPulse 1.5s infinite ease-in-out;
         }
 
         .upgrade-user-text {
@@ -594,14 +713,7 @@
         }
 
         .sword-glow-aura {
-            position: absolute;
-            width: 320px;
-            height: 320px;
-            background: radial-gradient(circle, rgba(255, 68, 68, 0.25) 0%, rgba(0, 0, 0, 0) 70%);
-            border-radius: 50%;
-            animation: swordAuraPulse 2s infinite ease-in-out;
-            z-index: 1;
-            pointer-events: none;
+            display: none;
         }
 
         .sword-content-box {
@@ -626,7 +738,7 @@
             height: 100%;
             border-radius: 50%;
             border: 3px solid #fff;
-            box-shadow: 0 0 20px rgba(255, 68, 68, 0.8), inset 0 0 10px rgba(0,0,0,0.5);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
             object-fit: cover;
         }
 
@@ -648,7 +760,6 @@
             opacity: 0;
             transform: scale(0) rotate(-180deg);
             animation: swordSpinIn 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-            filter: drop-shadow(0 0 15px currentColor);
         }
 
         .sword-title-text {
@@ -657,10 +768,9 @@
             color: #ff4444;
             text-transform: uppercase;
             letter-spacing: 2px;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 15px currentColor;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
             margin-top: 10px;
             text-align: center;
-            animation: swordTextPulse 1.5s infinite ease-in-out;
         }
 
         .sword-user-text {
@@ -1130,7 +1240,6 @@
             gap: 4px;
             margin-bottom: 4px;
             font-size: 13px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             padding-bottom: 3px;
         }
 
@@ -2251,6 +2360,7 @@
     padding: 8px 12px !important;
     margin-bottom: 6px !important;
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+    pointer-events: auto !important;
 }
 
 .cmd-row:hover {
@@ -2289,4 +2399,122 @@
 canvas, #gameCanvas {
     position: relative !important;
     z-index: 1 !important;
+}
+
+/* --- Combo Kill Banners --- */
+.kill-announce-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    margin-bottom: 12px;
+    animation: comboPopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards;
+    font-family: 'Inter', Arial, sans-serif;
+    color: #fff;
+    text-align: center;
+    min-width: 280px;
+    transition: all 0.3s ease;
+}
+
+.kill-announce-card.fade-out {
+    animation: comboPopOut 0.4s cubic-bezier(0.6, -0.28, 0.735, 0.045) forwards;
+}
+
+/* Combo 1: Basic Abate */
+.kill-combo-1 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+.kill-combo-1 .announce-title {
+    color: #ffd700 !important;
+    text-shadow: 0 0 12px rgba(255, 215, 0, 0.7), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* Combo 2: Double Kill */
+.kill-combo-2 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+.kill-combo-2 .announce-title {
+    color: #00bfff !important;
+    text-shadow: 0 0 18px rgba(0, 191, 255, 0.9), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* Combo 3: Triple Kill */
+.kill-combo-3 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+.kill-combo-3 .announce-title {
+    color: #ff0080 !important;
+    text-shadow: 0 0 20px rgba(255, 0, 128, 1), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* Combo 4: Ultra Kill */
+.kill-combo-4 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    animation: comboPopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards, comboShake 0.5s infinite ease-in-out !important;
+}
+.kill-combo-4 .announce-title {
+    color: #ff4500 !important;
+    text-shadow: 0 0 22px rgba(255, 69, 0, 1), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* Combo 5: Mega Kill */
+.kill-combo-5 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    animation: comboPopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards, comboShake 0.4s infinite ease-in-out !important;
+}
+.kill-combo-5 .announce-title {
+    color: #00ff88 !important;
+    text-shadow: 0 0 28px rgba(0, 255, 136, 1), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* Combo 6: Monster Kill */
+.kill-combo-6 {
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    animation: comboPopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards, comboShake 0.3s infinite ease-in-out !important;
+}
+.kill-combo-6 .announce-title {
+    color: #df00ff !important;
+    text-shadow: 0 0 32px rgba(223, 0, 255, 1), 0 0 16px rgba(223, 0, 255, 0.7), 0 2px 8px rgba(0,0,0,0.8) !important;
+}
+
+/* ── Like to Return — Leaderboard mensagem piscante ──────────────────── */
+@keyframes likeToReturnBlink {
+    0%, 100% {
+        opacity: 1;
+        color: #00ff88;
+        text-shadow: 0 0 6px rgba(0, 255, 136, 0.8);
+    }
+    50% {
+        opacity: 0.25;
+        color: #00cc66;
+        text-shadow: none;
+    }
+}
+
+.lb-like-to-return {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    animation: likeToReturnBlink 0.9s infinite ease-in-out;
+    display: block;
+    white-space: nowrap;
 }

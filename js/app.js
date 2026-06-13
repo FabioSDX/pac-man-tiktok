@@ -3,6 +3,7 @@ var persistentScores = {};
         var ownerName = '';
         var _cycleScores = {};
         var lastActivity = {};
+        var _deadPlayers = {}; // { userName: { avatar, deathTime } } — mortos aguardando like para respawn
         // --- Otimização: Fila de Eventos ---
         var liveEventQueue = [];
         var _lastEventProcessTime = 0;
@@ -10,6 +11,80 @@ var persistentScores = {};
         var lastGiftRepeat = {}; // Tracker para evitar sobrecontagem em combos do TikTok
         var lastGiftProcessed = new Map(); // Tracker para evitar duplicação de eventos reais em curto intervalo
         var lastHeartDamage = {}; // Tracker para cooldown de dano (0.5 hearts)
+
+        // --- Volume Settings & Audio Registry ---
+        var gameSoundsVolume = parseFloat(localStorage.getItem('pd_gamesounds_volume') || '0.5');
+        var musicVolume = parseFloat(localStorage.getItem('pd_music_volume') || '0.5');
+        var messagesVolume = parseFloat(localStorage.getItem('pd_messages_volume') || '0.5');
+        var allSFXElements = [];
+        var gameSoundsGainNode = null;
+        var musicGainNode = null;
+        var currentMessageAudio = null;
+
+        function createSFX(src, baseVol) {
+            var audio = new Audio(src);
+            audio.baseVolume = baseVol !== undefined ? baseVol : 1.0;
+            audio.volume = audio.baseVolume * gameSoundsVolume;
+            allSFXElements.push(audio);
+            return audio;
+        }
+
+        function createSFXArray(sources, baseVol) {
+            return sources.map(function(src) {
+                return createSFX(src, baseVol);
+            });
+        }
+
+        function cloneSFX(audioElement) {
+            var cloned = audioElement.cloneNode();
+            cloned.baseVolume = audioElement.baseVolume !== undefined ? audioElement.baseVolume : 1.0;
+            cloned.volume = cloned.baseVolume * gameSoundsVolume;
+            return cloned;
+        }
+
+        function updateGameSoundsVolume(newVolume) {
+            gameSoundsVolume = newVolume;
+            localStorage.setItem('pd_gamesounds_volume', newVolume);
+            allSFXElements.forEach(function(audio) {
+                audio.volume = audio.baseVolume * gameSoundsVolume;
+            });
+            if (gameSoundsGainNode) {
+                gameSoundsGainNode.gain.value = gameSoundsVolume;
+            }
+        }
+
+        function updateMusicVolume(newVolume) {
+            musicVolume = newVolume;
+            localStorage.setItem('pd_music_volume', newVolume);
+            if (musicGainNode) {
+                musicGainNode.gain.value = musicVolume;
+            }
+        }
+
+        function updateMessagesVolume(newVolume) {
+            messagesVolume = newVolume;
+            localStorage.setItem('pd_messages_volume', newVolume);
+            if (currentMessageAudio) {
+                currentMessageAudio.volume = messagesVolume;
+            }
+        }
+
+        window.changeVolume = function(type, val) {
+            var floatVal = parseFloat(val) / 100;
+            if (type === 'game') {
+                updateGameSoundsVolume(floatVal);
+                var el = document.getElementById('gameVolumeVal');
+                if (el) el.textContent = val + '%';
+            } else if (type === 'music') {
+                updateMusicVolume(floatVal);
+                var el = document.getElementById('musicVolumeVal');
+                if (el) el.textContent = val + '%';
+            } else if (type === 'messages') {
+                updateMessagesVolume(floatVal);
+                var el = document.getElementById('messagesVolumeVal');
+                if (el) el.textContent = val + '%';
+            }
+        };
 
         const INITIAL_HEART_SLOTS = 3;
         const MAX_HEART_SLOTS = 10;
@@ -150,7 +225,7 @@ var persistentScores = {};
                 item.appendChild(cb);
                 
                 var avatar = document.createElement('img');
-                avatar.src = data.avatar || 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
+                avatar.src = getProxyUrl(data.avatar) || 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y';
                 avatar.style.width = '24px';
                 avatar.style.height = '24px';
                 avatar.style.borderRadius = '50%';
@@ -187,7 +262,7 @@ var persistentScores = {};
         var bgVideoActive = false;
 
         function loadVideoList() {
-            fetch('/video-list')
+            fetch('/proxy.php?path=/video-list')
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
                     if (data.files && data.files.length > 0) {
@@ -475,11 +550,11 @@ var persistentScores = {};
             chickenFrames.push(img);
         }
         var chickenSounds = [
-            new Audio('sons/galinha um.ogg'),
-            new Audio('sons/galinha dois.ogg')
+            createSFX('sons/galinha um.ogg', 1.0),
+            createSFX('sons/galinha dois.ogg', 1.0)
         ];
-        var homerSound = new Audio('homer/homer.mp3');
-        var coinSound = new Audio('sons/coin sound.mp3');
+        var homerSound = createSFX('homer/homer.mp3', 1.0);
+        var coinSound = createSFX('sons/coin sound.mp3', 1.0);
         var steveFrames = [];
         for (var i = 0; i <= 20; i++) {
             var img = new Image();
@@ -1041,7 +1116,11 @@ var persistentScores = {};
                         }
                         witherSkeletons.splice(wsi, 1);
                         spawnText(ws.x, ws.y, '💀 DEAD', '#ffffff');
-                        if (b.userName) addCycleScore(b.userName, 50, 'kill');
+                        if (b.userName) {
+                            var _tntKiller = findPickForTarget(b.userName);
+                            if (_tntKiller) registerKill(_tntKiller, 'wither_skeleton');
+                            addCycleScore(b.userName, 50, 'kill');
+                        }
                     } else {
                         playWitherHurt();
                     }
@@ -1407,18 +1486,18 @@ var persistentScores = {};
                     c.pickaxe = {
                         name: 'Gold',
                         color: '#ffd700',
-                        damage: 1.5, // Dano base de ouro + bônus
+                        damage: 1.5,
                         imgObj: SWORD_ASSETS['Gold']
                     };
-                    c.bigTimer = p.goldSwordsTimer;
+                    // bigTimer NÃO é sincronizado — companions usam bigTimer=0 sempre
                 } else if (isExtraDiamond) {
                     c.pickaxe = {
                         name: 'Diamond',
                         color: '#00ffff',
-                        damage: 3.0, // Dano base de diamante + bônus
+                        damage: 3.0,
                         imgObj: SWORD_ASSETS['Diamond']
                     };
-                    c.bigTimer = p.diamondSwordsTimer;
+                    // bigTimer NÃO é sincronizado
                     c.isExtraSword = false;
                 } else if (compIdx > baseCount + goldExtra + diamondExtra) {
                     var sIdx = compIdx - (baseCount + goldExtra + diamondExtra) - 1;
@@ -1429,12 +1508,12 @@ var persistentScores = {};
                         damage: sData.damage,
                         imgObj: SWORD_ASSETS[sData.type]
                     };
-                    c.bigTimer = sData.timer;
+                    // bigTimer NÃO é sincronizado
                     c.isExtraSword = true;
                     c.swordType = sData.type;
                 } else {
                     c.pickaxe = inventory[compIdx];
-                    c.bigTimer = p.bigTimer || 0;
+                    // bigTimer NÃO é sincronizado
                     c.isExtraSword = false;
                 }
                 c.swordTimer = p.swordTimer || 0;
@@ -1584,8 +1663,8 @@ var persistentScores = {};
                 dragonFrames.push(img);
             }
             // Sons do Dragão
-            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(new Audio('sons/dragon_idle' + i + '.ogg'));
-            for (var i = 1; i <= 6; i++) dragonFlapSounds.push(new Audio('sons/dragon_flap' + i + '.ogg'));
+            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(createSFX('sons/dragon_idle' + i + '.ogg', 1.0));
+              for (var i = 1; i <= 6; i++) dragonFlapSounds.push(createSFX('sons/dragon_flap' + i + '.ogg', 1.0));
         }
         loadDragonAssets();
 
@@ -2037,6 +2116,20 @@ var persistentScores = {};
             var savedUser = pick.userName;
             var savedAvatar = pick.userAvatarUrl;
             var savedStormTimer = pick.stormTimer || 0;
+
+            var oName = savedUser || ownerName || '@Player';
+            if (oName) {
+                if (!persistentScores[oName]) {
+                    persistentScores[oName] = {
+                        score: 0, likes: 0, giftsValue: 0,
+                        health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS
+                    };
+                } else {
+                    persistentScores[oName].health = INITIAL_HEART_SLOTS;
+                }
+            }
+            pick.active = true;
+
             pick.x = TILE * 2 + Math.random() * (canvas.width - TILE * 4);
             pick.y = camY + TILE * 2;
             pick.vx = (Math.random() - 0.5) * 12;
@@ -2799,6 +2892,121 @@ var persistentScores = {};
             }
         }
 
+        function resolvePlayerPlayerCollisions() {
+            var all = [];
+            if (pick && pick.active) {
+                all.push(pick);
+            }
+            for (var u = 0; u < userPicks.length; u++) {
+                var up = userPicks[u];
+                if (up) {
+                    all.push(up);
+                    if (up.companions) {
+                        for (var c = 0; c < up.companions.length; c++) {
+                            if (up.companions[c]) {
+                                all.push(up.companions[c]);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (var i = 0; i < all.length; i++) {
+                var a = all[i];
+                var ownerA = a.userName || ownerName || '@owner';
+                for (var j = i + 1; j < all.length; j++) {
+                    var b = all[j];
+                    var ownerB = b.userName || ownerName || '@owner';
+                    
+                    if (ownerA === ownerB) continue;
+
+                    var dx = a.x - b.x;
+                    var dy = a.y - b.y;
+                    var distSq = dx * dx + dy * dy;
+                    var minDist = (a.halfSize || PICK_HALF) + (b.halfSize || PICK_HALF);
+                    
+                    if (distSq > 0 && distSq < minDist * minDist) {
+                        var dist = Math.sqrt(distSq);
+                        var nx = dx / dist;
+                        var ny = dy / dist;
+                        
+                        var overlap = (minDist - dist) * 0.5;
+                        a.x += nx * overlap;
+                        a.y += ny * overlap;
+                        b.x -= nx * overlap;
+                        b.y -= ny * overlap;
+
+                        var relVx = a.vx - b.vx;
+                        var relVy = a.vy - b.vy;
+                        var dot = relVx * (-nx) + relVy * (-ny);
+                        if (dot > 0) {
+                            var impulse = dot * 1.2;
+                            a.vx += nx * impulse;
+                            a.vy += ny * impulse;
+                            b.vx -= nx * impulse;
+                            b.vy -= ny * impulse;
+                        }
+
+                        var aIsSword = isSwordState(a);
+                        var bIsSword = isSwordState(b);
+
+                        if (aIsSword && bIsSword) {
+                            // SWORD CLASH / PARRY!
+                            sfxSwordHit();
+                            var midX = (a.x + b.x) * 0.5;
+                            var midY = (a.y + b.y) * 0.5;
+                            spawnParts(midX, midY, '#ffdd00', 15); // gold sparks
+                            spawnText(midX, midY - 20, '⚔️ CLASH!', '#ffdd00');
+                            
+                            // Strong clash pushback force
+                            var clashKb = 8;
+                            a.vx += nx * clashKb;
+                            a.vy += ny * clashKb;
+                            b.vx -= nx * clashKb;
+                            b.vy -= ny * clashKb;
+                            
+                            // Unstick
+                            a.stuck = false;
+                            b.stuck = false;
+                        } else if (aIsSword && !bIsSword) {
+                            // A hits B
+                            applyDamage(ownerB, 0.5, ownerA);
+                            if (_audioStarted) playWitherHurt();
+                            spawnParts(b.x, b.y, b.color || '#ff3333', 10);
+                            spawnText(b.x, b.y - 20, '💥 -0.5 HP', '#ff3333');
+                            
+                            // Knockback B
+                            var kb = 6;
+                            b.vx -= nx * kb;
+                            b.vy -= ny * kb;
+                            b.stuck = false;
+                        } else if (bIsSword && !aIsSword) {
+                            // B hits A
+                            applyDamage(ownerA, 0.5, ownerB);
+                            if (_audioStarted) playWitherHurt();
+                            spawnParts(a.x, a.y, a.color || '#ff3333', 10);
+                            spawnText(a.x, a.y - 20, '💥 -0.5 HP', '#ff3333');
+                            
+                            // Knockback A
+                            var kb = 6;
+                            a.vx += nx * kb;
+                            a.vy += ny * kb;
+                            a.stuck = false;
+                        } else {
+                            // Pickaxe vs Pickaxe bounce / tie
+                            if (_audioStarted) sfxBreak();
+                            var midX = (a.x + b.x) * 0.5;
+                            var midY = (a.y + b.y) * 0.5;
+                            spawnParts(midX, midY, '#ffffff', 5); // white dust sparks
+                            spawnText(midX, midY - 20, '💥 BOUNCE!', '#ffffff');
+                            a.stuck = false;
+                            b.stuck = false;
+                        }
+                    }
+                }
+            }
+        }
+
         function checkBallEnemyCollisions() {
             for (var bi = activeBalls.length - 1; bi >= 0; bi--) {
                 var ball = activeBalls[bi];
@@ -2873,6 +3081,13 @@ var persistentScores = {};
                     }
 
                     if (e.hp <= 0) {
+                        if (ball.ownerName) {
+                            var pOwner = findPickForTarget(ball.ownerName);
+                            if (pOwner) {
+                                var vType = isZombie ? 'zombie' : (isBat ? 'bat' : (isSpider ? 'spider' : (isWither ? 'wither_skeleton' : 'enemy')));
+                                registerKill(pOwner, vType);
+                            }
+                        }
                         if (isZombie) {
                             e.state = 'dead'; e.animTimer = 0; e.deadTimer = 0;
                             sfxZombieDeath();
@@ -2909,6 +3124,19 @@ var persistentScores = {};
                     }
                 }
             }
+        }
+
+        function isSwordState(p) {
+            if (!p) return false;
+            if (p.isWitherSkeleton) return true;
+            if (p.isExtraSword || p.isGoldSword || p.isDiamondSword) return true;
+            if (p.swordTimer > 0) return true;
+            if (p.owner && isSwordState(p.owner)) return true;
+            if (p.cloneOwner) {
+                var ownerPick = (ownerName && p.cloneOwner === ownerName) ? pick : userPicks.find(function (u) { return u.userName === p.cloneOwner; });
+                if (ownerPick && isSwordState(ownerPick)) return true;
+            }
+            return false;
         }
 
         function activateSword(p) {
@@ -3059,13 +3287,20 @@ var persistentScores = {};
                         if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
                             hitBlock(col, row, 100, p); // Safety destruction (no bounce)
                         } else {
-                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
-                            if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
-                            hitBlock(col, row, dmg, p);
-                            var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
-                            if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
-                            else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
-                            hitAny = true; break;
+                            if (isSwordState(p)) {
+                                var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
+                                if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
+                                else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
+                                hitAny = true; break;
+                            } else {
+                                var dmg = Math.max(1, Math.floor(speed * dmgBase));
+                                if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
+                                hitBlock(col, row, dmg, p);
+                                var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
+                                if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
+                                else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
+                                hitAny = true; break;
+                            }
                         }
                     }
                 }
@@ -3084,22 +3319,37 @@ var persistentScores = {};
                         if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
                             hitBlock(col, row, 100, p); // Safety destruction (no bounce)
                         } else {
-                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
-                            if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
-                            hitBlock(col, row, dmg, p);
-                            var bMult = hasPingPong ? 1.0 : BOUNCE;
-                            if (p.vy > 0) {
-                                p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
-                                if (!hasPingPong) {
-                                    if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
-                                }
-                                // Force continuous bounce on Bedrock to prevent parking
-                                if (cell.t === BEDROCK) {
-                                    p.vy = Math.min(p.vy, -12);
-                                    p.vx += (Math.random() - 0.5) * 4;
-                                }
-                            } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
-                            hitAny = true; hitY = true; break;
+                            if (isSwordState(p)) {
+                                var bMult = hasPingPong ? 1.0 : BOUNCE;
+                                if (p.vy > 0) {
+                                    p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
+                                    if (!hasPingPong) {
+                                        if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
+                                    }
+                                    if (cell.t === BEDROCK) {
+                                        p.vy = Math.min(p.vy, -12);
+                                        p.vx += (Math.random() - 0.5) * 4;
+                                    }
+                                } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
+                                hitAny = true; hitY = true; break;
+                            } else {
+                                var dmg = Math.max(1, Math.floor(speed * dmgBase));
+                                if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
+                                hitBlock(col, row, dmg, p);
+                                var bMult = hasPingPong ? 1.0 : BOUNCE;
+                                if (p.vy > 0) {
+                                    p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
+                                    if (!hasPingPong) {
+                                        if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
+                                    }
+                                    // Force continuous bounce on Bedrock to prevent parking
+                                    if (cell.t === BEDROCK) {
+                                        p.vy = Math.min(p.vy, -12);
+                                        p.vx += (Math.random() - 0.5) * 4;
+                                    }
+                                } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
+                                hitAny = true; hitY = true; break;
+                            }
                         }
                     }
                 }
@@ -3156,43 +3406,55 @@ var persistentScores = {};
             if (hitAny && p.combo > 0) { p.comboArmor = 120; }
             if (p.comboTimer > 0) { p.comboTimer--; } else if (!p.comboArmor || p.comboArmor <= 0) { resetCombo(p); }
             if (p.comboArmor > 0) p.comboArmor--;
+            if (p.killComboTimer > 0) {
+                p.killComboTimer--;
+            } else if (p.killCombo > 0) {
+                p.killCombo = 0;
+            }
             return hitAny;
         }
 
         function updateCompanion(c, owner) {
+            // Teleporte de segurança apenas se sair muito da tela
             var dx = owner.x - c.x;
-            var dy = (owner.y - 80) - c.y;
+            var dy = owner.y - c.y;
             var dist = Math.sqrt(dx * dx + dy * dy);
-
-            // Teleporte de segurança apenas se sumir da tela (muito longe)
             if (dist > 1200) {
-                c.x = owner.x;
-                c.y = owner.y - 100;
-                c.vx = owner.vx;
-                c.vy = owner.vy;
+                c.x = owner.x + (Math.random() - 0.5) * 100;
+                c.y = owner.y - 60;
+                c.vx = (Math.random() - 0.5) * 6;
+                c.vy = -3 - Math.random() * 3;
             }
 
-            // ZONA MORTA E DRIFT ORGÂNICO
-            // Se estiver a menos de 150px, o companheiro é 100% livre (gravidade pura)
-            if (dist > 150) {
-                var force = 0.0012; // Força mínima para não parecer elástico
-                var sway = Math.sin(Date.now() * 0.001 + c.companionIdx) * 0.15;
-                c.vx += (dx * force) + sway;
-                c.vy += (dy * force);
+            // IMPORTANTE: Companions nunca ficam em modo BIG (bigTimer causava raio enorme)
+            // Forçar bigTimer = 0 para evitar que applyPhysics multiplique o raio de colisão
+            c.bigTimer = 0;
+
+            // Física idêntica à picareta comum (raio 28, sem opts especiais)
+            applyPhysics(c, 28);
+
+            // IA de movimento: impulso quando parada (igual às userPicks)
+            var cSpd = Math.abs(c.vx) + Math.abs(c.vy);
+            if (cSpd < 1.2) {
+                c._idleFrames = (c._idleFrames || 0) + 1;
+            } else {
+                c._idleFrames = 0;
             }
+            if (c._idleFrames > 150 && !(c._kickCooldown > 0)) {
+                var angle = Math.random() * Math.PI * 2;
+                var force = 5 + Math.random() * 5;
+                c.vx = Math.cos(angle) * force;
+                c.vy = -Math.abs(Math.sin(angle) * force) - 3;
+                c._idleFrames = 0;
+                c._kickCooldown = 90;
+            }
+            if (c._kickCooldown > 0) c._kickCooldown--;
 
-            // Aplica física real (gravidade, colisões, mineração)
-            var miningRadius = 24;
-            if (c.isGoldSword || c.isDiamondSword) miningRadius = 40; // Maior alcance para espadas gigantes
-            applyPhysics(c, miningRadius);
-
-            // Sincroniza timers de skill
+            // Timers de skill (apenas os que não afetam física)
             c.swordTimer = owner.swordTimer;
-            c.bigTimer = c.isGoldSword ? owner.goldSwordsTimer : (c.isDiamondSword ? owner.diamondSwordsTimer : owner.bigTimer);
             c._safetyTimer = owner._safetyTimer;
-
-            // Rotação suave e natural
-            c.ang += (c.vx * 0.03) + (Math.sin(Date.now() * 0.002) * 0.01);
+            if (c.hurtTimer > 0) c.hurtTimer--;
+            // Nota: ang já é atualizado por applyPhysics via p.spin — não duplicar aqui
         }
 
         function updateUserPicks() {
@@ -3225,6 +3487,29 @@ var persistentScores = {};
                     continue;
                 }
                 applyPhysics(up, 28);
+                if (up.hurtTimer > 0) up.hurtTimer--;
+
+                // ── IA de movimento autônomo ──
+                // Incrememnta contador de idle
+                var spd = Math.abs(up.vx) + Math.abs(up.vy);
+                if (spd < 1.5) {
+                    up._idleFrames = (up._idleFrames || 0) + 1;
+                } else {
+                    up._idleFrames = 0;
+                }
+                // A cada ~3 segundos parado OU aleatoriamente a cada ~8 segundos, impõe um impulso
+                var shouldKick = (up._idleFrames > 180) ||
+                    (!up._kickCooldown && Math.random() < 0.002);
+                if (shouldKick && !(up._kickCooldown > 0)) {
+                    var angle = Math.random() * Math.PI * 2;
+                    var force = 6 + Math.random() * 6;
+                    up.vx = Math.cos(angle) * force;
+                    up.vy = -Math.abs(Math.sin(angle) * force) - 4; // sempre com componente para cima
+                    up._idleFrames = 0;
+                    up._kickCooldown = 120; // espera 2 segundos antes do próximo
+                }
+                if (up._kickCooldown > 0) up._kickCooldown--;
+
                 if (up.goldSwordsTimer > 0) {
                     up.goldSwordsTimer -= 16.6;
                     if (up.goldSwordsTimer <= 0) {
@@ -3298,6 +3583,7 @@ var persistentScores = {};
                     }
                 }
                 applyPhysics(ep, 28);
+                if (ep.hurtTimer > 0) ep.hurtTimer--;
             }
         }
 
@@ -3587,6 +3873,85 @@ var persistentScores = {};
         function resetCombo(p) {
             if (p && p.combo > 0) p.combo = 0;
         }
+                function registerKill(p, victim) {
+            if (!p) return;
+            var playerObj = p;
+            if (p.owner) playerObj = p.owner;
+            else if (p.cloneOwner) {
+                var ownerPick = (ownerName && p.cloneOwner === ownerName) ? pick : userPicks.find(function (up) { return up.userName === p.cloneOwner; });
+                if (ownerPick) playerObj = ownerPick;
+            }
+            var userName = playerObj.userName || (playerObj === pick ? (ownerName || '@owner') : '');
+            if (!userName) return;
+
+            // Combos and MP3 sounds are ONLY for skeletons and other player deaths
+            var isComboTarget = (victim === 'skeleton' || victim === 'wither_skeleton' || 
+                                 (victim !== 'zombie' && victim !== 'spider' && victim !== 'bat' && victim !== 'enemy'));
+
+            var kc = 0;
+            var killBonus = 0;
+            var label = '';
+            var color = '#ffffff';
+
+            if (isComboTarget) {
+                playerObj.killCombo = (playerObj.killCombo || 0) + 1;
+                playerObj.killComboTimer = 300; // 5 seconds
+                kc = playerObj.killCombo;
+                
+                if (kc === 2) {
+                    label = '⚔️ DOUBLE KILL!';
+                    color = '#44ddff';
+                    killBonus = 200;
+                    playKillSound('double');
+                } else if (kc === 3) {
+                    label = '⚔️ TRIPLE KILL!';
+                    color = '#ffaa00';
+                    killBonus = 500;
+                    playKillSound('triple');
+                } else if (kc === 4) {
+                    label = '⚔️ MEGA KILL!';
+                    color = '#ff44ff';
+                    killBonus = 1000;
+                    playKillSound('mega');
+                } else if (kc === 5) {
+                    label = '⚔️ ULTRA KILL!';
+                    color = '#ff0055';
+                    killBonus = 2000;
+                    playKillSound('ultra');
+                } else if (kc >= 6) {
+                    label = '⚔️ MONSTER KILL!';
+                    color = '#00ffcc';
+                    killBonus = 3000 + (kc - 6) * 500;
+                    playKillSound('monster');
+                }
+
+                if (killBonus > 0) {
+                    if (playerObj === pick) {
+                        if (pick.active) score += killBonus;
+                    } else {
+                        score += killBonus;
+                    }
+                    if (persistentScores[userName]) {
+                        persistentScores[userName].score += killBonus;
+                    }
+                    
+                    spawnText(playerObj.x, playerObj.y - 80, label + ' (+' + killBonus + ')', color);
+                    
+                    showKillComboPopup(label, color, userName, victim);
+                }
+            }
+
+            var enemyText = '';
+            if (victim === 'zombie') enemyText = '💀 ZOMBIE KILLED!';
+            else if (victim === 'spider') enemyText = '💀 SPIDER KILLED!';
+            else if (victim === 'skeleton' || victim === 'wither_skeleton') enemyText = '💀 SKELETON KILLED!';
+            else if (victim === 'bat') enemyText = '💀 BAT KILLED!';
+            else if (isComboTarget) enemyText = '⚔️ PVP K.O.!';
+
+            if (enemyText) {
+                spawnText(playerObj.x, playerObj.y - 60, enemyText, color);
+            }
+        }
         function showComboPopup(label, color, userName, avatarUrl) {
             var overlay = document.getElementById('announceOverlay');
             var card = document.createElement('div');
@@ -3738,7 +4103,7 @@ var persistentScores = {};
             subG.gain.setValueAtTime(0.0001, t);
             subG.gain.linearRampToValueAtTime(0.6, t + 0.05);
             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.6);
+            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.6);
             for (var i = 0; i < 6; i++) {
                 playNote(220 * Math.pow(1.5, i), 'sawtooth', 0.08, 0.01, 0.2, t + i * 0.08);
             }
@@ -3750,7 +4115,7 @@ var persistentScores = {};
             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.4, t);
             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
+            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
         }
         function updateTormenta() {
             if (!tormentaActive) return;
@@ -4348,11 +4713,12 @@ var persistentScores = {};
         function sfxPop() {
             try {
                 var ac = getAC();
+                if (!ac) return;
                 var o = ac.createOscillator(), g = ac.createGain();
                 o.type = 'sine'; o.frequency.value = 800 + Math.random() * 400;
                 g.gain.setValueAtTime(0.15, ac.currentTime);
                 g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
-                o.connect(g); g.connect(ac.destination);
+                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
                 o.start(); o.stop(ac.currentTime + 0.15);
             } catch (e) { }
         }
@@ -4402,10 +4768,35 @@ var persistentScores = {};
 
         function update() {
             if (!pick) return;
-            // Regra: se estiver sozinho (sem players e sem clones), mantém ativo
-            if (userPicks.length === 0 && extraPicks.length === 0) pick.active = true;
+
+            // Garante que o host tem vida inicializada
+            if (ownerName) {
+                if (!persistentScores[ownerName]) {
+                    persistentScores[ownerName] = {
+                        score: score, likes: 0, giftsValue: 0,
+                        health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS
+                    };
+                } else {
+                    if (persistentScores[ownerName].health === undefined) {
+                        persistentScores[ownerName].health = INITIAL_HEART_SLOTS;
+                    }
+                    if (persistentScores[ownerName].slots === undefined) {
+                        persistentScores[ownerName].slots = INITIAL_HEART_SLOTS;
+                    }
+                }
+            }
+
+            // Regra: se estiver sozinho (sem players e sem clones), mantém ativo se tiver vida
+            var ownerHealth = (ownerName && persistentScores[ownerName]) ? persistentScores[ownerName].health : 1;
+            if (ownerHealth > 0) {
+                pick.active = true;
+            } else {
+                pick.active = false;
+                pick.companions = [];
+            }
 
             if (pick.active) {
+                if (pick.hurtTimer > 0) pick.hurtTimer--;
                 if (pick.stuck) {
                     pick.stuckTimer++;
                     if (pick.stuckTimer > 100) spawnPick();
@@ -4504,14 +4895,7 @@ var persistentScores = {};
                 var displayScore = (displayOwner && persistentScores[displayOwner]) ? persistentScores[displayOwner].score : score;
                 var pending = (displayOwner && persistentScores[displayOwner]) ? (persistentScores[displayOwner].pendingScore || 0) : 0;
 
-                // Point Drain for players at 0 HP
-                Object.keys(persistentScores).forEach(function (name) {
-                    var ps = persistentScores[name];
-                    if (ps.health <= 0 && ps.score > 0) {
-                        ps.score = Math.max(0, ps.score - 5); // Slow drain
-                        ps.lastPointLossTime = Date.now();
-                    }
-                });
+                // Point Drain REMOVIDO — jogadores mantêm pontuação ao morrer
 
                 var scoreStr = '&#9935; ' + displayScore;
                 var scoreDisplay = document.getElementById('scoreDisplay');
@@ -4559,6 +4943,7 @@ var persistentScores = {};
             topRow = newTopRow;
             updateUserPicks();
             updateExtraPicks();
+            resolvePlayerPlayerCollisions();
             updateTNTBlocks();
 
             updateFallingBlocks();
@@ -4670,28 +5055,33 @@ var persistentScores = {};
                     dragonFrameTimer = 0;
                 }
 
-                // Sons de Rugido (Aleatório)
+                // Sons de Rugido (Aleatorio) - DESATIVADO junto com o dragao
+                /*
                 dragonRoarTimer++;
                 if (dragonRoarTimer > 400 && Math.random() < 0.01) {
                     if (_audioStarted) {
-                        var roar = dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)];
-                        roar.volume = (dragonPhase === 'front' ? 1.0 : 0.4);
-                        roar.play().catch(function (e) { });
-                    }
+                          var roar = cloneSFX(dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)]);
+                          roar.baseVolume = (dragonPhase === 'front' ? 1.0 : 0.4);
+                          roar.volume = roar.baseVolume * gameSoundsVolume;
+                          roar.play().catch(function (e) { });
+                      }
                     dragonRoarTimer = 0;
                 }
 
-                // Sons de Bater de Asas (Contínuo)
+                // Sons de Bater de Asas (Continuo) - DESATIVADO junto com o dragao
+                /*
                 dragonFlapTimer++;
                 if (dragonFlapTimer > 15) {
                     if (_audioStarted) {
-                        var flap = dragonFlapSounds[dragonFlapIdx];
-                        flap.volume = (dragonPhase === 'front' ? 0.8 : 0.3);
-                        flap.play().catch(function (e) { });
-                    }
+                          var flap = cloneSFX(dragonFlapSounds[dragonFlapIdx]);
+                          flap.baseVolume = (dragonPhase === 'front' ? 0.8 : 0.3);
+                          flap.volume = flap.baseVolume * gameSoundsVolume;
+                          flap.play().catch(function (e) { });
+                      }
                     dragonFlapIdx = (dragonFlapIdx + 1) % 6;
                     dragonFlapTimer = 0;
                 }
+                */
 
                 // Dragon shoots fireballs (DESATIVADO)
                 /*
@@ -4836,6 +5226,10 @@ var persistentScores = {};
                             spawnText(bestTarget.x, bestTarget.y - 40, '-' + dmgVal + ' ⚡', '#00ffff');
 
                             if (bestTarget.hp <= 0) {
+                                if (player) {
+                                    var vType = (zombies.indexOf(bestTarget) !== -1) ? 'zombie' : ((spiders.indexOf(bestTarget) !== -1) ? 'spider' : ((witherSkeletons.indexOf(bestTarget) !== -1) ? 'wither_skeleton' : 'bat'));
+                                    registerKill(player, vType);
+                                }
                                 bestTarget.state = 'dead';
                                 if (isZ) bestTarget.animTimer = 0; else bestTarget.anim = 0;
                                 bestTarget.deadTimer = 0;
@@ -5551,7 +5945,32 @@ var persistentScores = {};
         }
 
 
+        var tintCanvas = document.createElement('canvas');
+        var tintCtx = tintCanvas.getContext('2d');
+
+        function drawTintedImage(targetCtx, img, x, y, w, h, tintColor) {
+            var tw = Math.max(1, Math.ceil(w));
+            var th = Math.max(1, Math.ceil(h));
+            tintCanvas.width = tw;
+            tintCanvas.height = th;
+            tintCtx.clearRect(0, 0, tw, th);
+            tintCtx.drawImage(img, 0, 0, tw, th);
+            tintCtx.globalCompositeOperation = 'source-atop';
+            tintCtx.fillStyle = tintColor;
+            tintCtx.fillRect(0, 0, tw, th);
+            tintCtx.globalCompositeOperation = 'source-over';
+            targetCtx.drawImage(tintCanvas, x, y, w, h);
+        }
+
         function drawPickaxeSprite(p) {
+            function drawSprite(img, dx, dy, dw, dh) {
+                if (p.hurtTimer > 0) {
+                    drawTintedImage(ctx, img, dx, dy, dw, dh, 'rgba(255, 0, 0, 0.6)');
+                } else {
+                    ctx.drawImage(img, dx, dy, dw, dh);
+                }
+            }
+
             ctx.save();
             ctx.translate(p.x, p.y);
             ctx.rotate(p.ang);
@@ -5597,14 +6016,14 @@ var persistentScores = {};
                 if (p.isSteve && steveFrames.length > 0) {
                     var frame = Math.floor((Date.now() / 50) % steveFrames.length);
                     tex = steveFrames[frame];
-                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
                 } else if (p.isHomer && HOMER_PICKAXE.imgObj.complete) {
                     tex = HOMER_PICKAXE.imgObj;
-                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
                 } else if (p.isChicken) {
                     var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
                     tex = chickenFrames[frame];
-                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
                 } else {
                     var animFrames = null;
                     var sType = '';
@@ -5632,12 +6051,72 @@ var persistentScores = {};
                         var mat = pickData.name || 'Wood';
                         if (SWORD_ASSETS[mat]) tex = SWORD_ASSETS[mat];
                     }
-                    if (tex) ctx.drawImage(tex, -PICK_HALF * scaleFactor, -PICK_HALF * scaleFactor, PICK_HALF * 2 * scaleFactor, PICK_HALF * 2 * scaleFactor);
+                    if (tex) drawSprite(tex, -PICK_HALF * scaleFactor, -PICK_HALF * scaleFactor, PICK_HALF * 2 * scaleFactor, PICK_HALF * 2 * scaleFactor);
                 }
             } else if (pickData.color) {
                 ctx.fillStyle = pickData.color;
                 ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
             }
+            ctx.restore();
+        }
+
+        // Desenha identificador visual (mini avatar + nome) acima de uma picareta companion
+        function drawCompanionLabel(c, owner) {
+            if (!owner) return;
+            ctx.save();
+
+            var avSize = 26;
+            var cx = c.x;
+            var cy = c.y - PICK_HALF - avSize * 0.5 - 4;
+
+            // Pega avatar do dono
+            var ownerAvatarUrl = owner.userAvatarUrl ||
+                (persistentScores[owner.userName] && persistentScores[owner.userName].avatar) || '';
+            var avImg = ownerAvatarUrl ? avatarCache[ownerAvatarUrl] : null;
+            if (ownerAvatarUrl && !avImg) loadAvatar(ownerAvatarUrl);
+
+            var borderColor = owner.color || '#ffdd44';
+
+            // Círculo do avatar
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, avSize / 2, 0, Math.PI * 2);
+            ctx.clip();
+            if (avImg && avImg.complete && avImg.naturalWidth > 0) {
+                try { ctx.drawImage(avImg, cx - avSize / 2, cy - avSize / 2, avSize, avSize); } catch (e) {}
+            } else {
+                ctx.fillStyle = borderColor;
+                ctx.beginPath();
+                ctx.arc(cx, cy, avSize / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold ' + Math.floor(avSize * 0.5) + 'px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText((owner.userName || '?').replace('@', '').charAt(0).toUpperCase(), cx, cy);
+            }
+            ctx.restore();
+
+            // Borda colorida
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, avSize / 2, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Mini nome
+            var shortName = (owner.userName || '').replace('@', '');
+            if (shortName.length > 10) shortName = shortName.substring(0, 9) + '\u2026';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2.5;
+            ctx.lineJoin = 'round';
+            ctx.strokeText(shortName, cx, cy + avSize / 2 + 2);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(shortName, cx, cy + avSize / 2 + 2);
+
             ctx.restore();
         }
 
@@ -6241,6 +6720,8 @@ var persistentScores = {};
                 if (pick.companions) {
                     pick.companions.forEach(function (c) {
                         drawPickaxeSprite(c);
+                        // Identificador: mini avatar do dono acima do companion
+                        drawCompanionLabel(c, pick);
                     });
                 }
 
@@ -6347,6 +6828,8 @@ var persistentScores = {};
                 if (up.companions) {
                     up.companions.forEach(function (c) {
                         drawPickaxeSprite(c);
+                        // Identificador: mini avatar do dono acima do companion
+                        drawCompanionLabel(c, up);
                     });
                 }
 
@@ -6600,15 +7083,13 @@ var persistentScores = {};
                         p.vy += ny * impact;
                         p.stuck = false; w.stuck = false; // Unstick both
 
-                        // Damage player if their material is inferior
-                        var pTier = (p.pickaxe && p.pickaxe.tier !== undefined) ? p.pickaxe.tier : 0;
-                        var wTier = (w.pickaxe && w.pickaxe.tier !== undefined) ? w.pickaxe.tier : 0;
+// Damage player if their material is inferior
                         var isSuperBurst = (p.stormTimer > 0);
-                        var hasSword = (p.swordTimer > 0 || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.isCompanion);
+                        var hasSword = isSwordState(p);
 
                         if (isSuperBurst) {
                             w.hp = 0; // Insta-kill
-                        } else if (pTier <= wTier && !hasSword) {
+                        } else if (!hasSword) {
                             applyDamage(p.userName, 0.5);
                         }
 
@@ -6628,7 +7109,10 @@ var persistentScores = {};
                                 if (p.userName) {
                                     addCycleScore(p.userName, 50, 'kill');
                                     registerComboHit(p, w.x, w.y);
+                                } else if (p === pick && pick.active && ownerName) {
+                                    addCycleScore(ownerName, 50, 'kill');
                                 }
+                                registerKill(p, 'wither_skeleton');
                                 break;
                             } else {
                                 playWitherHurt();
@@ -6928,13 +7412,13 @@ var persistentScores = {};
                         // Kick pickaxe upward
                         p.vy = Math.min(p.vy, -3);
                         p.spin += (Math.random() - 0.5) * 0.2;
-                        if (pSpeed > 1.5) {
+                        if (pSpeed > 1.5 && isSwordState(p)) {
                             var baseDmg = p.damage || 1;
-                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var swordMult = 2;
                             var finalDmg = Math.ceil(baseDmg * swordMult);
                             s.hp -= finalDmg;
-                            spawnText(s.x, s.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
-                            if (swordMult > 1) sfxSwordHit();
+                            spawnText(s.x, s.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+                            sfxSwordHit();
                             s.state = 'hurt'; s.hurtTimer = 12; s.animTimer = 0;
                             playSpiderHurt();
                             registerComboHit(p, s.x, s.y);
@@ -6947,6 +7431,7 @@ var persistentScores = {};
                                     addCycleScore(ownerName, s.pts, 'kill');
                                 }
                                 sfxZombieDeath();
+                                registerKill(p, 'spider');
                             }
                         }
                         break;
@@ -6972,7 +7457,7 @@ var persistentScores = {};
                     var dist = Math.sqrt(dx * dx + dy * dy);
                     var minDist = PLAYER_R + (TILE * 0.4);
 
-                    if (dist < minDist) {
+                    if (dist < minDist && !isSwordState(p)) {
                         applyDamage(p.userName, 0.5);
                     }
                 }
@@ -7537,14 +8022,14 @@ var persistentScores = {};
                         p.vy = Math.min(p.vy, -3);
                         p.spin += (Math.random() - 0.5) * 0.15;
                         // Damage
-                        if (pSpeed > 1.5) {
+                        if (pSpeed > 1.5 && isSwordState(p)) {
                             var baseDmg = p.damage || 1;
-                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var swordMult = 2;
                             var finalDmg = Math.ceil(baseDmg * swordMult);
                             b.hp -= finalDmg;
                             b.hurtTimer = 10;
                             b.anim = 0;
-                            if (swordMult > 1) sfxSwordHit();
+                            sfxSwordHit();
                             sfxBatHurt();
                             registerComboHit(p, b.x, b.y);
                             spawnText(b.x, b.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
@@ -7556,6 +8041,7 @@ var persistentScores = {};
                                     addCycleScore(ownerName, b.pts, 'kill');
                                 }
                                 sfxBatDeath();
+                                registerKill(p, 'bat');
                             } else {
                                 b.state = 'hurt';
                             }
@@ -7687,7 +8173,7 @@ var persistentScores = {};
             o.frequency.exponentialRampToValueAtTime(300, t + 0.08);
             g.gain.setValueAtTime(0.1, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.1);
         }
 
@@ -7701,7 +8187,7 @@ var persistentScores = {};
             o.frequency.exponentialRampToValueAtTime(200, t + 0.12);
             g.gain.setValueAtTime(0.15, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.15);
             // Tiny noise burst
             var nLen = Math.ceil(ac.sampleRate * 0.05);
@@ -7710,7 +8196,7 @@ var persistentScores = {};
             for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / nLen);
             var src = ac.createBufferSource(); src.buffer = buf;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-            src.connect(ng); ng.connect(ac.destination); src.start(t);
+            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
         }
 
         function spawnZombie(wx, wy) {
@@ -7819,13 +8305,13 @@ var persistentScores = {};
                         p.vy = Math.min(p.vy, -3.5);
                         p.spin += (Math.random() - 0.5) * 0.2;
                         // Damage
-                        if (pSpeed > 1.5) {
+                        if (pSpeed > 1.5 && isSwordState(p)) {
                             var baseDmg = p.damage || 1;
-                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                            var swordMult = 2;
                             var finalDmg = Math.ceil(baseDmg * swordMult);
                             z.hp -= finalDmg;
-                            spawnText(z.x, z.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
-                            if (swordMult > 1) sfxSwordHit();
+                            spawnText(z.x, z.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+                            sfxSwordHit();
                             z.state = 'hurt'; z.hurtTimer = 12; z.animTimer = 0;
                             sfxZombieHurt();
                             registerComboHit(p, z.x, z.y);
@@ -7837,6 +8323,7 @@ var persistentScores = {};
                                     addCycleScore(ownerName, z.pts, 'kill');
                                 }
                                 sfxZombieDeath();
+                                registerKill(p, 'zombie');
                             }
                         }
                         break;
@@ -8455,17 +8942,32 @@ var persistentScores = {};
         // ── BOSS: Aranha Gigante ─────────────────────────────────────────────────────
 
         // ── Áudio ─────────────────────────────────────────────────────────────────
+        // --- Audio Context & Registry ---
         var AC = null;
         function getAC() {
-            if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+            if (!_audioStarted) return null;
+            if (!AC) {
+                AC = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Create game sounds gain node
+                gameSoundsGainNode = AC.createGain();
+                gameSoundsGainNode.gain.value = gameSoundsVolume;
+                gameSoundsGainNode.connect(AC.destination);
+                
+                // Create music gain node
+                musicGainNode = AC.createGain();
+                musicGainNode.gain.value = musicVolume;
+                musicGainNode.connect(AC.destination);
+            }
             if (AC.state === 'suspended') AC.resume();
             return AC;
         }
 
-        var _reverbNode = null;
-        function getReverbNode() {
+        var _sfxReverbNode = null;
+        function getSFXReverbNode() {
             var ac = getAC();
-            if (_reverbNode && _reverbNode.context === ac) return _reverbNode;
+            if (!ac) return null;
+            if (_sfxReverbNode && _sfxReverbNode.context === ac) return _sfxReverbNode;
             var len = ac.sampleRate * 2.2;
             var buf = ac.createBuffer(2, len, ac.sampleRate);
             for (var ch = 0; ch < 2; ch++) {
@@ -8474,16 +8976,59 @@ var persistentScores = {};
             }
             var conv = ac.createConvolver(); conv.buffer = buf;
             var wetG = ac.createGain(); wetG.gain.value = 0.38;
-            conv.connect(wetG); wetG.connect(ac.destination);
-            _reverbNode = conv; return conv;
+            conv.connect(wetG);
+            if (gameSoundsGainNode) {
+                wetG.connect(gameSoundsGainNode);
+            } else {
+                wetG.connect(ac.destination);
+            }
+            _sfxReverbNode = conv; return conv;
         }
 
-        function playNote(freq, type, vol, attack, decay, when) {
+        var _musicReverbNode = null;
+        function getMusicReverbNode() {
+            var ac = getAC();
+            if (!ac) return null;
+            if (_musicReverbNode && _musicReverbNode.context === ac) return _musicReverbNode;
+            var len = ac.sampleRate * 2.2;
+            var buf = ac.createBuffer(2, len, ac.sampleRate);
+            for (var ch = 0; ch < 2; ch++) {
+                var d = buf.getChannelData(ch);
+                for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+            }
+            var conv = ac.createConvolver(); conv.buffer = buf;
+            var wetG = ac.createGain(); wetG.gain.value = 0.38;
+            conv.connect(wetG);
+            if (musicGainNode) {
+                wetG.connect(musicGainNode);
+            } else {
+                wetG.connect(ac.destination);
+            }
+            _musicReverbNode = conv; return conv;
+        }
+
+        function playNote(freq, type, vol, attack, decay, when, isMusic) {
+            if (!_audioStarted) return;
             var ac = getAC();
             var osc = ac.createOscillator();
             var gain = ac.createGain();
-            var rev = getReverbNode();
-            osc.connect(gain); gain.connect(ac.destination); gain.connect(rev);
+            
+            // Route to appropriate gain node
+            var destinationNode = isMusic ? musicGainNode : gameSoundsGainNode;
+            
+            // Reverb routing
+            var rev = isMusic ? getMusicReverbNode() : getSFXReverbNode();
+            
+            osc.connect(gain);
+            if (destinationNode) {
+                gain.connect(destinationNode);
+            } else {
+                gain.connect(ac.destination);
+            }
+            if (rev) {
+                gain.connect(rev);
+            }
+            
             osc.type = type || 'sine';
             osc.frequency.setValueAtTime(freq, when);
             gain.gain.setValueAtTime(0.0001, when);
@@ -8493,7 +9038,9 @@ var persistentScores = {};
         }
 
         function sfxHit(blockType) {
+            if (!_audioStarted) return;
             var ac = getAC(), t = ac.currentTime;
+            blockType = (typeof blockType === 'number' && !isNaN(blockType)) ? blockType : 0;
             var len = Math.ceil(ac.sampleRate * 0.045);
             var buf = ac.createBuffer(1, len, ac.sampleRate);
             var d = buf.getChannelData(0);
@@ -8503,19 +9050,21 @@ var persistentScores = {};
             filt.type = 'lowpass'; filt.frequency.value = 400 + blockType * 60;
             var g = ac.createGain(); g.gain.setValueAtTime(0.09, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
+            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode);
             src.start(t);
         }
 
         function sfxBreak(blockType) {
+            if (!_audioStarted) return;
             var ac = getAC(), t = ac.currentTime;
+            blockType = (typeof blockType === 'number' && !isNaN(blockType)) ? Math.floor(blockType) : 0;
             var osc = ac.createOscillator(), og = ac.createGain();
-            var baseFreq = [55, 60, 58, 52, 48, 50, 44, 42, 40][Math.min(blockType, 8)];
+            var baseFreq = [55, 60, 58, 52, 48, 50, 44, 42, 40][Math.max(0, Math.min(blockType, 8))];
             osc.type = 'sine';
             osc.frequency.setValueAtTime(baseFreq * 1.8, t);
             osc.frequency.exponentialRampToValueAtTime(baseFreq, t + 0.18);
             og.gain.setValueAtTime(0.45, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
-            osc.connect(og); og.connect(ac.destination); osc.start(t); osc.stop(t + 0.35);
+            osc.connect(og); og.connect(gameSoundsGainNode); osc.start(t); osc.stop(t + 0.35);
             var len = Math.ceil(ac.sampleRate * 0.22);
             var buf = ac.createBuffer(1, len, ac.sampleRate);
             var d = buf.getChannelData(0);
@@ -8525,7 +9074,7 @@ var persistentScores = {};
             filt.type = 'lowpass'; filt.frequency.value = 300 + blockType * 40;
             var g = ac.createGain(); g.gain.setValueAtTime(0.35, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-            src.connect(filt); filt.connect(g); g.connect(ac.destination); src.start(t);
+            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode); src.start(t);
         }
 
         function sfxPlayerHurt() {
@@ -8537,7 +9086,7 @@ var persistentScores = {};
             o.frequency.exponentialRampToValueAtTime(40, t + 0.15);
             g.gain.setValueAtTime(0.3, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.15);
         }
 
@@ -8551,13 +9100,14 @@ var persistentScores = {};
                 o.frequency.exponentialRampToValueAtTime(f * 0.5, t + i * 0.1 + 0.2);
                 g.gain.setValueAtTime(0.15, t + i * 0.1);
                 g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.1 + 0.2);
-                o.connect(g); g.connect(ac.destination);
+                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
                 o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.2);
             });
         }
 
         function sfxFuse(duration) {
-            var ac = getAC(), t = ac.currentTime;
+            var ac = getAC(); if (!ac) return null;
+            var t = ac.currentTime;
             var len = Math.ceil(ac.sampleRate * duration);
             var buf = ac.createBuffer(1, len, ac.sampleRate);
             var d = buf.getChannelData(0);
@@ -8571,27 +9121,28 @@ var persistentScores = {};
             var g = ac.createGain(); g.gain.setValueAtTime(0.22, t);
             g.gain.linearRampToValueAtTime(0.38, t + duration * 0.85);
             g.gain.linearRampToValueAtTime(0.0001, t + duration);
-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
+            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             src.start(t); src.stop(t + duration + 0.05);
             return src;
         }
 
         function sfxTNT() {
-            var ac = getAC(), t = ac.currentTime;
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
             var sub = ac.createOscillator(), subG = ac.createGain();
             sub.type = 'sine'; sub.frequency.setValueAtTime(38, t);
             sub.frequency.exponentialRampToValueAtTime(14, t + 0.55);
             subG.gain.setValueAtTime(0.0001, t);
             subG.gain.linearRampToValueAtTime(0.9, t + 0.012);
             subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 0.6);
+            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 0.6);
             var mid = ac.createOscillator(), midG = ac.createGain();
             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
             mid.frequency.exponentialRampToValueAtTime(28, t + 0.35);
             midG.gain.setValueAtTime(0.0001, t);
             midG.gain.linearRampToValueAtTime(0.5, t + 0.008);
             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.38);
+            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.38);
             var len = Math.ceil(ac.sampleRate * 0.7);
             var buf = ac.createBuffer(1, len, ac.sampleRate);
             var d = buf.getChannelData(0);
@@ -8600,27 +9151,28 @@ var persistentScores = {};
             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 900;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.55, t);
             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-            var rev = getReverbNode();
-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
+            var rev = getSFXReverbNode();
+            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
             src.start(t);
         }
 
         function sfxMegaTNT() {
-            var ac = getAC(), t = ac.currentTime;
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
             var sub = ac.createOscillator(), subG = ac.createGain();
             sub.type = 'sine'; sub.frequency.setValueAtTime(32, t);
             sub.frequency.exponentialRampToValueAtTime(8, t + 1.1);
             subG.gain.setValueAtTime(0.0001, t);
             subG.gain.linearRampToValueAtTime(1.0, t + 0.015);
             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.15);
+            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.15);
             var mid = ac.createOscillator(), midG = ac.createGain();
             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
             mid.frequency.exponentialRampToValueAtTime(20, t + 0.7);
             midG.gain.setValueAtTime(0.0001, t);
             midG.gain.linearRampToValueAtTime(0.8, t + 0.01);
             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.75);
+            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.75);
             var len = Math.ceil(ac.sampleRate * 1.2);
             var buf = ac.createBuffer(1, len, ac.sampleRate);
             var d = buf.getChannelData(0);
@@ -8629,13 +9181,14 @@ var persistentScores = {};
             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 700;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.85, t);
             ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-            var rev = getReverbNode();
-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
+            var rev = getSFXReverbNode();
+            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
             src.start(t);
         }
 
         function sfxPickaxeChange() {
-            var ac = getAC(), t = ac.currentTime;
+            var ac = getAC(); if (!ac) return;
+            var t = ac.currentTime;
             playNote(880, 'sine', 0.1, 0.01, 0.18, t);
             playNote(1320, 'sine', 0.08, 0.01, 0.14, t + 0.06);
         }
@@ -8659,7 +9212,7 @@ var persistentScores = {};
             o.frequency.linearRampToValueAtTime(base, t + 0.25);
             g.gain.setValueAtTime(0.06, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.3);
         }
 
@@ -8673,7 +9226,7 @@ var persistentScores = {};
             o.frequency.exponentialRampToValueAtTime(100, t + 0.1);
             g.gain.setValueAtTime(0.12, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.12);
             // Wet splat noise
             var nLen = Math.ceil(ac.sampleRate * 0.06);
@@ -8682,7 +9235,7 @@ var persistentScores = {};
             for (var i = 0; i < nLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / nLen, 2);
             var src = ac.createBufferSource(); src.buffer = buf;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-            src.connect(ng); ng.connect(ac.destination); src.start(t);
+            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
         }
 
         function sfxZombieDeath() {
@@ -8695,7 +9248,7 @@ var persistentScores = {};
             o.frequency.exponentialRampToValueAtTime(80, t + 0.3);
             g.gain.setValueAtTime(0.15, t);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-            o.connect(g); g.connect(ac.destination);
+            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             o.start(t); o.stop(t + 0.35);
             // Pop at the end
             var p = ac.createOscillator(), pg = ac.createGain();
@@ -8705,7 +9258,7 @@ var persistentScores = {};
             pg.gain.setValueAtTime(0.0001, t + 0.25);
             pg.gain.linearRampToValueAtTime(0.1, t + 0.27);
             pg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-            p.connect(pg); pg.connect(ac.destination);
+            p.connect(pg); pg.connect(gameSoundsGainNode || ac.destination);
             p.start(t + 0.25); p.stop(t + 0.36);
         }
 
@@ -8716,36 +9269,61 @@ var persistentScores = {};
             playNote(880, 'sine', 0.1, 0.01, 0.18, t + 0.14);
         }
 
-        var swordTransitionSound = new Audio('sons/espada.mp3');
+        var sfxDoubleKill = createSFX('sons kills/double-kill.mp3', 1.0);
+        var sfxTripleKill = createSFX('sons kills/triple-kill.mp3', 1.0);
+        var sfxMegaKill = createSFX('sons kills/mega-kill.mp3', 1.0);
+        var sfxUltraKill = createSFX('sons kills/ultra-kill.mp3', 1.0);
+        var sfxMonsterKill = createSFX('sons kills/ut-monster-kill_1iyCEdo.mp3', 1.0);
+
+        function playKillSound(type) {
+            if (!_audioStarted) return;
+            try {
+                var snd = null;
+                if (type === 'double') snd = sfxDoubleKill;
+                else if (type === 'triple') snd = sfxTripleKill;
+                else if (type === 'mega') snd = sfxMegaKill;
+                else if (type === 'ultra') snd = sfxUltraKill;
+                else if (type === 'monster') snd = sfxMonsterKill;
+                
+                if (snd) {
+                    var cloned = cloneSFX(snd);
+                    cloned.play().catch(function(e){});
+                }
+            } catch (e) {}
+        }
+
+        var swordTransitionSound = createSFX('sons/espada.mp3', 1.0);
         function playSwordTransition() { if (_audioStarted) { swordTransitionSound.currentTime = 0; swordTransitionSound.play().catch(function (e) { }); } }
-        var swordHitSound = new Audio('sons/ataque de espada.ogg');
-        var sfxSpiderHurt = new Audio('enemy/Spider.ogg');
-        var sfxSpiderDeath = new Audio('enemy/Spider_death.ogg');
+        var swordHitSound = createSFX('sons/ataque de espada.ogg', 0.5);
+        var sfxSpiderHurt = createSFX('enemy/Spider.ogg', 1.0);
+        var sfxSpiderDeath = createSFX('enemy/Spider_death.ogg', 1.0);
         function playSpiderHurt() { if (_audioStarted) { sfxSpiderHurt.currentTime = 0; sfxSpiderHurt.play().catch(function (e) { }); } }
         function playSpiderDeath() { if (_audioStarted) { sfxSpiderDeath.currentTime = 0; sfxSpiderDeath.play().catch(function (e) { }); } }
-        var sfxWitherHurt = new Audio('enemy/Dano_Wither_skeleton.ogg');
-        var sfxWitherDeath = new Audio('enemy/Death_Wither_skeleton.ogg');
-        var powerUpSound = new Audio('sons/power-up-mario.mp3');
+        var sfxWitherHurt = createSFX('enemy/Dano_Wither_skeleton.ogg', 1.0);
+        var sfxWitherDeath = createSFX('enemy/Death_Wither_skeleton.ogg', 1.0);
+        var powerUpSound = createSFX('sons/power-up-mario.mp3', 1.0);
         function playPowerUp() { if (_audioStarted) { powerUpSound.currentTime = 0; powerUpSound.play().catch(function (e) { }); } }
-        var shrinkSound = new Audio('sons/super-mario-encolhe.mp3');
+        var shrinkSound = createSFX('sons/super-mario-encolhe.mp3', 1.0);
         function playShrink() { if (_audioStarted) { shrinkSound.currentTime = 0; shrinkSound.play().catch(function (e) { }); } }
+
+        var thorSound = createSFX('sons/thor.mp3', 1.0);
+        var cloneSound = createSFX('sons/clone.mp3', 1.0);
 
         function playWitherHurt() { if (_audioStarted) { sfxWitherHurt.currentTime = 0; sfxWitherHurt.play().catch(e => { }); } }
         function playWitherDeath() { if (_audioStarted) { sfxWitherDeath.currentTime = 0; sfxWitherDeath.play().catch(e => { }); } }
         function sfxSwordHit() {
             if (!_audioStarted) return;
             try {
-                var s = swordHitSound.cloneNode();
-                s.volume = 0.5;
-                s.play();
+                var s = cloneSFX(swordHitSound);
+                s.play().catch(function(e){});
             } catch (e) { }
         }
 
-        var sheepSounds = [
-            new Audio('sons/som ovelha um.ogg'),
-            new Audio('sons/som ovelha dois.ogg'),
-            new Audio('sons/som ovelha tres.ogg')
-        ];
+        var sheepSounds = createSFXArray([
+            'sons/som ovelha um.ogg',
+            'sons/som ovelha dois.ogg',
+            'sons/som ovelha tres.ogg'
+        ], 0.4);
         var activeSheepSounds = [];
         function sfxSheep(force) {
             if (!_audioStarted) return;
@@ -8761,18 +9339,17 @@ var persistentScores = {};
             if (activeSheepSounds.length >= 3) return;
 
             try {
-                var s = sheepSounds[Math.floor(Math.random() * sheepSounds.length)].cloneNode();
-                s.volume = 0.4;
-                s.play();
+                var s = cloneSFX(sheepSounds[Math.floor(Math.random() * sheepSounds.length)]);
+                s.play().catch(function(e){});
                 activeSheepSounds.push(s);
             } catch (e) { }
         }
 
-        var pigSounds = [
-            new Audio('sons/som pig um.ogg'),
-            new Audio('sons/som pig dois.ogg'),
-            new Audio('sons/som pig tres.ogg')
-        ];
+        var pigSounds = createSFXArray([
+            'sons/som pig um.ogg',
+            'sons/som pig dois.ogg',
+            'sons/som pig tres.ogg'
+        ], 0.4);
         var activePigSounds = [];
         function sfxPig(force) {
             if (!_audioStarted) return;
@@ -8788,9 +9365,8 @@ var persistentScores = {};
             if (activePigSounds.length >= 3) return;
 
             try {
-                var s = pigSounds[Math.floor(Math.random() * pigSounds.length)].cloneNode();
-                s.volume = 0.4;
-                s.play();
+                var s = cloneSFX(pigSounds[Math.floor(Math.random() * pigSounds.length)]);
+                s.play().catch(function(e){});
                 activePigSounds.push(s);
             } catch (e) { }
         }
@@ -8899,6 +9475,7 @@ var persistentScores = {};
                 return;
             }
             var ac = getAC();
+            if (!ac) return;
             var t = ac.currentTime;
             musicMode = getMusicMode();
 
@@ -8923,8 +9500,8 @@ var persistentScores = {};
             // Bass
             var bn = bass[bassStep % bass.length];
             var bf = hScaleFreq(bn.d, bn.oct);
-            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t);
-            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t);
+            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t, true);
+            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t, true);
             bassStep++;
 
             // Melody (every 2 beats, or every beat in mega)
@@ -8933,8 +9510,8 @@ var persistentScores = {};
                 // Variation: offset melody degrees on alternate phrases
                 var melDeg = mn.d + (melodyVariation === 1 ? 2 : 0);
                 var mf = hScaleFreq(melDeg, mn.oct);
-                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t);
-                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t);
+                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t, true);
+                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t, true);
                 melStep++;
             }
 
@@ -8944,7 +9521,7 @@ var persistentScores = {};
                 for (var ci = 0; ci < chord.length; ci++) {
                     var pf = hScaleFreq(chord[ci], 1);
                     var padType = musicMode === 'boss' ? 'triangle' : 'sine';
-                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t);
+                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t, true);
                 }
                 padStep++;
             }
@@ -8953,19 +9530,19 @@ var persistentScores = {};
             if (Math.random() < (musicMode === 'mega' ? 0.4 : 0.2)) {
                 var gd = Math.floor(Math.random() * SCALE.length);
                 var gf = hScaleFreq(gd, musicMode === 'mega' ? 3 : 2);
-                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5);
+                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5, true);
             }
 
             // Counter-melody (every 8 beats, adds variety)
             if (musicStep % 8 === 4 && musicMode === 'normal') {
                 var cd = [7, 5, 4, 2][Math.floor(musicStep / 8) % 4];
-                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t);
+                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t, true);
             }
 
             // Boss: dramatic low pulse + tension notes
             if (musicMode === 'boss') {
-                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t);
-                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t);
+                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t, true);
+                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t, true);
             }
 
             musicStep++;
@@ -8997,7 +9574,11 @@ var persistentScores = {};
             customBGMGain = ac.createGain();
             customBGMGain.gain.value = 0.3; // volume da trilha (30% para não sobrepor SFX)
             customBGMSource.connect(customBGMGain);
-            customBGMGain.connect(ac.destination);
+            if (musicGainNode) {
+                customBGMGain.connect(musicGainNode);
+            } else {
+                customBGMGain.connect(ac.destination);
+            }
         }
 
         function handleBGMUpload(input) {
@@ -9033,7 +9614,7 @@ var persistentScores = {};
                 customBGMPlaying = false;
                 startMusic(); // Resume game music
             } else {
-                customBGM.play();
+                customBGM.play().catch(function(e){});
                 customBGMPlaying = true;
                 stopMusic(); // Stop game music
             }
@@ -9041,14 +9622,45 @@ var persistentScores = {};
             if (btn) btn.textContent = customBGMPlaying ? '🎵 Trilha' : '⏸️ Pausa';
         }
 
-        // Atalho de teclado para alternar entre Player e Botões (tecla M)
+        // Atalho de teclado para alternar entre Player e Botões (tecla M) e teclas de teste PvP (L, J, K)
         window.addEventListener('keydown', function (e) {
-            if (e.key === 'm' || e.key === 'M') {
+            // Ignora se estiver digitando em campos de entrada
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable)) return;
+
+            var key = e.key.toLowerCase();
+            if (key === 'm') {
                 ensureAudio();
                 var panel = document.getElementById('adminPanel');
                 if (panel) {
                     panel.style.display = (panel.style.display === 'none') ? 'flex' : 'none';
                 }
+            } else if (key === 'l') {
+                ensureAudio();
+                // Spawn 20 bots
+                for (var bi = 0; bi < 20; bi++) {
+                    var bn = '@Bot_' + (1 + Math.floor(Math.random() * 9999));
+                    spawnUserPickaxe(bn, '');
+                }
+                spawnText(canvas.width / 2, camY + 100, '20 BOTS SPAWNED! (L)', '#ffff00');
+            } else if (key === 'j') {
+                ensureAudio();
+                // Turn player into sword mode
+                if (pick) {
+                    pick.swordTimer = 600; // 10 seconds
+                    spawnText(pick.x, pick.y - 60, '⚔️ SWORD MODE (J)!', '#ff4444');
+                }
+            } else if (key === 'k') {
+                ensureAudio();
+                // Turn all bots into sword mode
+                var count = 0;
+                for (var u = 0; u < userPicks.length; u++) {
+                    var up = userPicks[u];
+                    if (up && up.userName && up.userName.startsWith('@Bot_')) {
+                        up.swordTimer = 600; // 10 seconds
+                        count++;
+                    }
+                }
+                spawnText(canvas.width / 2, camY + 120, count + ' BOTS SWORD MODE (K)!', '#ff4444');
             }
         });
 
@@ -9066,6 +9678,32 @@ var persistentScores = {};
 
         window.addEventListener('DOMContentLoaded', function () {
             window.updateUIMode();
+            
+            // Sincroniza controles de volume com o localStorage
+            var storedGame = localStorage.getItem('pd_gamesounds_volume');
+            if (storedGame !== null) {
+                var val = Math.round(parseFloat(storedGame) * 100);
+                var elInput = document.getElementById('volGame');
+                if (elInput) elInput.value = val;
+                var elVal = document.getElementById('gameVolumeVal');
+                if (elVal) elVal.textContent = val + '%';
+            }
+            var storedMusic = localStorage.getItem('pd_music_volume');
+            if (storedMusic !== null) {
+                var val = Math.round(parseFloat(storedMusic) * 100);
+                var elInput = document.getElementById('volMusic');
+                if (elInput) elInput.value = val;
+                var elVal = document.getElementById('musicVolumeVal');
+                if (elVal) elVal.textContent = val + '%';
+            }
+            var storedMessages = localStorage.getItem('pd_messages_volume');
+            if (storedMessages !== null) {
+                var val = Math.round(parseFloat(storedMessages) * 100);
+                var elInput = document.getElementById('volMessages');
+                if (elInput) elInput.value = val;
+                var elVal = document.getElementById('messagesVolumeVal');
+                if (elVal) elVal.textContent = val + '%';
+            }
         });
 
         // --- Music Player Logic ---
@@ -9074,7 +9712,7 @@ var persistentScores = {};
         window.playerLooping = false;
 
         function loadPlaylist() {
-            fetch('/music-list').then(r => r.json()).then(data => {
+            fetch('/proxy.php?path=/music-list').then(r => r.json()).then(data => {
                 if (data.files && data.files.length > 0) {
                     window.playlist = data.files;
                     window.currentTrackIndex = 0;
@@ -9187,16 +9825,21 @@ var persistentScores = {};
         var _tapTimer = null;
         var _TAP_DELAY = 350;
         var _swipeStartX = 0, _swipeStartY = 0, _swipeStartTime = 0;
-        var _SWIPE_MIN = 40; // minimum distance in pixels
-        var _SWIPE_MAX_TIME = 400; // max time in ms
+        var _SWIPE_MIN = 40; // minimum distance in pixels (aumentado para evitar que cliques virem swipes)
+        var _SWIPE_MAX_TIME = 600; // max time in ms
 
         canvas.addEventListener('touchstart', function (e) {
+            e.preventDefault(); // Impede totalmente que o toque no canvas vire scroll/zoom
             if (e.touches.length === 1) {
                 _swipeStartX = e.touches[0].clientX;
                 _swipeStartY = e.touches[0].clientY;
                 _swipeStartTime = Date.now();
             }
-        }, { passive: true });
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', function (e) {
+            e.preventDefault(); // Previne o scroll da tela ao arrastar no canvas
+        }, { passive: false });
 
         canvas.addEventListener('touchend', function (e) {
             e.preventDefault();
@@ -9228,8 +9871,21 @@ var persistentScores = {};
             _tapCount++;
             if (_tapTimer) clearTimeout(_tapTimer);
             _tapTimer = setTimeout(function () {
-                if (_tapCount === 2) activateTNT();
-                else if (_tapCount >= 3) activateMegaTNT();
+                var me = ownerName || (pick ? pick.userName : '@owner');
+                var av = pick ? pick.userAvatarUrl : '';
+                
+                if (_tapCount === 2) {
+                    // Double tap = Like (Heart TNT)
+                    if (typeof activateHeartTNT === 'function') {
+                        activateHeartTNT(pick ? pick.x : undefined, pick ? pick.y : undefined, me, av);
+                    }
+                    processLiveEvent({ type: 'like', user: me, avatar: av, likeCount: 1, msgId: 'mobile_like_'+Date.now() });
+                }
+                else if (_tapCount >= 3) {
+                    if (typeof activateMegaTNT === 'function') {
+                        activateMegaTNT(pick ? pick.x : undefined, pick ? pick.y : undefined, me, av);
+                    }
+                }
                 _tapCount = 0;
                 _tapTimer = null;
             }, _TAP_DELAY);
@@ -9301,6 +9957,7 @@ var persistentScores = {};
             window.resetAllScores = resetAllScores;
             window.generateScoreReport = generateScoreReport;
             window.tiktokConnect = tiktokConnect;
+            window.youtubeConnect = youtubeConnect;
             window.platformSkip = platformSkip;
 
         })();
@@ -9327,6 +9984,9 @@ var persistentScores = {};
         // ── Connection System (TikTok via WebSocket) ─────────────────
         var _tiktokUsername = localStorage.getItem('pd_tiktok_username') || '';
         var _ttConnected = false;
+        var _youtubeId = localStorage.getItem('pd_youtube_id') || '';
+        var _youtubeOwner = localStorage.getItem('pd_youtube_owner') || '';
+        var _ytConnected = false;
         var _apiConnected = false;
         var _apiCheckInterval = null;
         var _apiSetupShown = false;
@@ -9344,24 +10004,29 @@ var persistentScores = {};
             if (!url || avatarCache[url] || _avatarLoading[url]) return;
             if (_avatarDataCache[url]) { var c = new Image(); c.onload = function () { avatarCache[url] = c; }; c.src = _avatarDataCache[url]; _avatarLoading[url] = true; return; }
             _avatarLoading[url] = true;
-            // Try direct load without CORS (will work if server allows it, fail silently otherwise)
             var img = new Image();
+            img.crossOrigin = "anonymous";
             img.onload = function () { if (img.naturalWidth > 0) avatarCache[url] = img; _avatarLoading[url] = false; };
-            img.onerror = function () { _avatarLoading[url] = false; }; // Silently fail for blocked URLs
-            img.src = url;
+            img.onerror = function () { _avatarLoading[url] = false; avatarCache[url] = { failed: true }; };
+            img.src = getProxyUrl(url);
         }
 
         function updateStatusDots() {
             var dTT = document.getElementById('statusDotTT'), tTT = document.getElementById('statusTextTT');
             if (dTT) { if (_ttConnected) dTT.classList.add('online'); else dTT.classList.remove('online'); }
             if (tTT) { tTT.textContent = 'TT: ' + (_ttConnected ? 'ON' : 'OFF'); tTT.style.color = _ttConnected ? '#00ff88' : '#888'; }
-            _apiConnected = _ttConnected;
+
+            var dYT = document.getElementById('statusDotYT'), tYT = document.getElementById('statusTextYT');
+            if (dYT) { if (_ytConnected) dYT.classList.add('online'); else dYT.classList.remove('online'); }
+            if (tYT) { tYT.textContent = 'YT: ' + (_ytConnected ? 'ON' : 'OFF'); tYT.style.color = _ytConnected ? '#ff4444' : '#888'; }
+
+            _apiConnected = _ttConnected || _ytConnected;
         }
 
         function getProxyUrl(url) {
             if (!url || url.startsWith('data:') || url.startsWith('blob:') || !url.startsWith('http')) return url;
             if (url.includes(location.host)) return url;
-            return '/proxy-image?url=' + encodeURIComponent(url);
+            return 'https://wsrv.nl/?url=' + encodeURIComponent(url);
         }
 
         function showApiSetup(msg) {
@@ -9369,9 +10034,15 @@ var persistentScores = {};
             var box = document.getElementById('apiSetupBox');
             if (box) box.style.display = 'block';
             _apiSetupShown = true;
-            document.getElementById('apiSetupError').style.display = 'none'; document.getElementById('apiSetupSuccess').style.display = 'none';
-            if (msg) { var e = document.getElementById('apiSetupError'); e.style.display = 'block'; e.textContent = msg; }
+            if (msg) {
+                var bTT = document.getElementById('btnConnectTT');
+                if (bTT && bTT.textContent === 'Conectando...') { bTT.textContent = 'Erro!'; bTT.style.background = '#ff4444'; bTT.style.color = '#fff'; }
+                var bYT = document.getElementById('btnConnectYT');
+                if (bYT && bYT.textContent === 'Conectando...') { bYT.textContent = 'Erro!'; bYT.style.background = '#ff4444'; bYT.style.color = '#fff'; }
+            }
             if (_tiktokUsername) document.getElementById('tiktokUsernameInput').value = _tiktokUsername;
+            if (_youtubeId) { var yel = document.getElementById('youtubeIdInput'); if (yel) yel.value = _youtubeId; }
+            if (_youtubeOwner) { var yoe = document.getElementById('youtubeOwnerInput'); if (yoe) yoe.value = _youtubeOwner; }
         }
         function hideApiSetup() { 
             var box = document.getElementById('apiSetupBox');
@@ -9394,31 +10065,69 @@ var persistentScores = {};
             var btn = document.getElementById('btnConnectTT'), u = document.getElementById('tiktokUsernameInput').value.trim().replace(/^@/, '');
             var sidEl = document.getElementById('tiktokSessionInput');
             var sid = sidEl ? sidEl.value.trim() : '';
-            if (!u) return; if (btn) { btn.textContent = '...'; btn.disabled = true; }
-            connectWebSocket(function (ok) { if (btn) { btn.textContent = 'Connect'; btn.disabled = false; } if (!ok) return; sendTikTokConnect(u, sid); _gameStarted = true; });
+            if (!u) return; if (btn) { btn.textContent = 'Conectando...'; btn.disabled = true; btn.style.background = '#ffdd44'; btn.style.color = '#000'; }
+            connectWebSocket(function (ok) { if (!ok) { if (btn) { btn.textContent = 'Connect'; btn.disabled = false; btn.style.background = '#00f2ea'; } return; } sendTikTokConnect(u, sid); _gameStarted = true; });
         }
         function sendTikTokConnect(username, sessionId) {
             _tiktokUsername = username; localStorage.setItem('pd_tiktok_username', username);
             if (sessionId) localStorage.setItem('pd_tiktok_sessionid', sessionId);
             ownerName = '@' + username.toLowerCase(); pick.userName = ownerName;
-            if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: '', color: '#ffdd44' };
+            pick.active = true;
+            pick.x = TILE * 2 + Math.random() * (canvas.width - TILE * 4);
+            pick.y = camY + TILE * 2;
+            pick.vy = -2;
+            if (_deadPlayers[ownerName]) delete _deadPlayers[ownerName];
+            if (!persistentScores[ownerName]) {
+                persistentScores[ownerName] = { score: 0, avatar: '', color: '#ffdd44', health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+            } else {
+                persistentScores[ownerName].health = persistentScores[ownerName].slots || INITIAL_HEART_SLOTS;
+            }
             if (_ws && _ws.readyState === 1) _ws.send(JSON.stringify({ action: 'connect', username: username, sessionId: sessionId }));
+        }
+
+        function youtubeConnect() {
+            var btn = document.getElementById('btnConnectYT'), u = document.getElementById('youtubeIdInput').value.trim();
+            var o = document.getElementById('youtubeOwnerInput') ? document.getElementById('youtubeOwnerInput').value.trim() : '';
+            if (!u) return; if (btn) { btn.textContent = 'Conectando...'; btn.disabled = true; btn.style.background = '#ffdd44'; btn.style.color = '#000'; }
+            connectWebSocket(function (ok) { if (!ok) { if (btn) { btn.textContent = 'Connect YT'; btn.disabled = false; btn.style.background = '#ff4444'; btn.style.color = '#fff'; } return; } sendYouTubeConnect(u, o); _gameStarted = true; });
+        }
+        function sendYouTubeConnect(yId, yOwner) {
+            _youtubeId = yId; localStorage.setItem('pd_youtube_id', yId);
+            if (yOwner) {
+                var oName = '@' + yOwner.replace(/^@/, '').toLowerCase();
+                _youtubeOwner = yOwner; localStorage.setItem('pd_youtube_owner', yOwner);
+                ownerName = oName; pick.userName = ownerName;
+                pick.active = true;
+                pick.x = TILE * 2 + Math.random() * (canvas.width - TILE * 4);
+                pick.y = camY + TILE * 2;
+                pick.vy = -2;
+                if (_deadPlayers[ownerName]) delete _deadPlayers[ownerName];
+                if (!persistentScores[ownerName]) {
+                    persistentScores[ownerName] = { score: 0, avatar: '', color: '#ffdd44', health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                } else {
+                    persistentScores[ownerName].health = persistentScores[ownerName].slots || INITIAL_HEART_SLOTS;
+                }
+            }
+            if (_ws && _ws.readyState === 1) _ws.send(JSON.stringify({ action: 'connect_youtube', youtubeId: yId }));
         }
 
         function connectWebSocket(callback) {
             if (_ws && _ws.readyState === 1) { if (callback) callback(true); return; }
             if (_ws) { try { _ws.close(); } catch (e) { } }
-            var wsHost = location.host || 'localhost:3000';
-            var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            var wsHost = 'seventy-scoured-antivirus.ngrok-free.dev';
+            var protocol = 'wss:';
             try { _ws = new WebSocket(protocol + '//' + wsHost); } catch (e) { if (callback) callback(false); return; }
             _ws.onopen = function () {
                 window._wsReconnectCount = 0;
-                if (!callback && _gameStarted) { if (_tiktokUsername) sendTikTokConnect(_tiktokUsername); }
+                if (!callback && _gameStarted) { 
+                   if (_tiktokUsername) sendTikTokConnect(_tiktokUsername); 
+                   if (_youtubeId) sendYouTubeConnect(_youtubeId, _youtubeOwner);
+                }
                 if (callback) { callback(true); callback = null; }
             };
             _ws.onmessage = function (evt) { try { handleLiveEvent(JSON.parse(evt.data)); } catch (e) { } };
             _ws.onclose = function () {
-                _ttConnected = false; updateStatusDots();
+                _ttConnected = false; _ytConnected = false; updateStatusDots();
                 if (!window._wsReconnectCount) window._wsReconnectCount = 0; window._wsReconnectCount++;
                 if (window._wsReconnectCount <= 5 && _gameStarted) setTimeout(function () { if (_gameStarted) connectWebSocket(); }, Math.min(15000 * window._wsReconnectCount, 60000));
             };
@@ -9435,34 +10144,205 @@ var persistentScores = {};
             if (liveEventQueue.length > 200) liveEventQueue.shift(); // Evita estouro da fila
         }
 
-        function applyDamage(userName, amount) {
+        function showDeathBanner(userName) {
+            var overlay = document.getElementById('announceOverlay');
+            if (!overlay) return;
+
+            var ps = persistentScores[userName];
+            var avatarUrl = (ps && ps.avatar) ? ps.avatar : '';
+            var cleanName = userName;
+
+            var avatarHtml = '';
+            if (avatarUrl) {
+                avatarHtml = '<div class="avatar-container"><img class="death-avatar" src="' + avatarUrl + '" onerror="this.style.display=\'none\'"><div class="skull-icon">💀</div></div>';
+            } else {
+                avatarHtml = '<div class="avatar-container"><div class="death-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:bold; border:2px solid #ff4444; box-shadow:0 0 10px rgba(255, 68, 68, 0.8); color:#ff6666; width:52px; height:52px; border-radius:50%;">' + cleanName.replace('@','').charAt(0).toUpperCase() + '</div><div class="skull-icon">💀</div></div>';
+            }
+
+            var card = document.createElement('div');
+            card.className = 'death-announce-card';
+            card.innerHTML = 
+                avatarHtml +
+                '<div class="death-info">' +
+                '  <div class="death-title">Eliminado do Jogo</div>' +
+                '  <div class="death-name">' + cleanName + '</div>' +
+                '</div>';
+
+            overlay.appendChild(card);
+
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+            }, 3500);
+        }
+
+        function showKillComboPopup(label, color, killerName, victimName) {
+            var overlay = document.getElementById('announceOverlay');
+            if (!overlay) return;
+
+            var psKiller = persistentScores[killerName];
+            var psVictim = persistentScores[victimName];
+
+            var killerAvatar = (psKiller && psKiller.avatar) ? psKiller.avatar : '';
+            var victimAvatar = (psVictim && psVictim.avatar) ? psVictim.avatar : '';
+
+            var killerHtml = '';
+            if (killerAvatar) {
+                killerHtml = '<img class="killer-avatar" src="' + killerAvatar + '" onerror="this.style.display=\'none\'" style="border-color:' + color + '; box-shadow:0 0 15px ' + color + '; width:54px; height:54px;" />';
+            } else {
+                killerHtml = '<div class="killer-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:bold; border:3px solid ' + color + '; box-shadow:0 0 12px ' + color + '; color:#fff; width:54px; height:54px; border-radius:50%;">' + killerName.replace('@','').charAt(0).toUpperCase() + '</div>';
+            }
+
+            var victimHtml = '';
+            if (victimName === 'skeleton' || victimName === 'wither_skeleton') {
+                victimHtml = '<div class="victim-avatar" style="background:#222; display:flex; align-items:center; justify-content:center; font-size:26px; border:3px solid #ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); width:54px; height:54px; border-radius:50%; color:#fff;">💀</div>';
+            } else if (victimAvatar) {
+                victimHtml = '<img class="victim-avatar" src="' + victimAvatar + '" onerror="this.style.display=\'none\'" style="border-color:#ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); width:54px; height:54px;" />';
+            } else {
+                victimHtml = '<div class="victim-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:bold; border:3px solid #ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); color:#fff; width:54px; height:54px; border-radius:50%;">' + victimName.replace('@','').charAt(0).toUpperCase() + '</div>';
+            }
+
+            var card = document.createElement('div');
+            card.className = 'kill-announce-card';
+
+            card.innerHTML = 
+                '<div style="display:flex; align-items:center; gap:15px; justify-content:center;">' +
+                  killerHtml +
+                  '<div class="vs-swords" style="font-size:26px; filter: drop-shadow(0 0 8px ' + color + ');">⚔️</div>' +
+                  victimHtml +
+                '</div>' +
+                '<div style="display:flex; flex-direction:column; align-items:center; gap:2px; text-align:center; margin-top:4px;">' +
+                  '<div style="color:' + color + '; font-size:22px; font-weight:900; text-transform:uppercase; text-shadow: 0 0 10px ' + color + '; letter-spacing:1px; white-space:nowrap;">' + label + '</div>' +
+                  '<div style="color:#ffffff; font-size:13px; font-weight:700; opacity:0.85; text-shadow:0 1px 3px #000; word-break:break-all;">' + killerName + ' ⚔️ ' + victimName + '</div>' +
+                '</div>';
+
+            overlay.appendChild(card);
+
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+            }, 3000);
+        }
+
+        function showKillBanner(killerName, victimName) {
+            var overlay = document.getElementById('announceOverlay');
+            if (!overlay) return;
+
+            var psKiller = persistentScores[killerName];
+            var psVictim = persistentScores[victimName];
+
+            var killerAvatar = (psKiller && psKiller.avatar) ? psKiller.avatar : '';
+            var victimAvatar = (psVictim && psVictim.avatar) ? psVictim.avatar : '';
+
+            var color = '#ffdd44'; // Gold style for PvP K.O.
+
+            var killerHtml = '';
+            if (killerAvatar) {
+                killerHtml = '<img class="killer-avatar" src="' + killerAvatar + '" onerror="this.style.display=\'none\'" style="border-color:' + color + '; box-shadow:0 0 12px ' + color + '; width:54px; height:54px;" />';
+            } else {
+                killerHtml = '<div class="killer-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:bold; border:3px solid ' + color + '; box-shadow:0 0 12px ' + color + '; color:#fff; width:54px; height:54px; border-radius:50%;">' + killerName.replace('@','').charAt(0).toUpperCase() + '</div>';
+            }
+
+            var victimHtml = '';
+            if (victimAvatar) {
+                victimHtml = '<img class="victim-avatar" src="' + victimAvatar + '" onerror="this.style.display=\'none\'" style="border-color:#ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); width:54px; height:54px;" />';
+            } else {
+                victimHtml = '<div class="victim-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:bold; border:3px solid #ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); color:#fff; width:54px; height:54px; border-radius:50%;">' + victimName.replace('@','').charAt(0).toUpperCase() + '</div>';
+            }
+
+            var card = document.createElement('div');
+            card.className = 'kill-announce-card';
+
+            card.innerHTML = 
+                '<div style="display:flex; align-items:center; gap:15px; justify-content:center;">' +
+                  killerHtml +
+                  '<div class="vs-swords" style="font-size:26px; filter: drop-shadow(0 0 8px ' + color + ');">⚔️</div>' +
+                  victimHtml +
+                '</div>' +
+                '<div style="display:flex; flex-direction:column; align-items:center; gap:2px; text-align:center; margin-top:4px;">' +
+                  '<div style="color:' + color + '; font-size:22px; font-weight:900; text-transform:uppercase; text-shadow: 0 0 10px ' + color + '; letter-spacing:1px; white-space:nowrap;">PVP K.O.</div>' +
+                  '<div style="color:#ffffff; font-size:13px; font-weight:700; opacity:0.85; text-shadow:0 1px 3px #000; word-break:break-all;">' + killerName + ' ⚔️ ' + victimName + '</div>' +
+                '</div>';
+
+            overlay.appendChild(card);
+
+            setTimeout(function () {
+                card.classList.add('fade-out');
+                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+            }, 3000);
+        }
+
+                function applyDamage(userName, amount, sourceName) {
             var ps = persistentScores[userName];
             if (!ps) return;
             var now = Date.now();
             if (now - (lastHeartDamage[userName] || 0) < DAMAGE_COOLDOWN) return;
-            lastHeartDamage[userName] = now;
-
-            sfxPlayerHurt();
-
+            
             var p = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+            var wasAlive = (ps.health > 0);
 
-            if (ps.health > 0) {
+            if (wasAlive) {
+                lastHeartDamage[userName] = now;
+                sfxPlayerHurt();
                 ps.health = Math.max(0, (ps.health || 0) - amount);
+                
                 if (p) {
                     spawnText(p.x, p.y - 40, '-' + amount + ' ❤️', '#ff4444');
                     p.hurtTimer = 10;
                 }
+                
                 if (ps.health <= 0) {
+                    // --- PLAYER DEATH FLOW ---
                     sfxMoneyLoss();
-                    if (p) spawnText(p.x, p.y - 60, '💔 HEALTH ZERO!', '#ff0000');
+                    sfxTNT(); // Play a nice explosion sound on death
+
+                    if (p) {
+                        spawnText(p.x, p.y - 60, '💀 ELIMINADO!', '#ff0000');
+                        explosions.push({ x: p.x, y: p.y, frame: 0, timer: 0, mega: true });
+                        spawnParts(p.x, p.y, p.color || '#ff4444', 35);
+                    }
+
+                    // PONTUAÇÃO MANTIDA — não zeramos mais o score na morte
+                    // Registra o jogador como morto (aguardando like para respawn)
+                    _deadPlayers[userName] = { avatar: ps.avatar || '', deathTime: Date.now() };
+
+                    // Remove/deactivate pickaxe visualmente
+                    if (ownerName && userName === ownerName) {
+                        pick.active = false;
+                        pick.companions = [];
+                    } else {
+                        userPicks = userPicks.filter(function (up) { return up.userName !== userName; });
+                    }
+
+                    // Remove all clones owned by this player
+                    extraPicks = extraPicks.filter(function (ep) { return ep.cloneOwner !== userName; });
+
+                    // Screen shake
+                    shakeAmt = Math.max(shakeAmt, 18);
+
+                    // Announcements & TTS
+                    if (sourceName && sourceName !== userName) {
+                        showKillBanner(sourceName, userName);
+                        // speakTTS(userName + ' foi eliminado por ' + sourceName + '!');
+
+                        // Register PvP Kill Combo for the killer
+                        var killerPick = findPickForTarget(sourceName);
+                        if (killerPick) {
+                            registerKill(killerPick, userName);
+                        }
+                    } else {
+                        showDeathBanner(userName);
+                        // speakTTS(userName + ' foi eliminado! Dê LIKE para voltar!');
+                    }
                 }
             } else {
                 // Already at 0 HP, deduct score directly
                 var penalty = Math.floor(amount * 400);
                 if (ps.score > 0) {
+                    lastHeartDamage[userName] = now;
+                    sfxMoneyLoss();
                     ps.score = Math.max(0, (ps.score || 0) - penalty);
                     ps.lastPointLossTime = now;
-                    sfxMoneyLoss();
                     if (p) {
                         spawnText(p.x, p.y - 40, '-' + penalty + ' pts 💸', '#ff4444');
                         p.hurtTimer = 10;
@@ -9499,6 +10379,8 @@ var persistentScores = {};
         }
 
         function processLiveEvent(data) {
+            if (data.user) data.user = data.user.replace(/^@@+/, '@');
+            if (data.nickname) data.nickname = data.nickname.replace(/^@@+/, '@');
             // Deduplicação para evitar banners e contagens dobradas
             var eventId = data.msgId || (data.type + '_' + data.user + '_' + (data.comment || '') + '_' + (data.diamondCount || 0) + '_' + (data.repeatCount || 0));
 
@@ -9525,38 +10407,68 @@ var persistentScores = {};
                 }
                 if (plat === 'tiktok') {
                     _ttConnected = true;
+                    var bTT = document.getElementById('btnConnectTT');
+                    if(bTT) { bTT.textContent = '✅ Conectado'; bTT.style.background = '#00ff88'; bTT.style.color = '#000'; }
                     if (data.availableGifts && data.availableGifts.length > 0) {
                         localStorage.setItem('pd_cached_gifts', JSON.stringify(data.availableGifts));
                         applyGiftImages(data.availableGifts);
                     }
                 }
-                _gameStarted = true; hideApiSetup(); dismissApiBanner(); updateStatusDots();
+                if (plat === 'youtube') {
+                    _ytConnected = true;
+                    var bYT = document.getElementById('btnConnectYT');
+                    if(bYT) { bYT.textContent = '✅ Conectado'; bYT.style.background = '#00ff88'; bYT.style.color = '#000'; }
+                }
+                _gameStarted = true; dismissApiBanner(); updateStatusDots();
             }
             else if (data.type === 'error') {
-                var errEl = document.getElementById('apiSetupError');
-                if (errEl && _apiSetupShown) { errEl.style.display = 'block'; errEl.textContent = data.message; }
-                var bTT = document.getElementById('btnConnectTT');
-                if (bTT) { bTT.textContent = 'Connect'; bTT.disabled = false; }
+                if (_apiSetupShown) {
+                    var bTT = document.getElementById('btnConnectTT');
+                    if (bTT && bTT.textContent === 'Conectando...') { bTT.textContent = data.message || 'Erro!'; bTT.style.background = '#ff4444'; bTT.style.color = '#fff'; setTimeout(() => { bTT.textContent = 'Connect'; bTT.style.background = '#00f2ea'; bTT.style.color = '#000'; bTT.disabled = false; }, 3000); }
+                    var bYT = document.getElementById('btnConnectYT');
+                    if (bYT && bYT.textContent === 'Conectando...') { bYT.textContent = data.message || 'Erro!'; bYT.style.background = '#ff4444'; bYT.style.color = '#fff'; setTimeout(() => { bYT.textContent = 'Connect YT'; bYT.style.background = '#ff4444'; bYT.disabled = false; }, 3000); }
+                }
                 if (!_apiSetupShown && _gameStarted) showApiBanner(data.message);
             }
             else if (data.type === 'disconnected' || data.type === 'streamEnd') {
-                if (plat === 'tiktok') _ttConnected = false; updateStatusDots();
+                if (plat === 'tiktok') _ttConnected = false; 
+                if (plat === 'youtube') _ytConnected = false;
+                updateStatusDots();
                 if (data.type === 'streamEnd') spawnText(canvas.width / 2, camY + canvas.height / 2, plat.toUpperCase() + ' ENDED', '#ff4444');
             }
             else if (data.type === 'chat') {
                 var cUser = (data.user || data.nickname || '').toLowerCase();
+                cUser = cUser.replace(/^@@+/, '@');
                 if (cUser && cUser.charAt(0) !== '@') cUser = '@' + cUser; if (!cUser || cUser === '@') return;
                 var cAvatar = data.avatar || '', cText = data.comment || '';
                 lastActivity[cUser] = Date.now();
                 if (cAvatar) loadAvatar(cAvatar);
+                
+                if (data.isBroadcaster || cUser === ownerName || cUser === ('@' + _tiktokUsername).toLowerCase() || cUser === ('@' + _youtubeOwner).toLowerCase()) {
+                    ownerName = cUser; 
+                    if (pick.userName !== ownerName) pick.userName = ownerName;
+                    if (data.platform === 'youtube') localStorage.setItem('pd_youtube_owner', cUser.replace(/^@/, ''));
+                }
                 var isOwner = ownerName && cUser === ownerName;
                 if (isOwner && cAvatar) { pick.userAvatarUrl = cAvatar; if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: cAvatar, color: '#ffdd44' }; else persistentScores[ownerName].avatar = cAvatar; }
 
                 // Qualque interação no chat coloca o jogador no jogo
+                // Se o dono estiver morto, reviver antes de executar qualquer comando
+                if (isOwner && !pick.active) {
+                    pick.active = true;
+                    pick.companions = pick.companions || [];
+                    if (persistentScores[ownerName]) {
+                        persistentScores[ownerName].health = INITIAL_HEART_SLOTS;
+                    }
+                    pick.x = (camTarget ? camTarget.x : canvas.width / 2);
+                    pick.y = camY + TILE * 2;
+                    pick.vy = -2;
+                }
                 spawnUserPickaxe(cUser, cAvatar);
 
                 var msg = cText.toLowerCase();
                 var words = msg.split(/\s+/).slice(0, 5); // Process up to 5 words/commands
+                // Re-resolve uPick DEPOIS do spawn para garantir posição válida
                 var uPick = isOwner ? pick : userPicks.find(function (up) { return up.userName === cUser; });
                 var tx = uPick ? uPick.x : undefined, ty = uPick ? uPick.y : undefined;
 
@@ -9576,6 +10488,29 @@ var persistentScores = {};
                     else if (cmd === 'nuke' || cmd === 'nuclear') activateNuke(tx, ty, cUser, cAvatar);
                     else if (cmd === 'pp' || cmd === 'storm' || cmd === 'tempestade') activateStorm(uPick);
                     else if (cmd === 'bh' || cmd === 'blackhole' || cmd === 'buraco') activateBlackHole(tx, ty, cUser, cAvatar);
+                    else if (cmd === 'heart' || cmd === 'life' || cmd === 'vida' || cmd === 'coracao' || cmd === 'coraçao' || cmd === 'coração' || cmd === 'coraçāo') {
+                        var cdKey = cUser + '_vida';
+                        if (!(skillCooldowns[cdKey] > 0)) {
+                            skillCooldowns[cdKey] = 600; // 10 seconds (60 frames/sec)
+                            setTimeout(function() { handleLiveEvent({ type: 'like', user: cUser, avatar: cAvatar, likeCount: 25, msgId: 'synth_vida_' + cUser + '_' + Date.now() }); }, 0);
+                        } else {
+                            var displayX = tx !== undefined ? tx : Math.random() * canvas.width;
+                            var displayY = ty !== undefined ? ty : Math.random() * canvas.height * 0.5;
+                            spawnText(displayX, displayY - 20, '⌛ ' + Math.ceil(skillCooldowns[cdKey] / 60) + 's', '#ffaa00');
+                        }
+                    }
+                    else if (cmd === 'souodono' || cmd === 'iamhost') {
+                        ownerName = cUser; pick.userName = ownerName;
+                        localStorage.setItem('pd_youtube_owner', cUser.replace(/^@/, ''));
+                        pick.active = true;
+                        pick.x = (camTarget ? camTarget.x : canvas.width / 2);
+                        pick.y = camY + TILE * 2;
+                        pick.vy = -2;
+                        if (_deadPlayers[ownerName]) delete _deadPlayers[ownerName];
+                        if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, avatar: cAvatar, color: '#ffdd44', health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                        else persistentScores[ownerName].health = persistentScores[ownerName].slots || INITIAL_HEART_SLOTS;
+                        spawnText(pick.x, pick.y - 60, '👑 HOST RECONHECIDO!', '#ffcc00');
+                    }
                     else if (cmd === 'creeper') {
                         var cdKey = cUser + '_creeper';
                         if (!(skillCooldowns[cdKey] > 0)) {
@@ -9626,14 +10561,21 @@ var persistentScores = {};
 
                 // TTS: Read non-command messages
                 if (_ttsEnabled && cText.length > 2) {
-                    var commandList = ['sr', 'sl', 'su', 'sd', 'tnt', 'mega', 'powertnt', 'clone', 'clonar', 'thor', 'raio', 'nuke', 'nuclear', 'pp', 'storm', 'tempestade', 'bh', 'blackhole', 'buraco', 'creeper', 'big', 'grande', 'play', 'join', 'sword', 'espada'];
+                    var commandList = ['sr', 'sl', 'su', 'sd', 'tnt', 'mega', 'powertnt', 'clone', 'clonar', 'thor', 'raio', 'nuke', 'nuclear', 'pp', 'storm', 'tempestade', 'bh', 'blackhole', 'buraco', 'creeper', 'big', 'grande', 'play', 'join', 'sword', 'espada', 'roleta', 'roulette', 'ball', 'bola', 'torm'];
                     var isPureCommand = words.every(function (w) { return commandList.indexOf(w) !== -1; });
 
                     if (!isPureCommand) {
-                        if (cText.startsWith('!')) {
-                            speakTTS(data.nickname + ' disse: ' + cText.substring(1), 'pt-BR-FranciscaNeural');
-                        } else {
-                            speakTTS(data.nickname + ' said: ' + cText);
+                        var spokenText = cText;
+                        if (_ttsIgnoreEmojis) {
+                            // Strip emojis and symbols
+                            spokenText = spokenText.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '');
+                        }
+                        if (spokenText.trim().length > 0) {
+                            if (spokenText.startsWith('!')) {
+                                speakTTS(data.nickname + ' disse: ' + spokenText.substring(1).trim(), 'pt-BR-FranciscaNeural');
+                            } else {
+                                speakTTS(data.nickname + ' said: ' + spokenText.trim());
+                            }
                         }
                     }
                 }
@@ -9679,7 +10621,11 @@ var persistentScores = {};
                 if (data.avatar) loadAvatar(data.avatar);
 
                 // --- Proteção Contra Spam de Inscrição ---
-                if (!persistentScores[mUser]) persistentScores[mUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', subscribeCount: 0 };
+                if (!persistentScores[mUser]) {
+                    persistentScores[mUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', subscribeCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                } else {
+                    persistentScores[mUser].health = persistentScores[mUser].slots || INITIAL_HEART_SLOTS;
+                }
                 persistentScores[mUser].subscribeCount = (persistentScores[mUser].subscribeCount || 0) + 1;
 
                 if (persistentScores[mUser].subscribeCount > 1 || persistentScores[mUser].isChicken) {
@@ -9689,8 +10635,9 @@ var persistentScores = {};
                     if (sPick) {
                         sPick.isChicken = true;
                         if (_audioStarted) {
-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
-                            snd.volume = 0.6;
+                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
+                            snd.baseVolume = 0.6;
+                            snd.volume = snd.baseVolume * gameSoundsVolume;
                             snd.play().catch(function (e) { });
                         }
                         spawnText(sPick.x, sPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
@@ -9699,7 +10646,10 @@ var persistentScores = {};
                         var newP = userPicks.find(up => up.userName === mUser);
                         if (newP) {
                             newP.isChicken = true;
-                            if (_audioStarted) chickenSounds[0].play().catch(e => { });
+                            if (_audioStarted) {
+                                var s = cloneSFX(chickenSounds[0]);
+                                s.play().catch(e => { });
+                            }
                             spawnText(newP.x, newP.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
                         }
                     }
@@ -9734,6 +10684,11 @@ var persistentScores = {};
                 }
                 lastGiftProcessed.set(giftSig, { time: now });
 
+                if (!persistentScores[gUser]) {
+                    persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                } else {
+                    persistentScores[gUser].health = persistentScores[gUser].slots || INITIAL_HEART_SLOTS;
+                }
                 lastActivity[gUser] = Date.now(); if (gAvatar) loadAvatar(gAvatar); spawnUserPickaxe(gUser, gAvatar);
                 var gPick = userPicks.find(function (up) { return up.userName === gUser; });
                 var refP = (pick.active) ? pick : (camTarget || pick);
@@ -9902,8 +10857,9 @@ var persistentScores = {};
                         spawnText(gx, gy - 30, statusMsg, statusColor);
 
                         if (_audioStarted) {
-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
-                            snd.volume = 0.6;
+                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
+                            snd.baseVolume = 0.6;
+                            snd.volume = snd.baseVolume * gameSoundsVolume;
                             snd.play().catch(function (e) { });
                         }
                     }
@@ -9943,8 +10899,10 @@ var persistentScores = {};
 
                         if (_audioStarted && targetPlayer.isHomer) {
                             sfxPickaxeChange();
-                            homerSound.volume = 0.6;
-                            homerSound.play().catch(function (e) { });
+                            var s = cloneSFX(homerSound);
+                            s.baseVolume = 0.6;
+                            s.volume = s.baseVolume * gameSoundsVolume;
+                            s.play().catch(function (e) { });
                         }
                     }
                     resultingPickaxe = HOMER_PICKAXE;
@@ -10014,7 +10972,11 @@ var persistentScores = {};
                 console.log('[Follow Event] User:', fUser);
 
                 // --- Proteção Contra Spam de Follow/Unfollow ---
-                if (!persistentScores[fUser]) persistentScores[fUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', followCount: 0 };
+                if (!persistentScores[fUser]) {
+                    persistentScores[fUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', followCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                } else {
+                    persistentScores[fUser].health = persistentScores[fUser].slots || INITIAL_HEART_SLOTS;
+                }
                 persistentScores[fUser].followCount = (persistentScores[fUser].followCount || 0) + 1;
                 console.log('[Follow Event] Count for', fUser, 'is', persistentScores[fUser].followCount);
 
@@ -10026,8 +10988,9 @@ var persistentScores = {};
                     if (fPick) {
                         fPick.isChicken = true;
                         if (_audioStarted) {
-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
-                            snd.volume = 0.6;
+                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
+                            snd.baseVolume = 0.6;
+                            snd.volume = snd.baseVolume * gameSoundsVolume;
                             snd.play().catch(function (e) { });
                         }
                         spawnText(fPick.x, fPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
@@ -10063,7 +11026,41 @@ var persistentScores = {};
                 var lNameRaw = data.user || '';
                 if (!lNameRaw) return; var lUser = (lNameRaw.charAt(0) === '@' ? lNameRaw : '@' + lNameRaw).toLowerCase();
                 var lAvatar = data.avatar || ''; lastActivity[lUser] = Date.now(); if (lAvatar) loadAvatar(lAvatar);
-                spawnUserPickaxe(lUser, lAvatar);
+
+                // Contabilizar likes no ranking
+                if (!persistentScores[lUser]) {
+                    persistentScores[lUser] = { score: 0, avatar: lAvatar, color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+                } else {
+                    if (persistentScores[lUser].health === undefined) {
+                        persistentScores[lUser].health = INITIAL_HEART_SLOTS;
+                    }
+                }
+
+                // RESPAWN por like — se jogador estava morto, like o revive
+                if (_deadPlayers[lUser]) {
+                    delete _deadPlayers[lUser];
+                    persistentScores[lUser].health = persistentScores[lUser].slots || INITIAL_HEART_SLOTS;
+                    
+                    var rx, ry;
+                    if (ownerName && lUser === ownerName) {
+                        pick.active = true;
+                        pick.x = (camTarget ? camTarget.x : canvas.width / 2) + (Math.random() - 0.5) * TILE;
+                        pick.y = camY + TILE * 2;
+                        pick.vy = -2;
+                        rx = pick.x; ry = pick.y;
+                    } else {
+                        spawnUserPickaxe(lUser, lAvatar);
+                        var respawnPick = userPicks.find(function (up) { return up.userName === lUser; });
+                        var refRP = (pick.active) ? pick : (camTarget || pick);
+                        rx = respawnPick ? respawnPick.x : refRP.x;
+                        ry = respawnPick ? respawnPick.y : refRP.y;
+                    }
+                    spawnText(rx, ry - 60, '❤️ ' + lUser.replace('@','') + ' VOLTOU!', '#00ff88');
+                    spawnParts(rx, ry, '#00ff88', 20);
+                    if (_audioStarted) sfxSkillActivate();
+                } else {
+                    spawnUserPickaxe(lUser, lAvatar);
+                }
                 var lPick = userPicks.find(function (up) { return up.userName === lUser; });
                 var refP = (pick.active) ? pick : (camTarget || pick);
                 var lx = lPick ? lPick.x : refP.x;
@@ -10071,17 +11068,23 @@ var persistentScores = {};
                 var likeCount = data.likeCount || 1;
                 var likePts = Math.min(likeCount, 10) * 0.5;
                 if (pick.active) score += likePts;
-                // Gerar heartTNT apenas se não estiver no período de ignoração inicial
-                if (Date.now() >= _ignoreLikesUntil) {
-                    activateHeartTNT(lx, ly, lUser, lAvatar);
-                }
-                spawnParts(lx, ly, '#ff4488', Math.min(likeCount, 5));
-                spawnText(lx, ly - 20, '+' + likePts + ' ❤', '#ff4488');
-                // Contabilizar likes no ranking
-                if (!persistentScores[lUser]) persistentScores[lUser] = { score: 0, avatar: lAvatar, color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0 };
 
                 var oldLikes = persistentScores[lUser].likes || 0;
                 var newLikes = oldLikes + likeCount;
+
+                // Gerar heartTNT apenas se não estiver no período de ignoração inicial e a cada 10 likes acumulados
+                if (Date.now() >= _ignoreLikesUntil || likeCount >= 25) {
+                    var oldMilestone = Math.floor(oldLikes / 10);
+                    var newMilestone = Math.floor(newLikes / 10);
+                    if (newMilestone > oldMilestone) {
+                        var countToSpawn = newMilestone - oldMilestone;
+                        for (var s = 0; s < countToSpawn; s++) {
+                            activateHeartTNT(lx, ly, lUser, lAvatar);
+                        }
+                    }
+                }
+                spawnParts(lx, ly, '#ff4488', Math.min(likeCount, 5));
+                spawnText(lx, ly - 20, '+' + likePts + ' ❤', '#ff4488');
 
                 // Milestone: Cada 1000 likes ganha um upgrade de picareta
                 if (Math.floor(newLikes / 1000) > Math.floor(oldLikes / 1000)) {
@@ -10179,7 +11182,10 @@ var persistentScores = {};
         function spawnUserPickaxe(userName, avatarUrl) {
             userName = userName.replace(/^@@+/, '@');
             if (ownerName && userName === ownerName) return;
-            // O limite de 30 já é tratado abaixo com shift(), removendo o return fixo de 50 para garantir rotação.
+            // Se o jogador morreu (health <= 0), restaura a vida para ele poder rejoinar
+            if (persistentScores[userName] && persistentScores[userName].health <= 0) {
+                persistentScores[userName].health = INITIAL_HEART_SLOTS;
+            }
             if (userPicks.some(up => up.userName === userName)) return;
 
             // Fallback: get avatar from persistentScores if not provided
@@ -10219,7 +11225,7 @@ var persistentScores = {};
                 persistentScores[userName] = {
                     score: p.score, avatar: avatarUrl, color: p.color,
                     likes: 0, giftsValue: 0, giftsCount: 0,
-                    health: 0, slots: INITIAL_HEART_SLOTS
+                    health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS
                 };
             } else {
                 if (avatarUrl) persistentScores[userName].avatar = avatarUrl;
@@ -10227,7 +11233,7 @@ var persistentScores = {};
                 if (persistentScores[userName].likes === undefined) persistentScores[userName].likes = 0;
                 if (persistentScores[userName].giftsValue === undefined) persistentScores[userName].giftsValue = 0;
                 if (persistentScores[userName].giftsCount === undefined) persistentScores[userName].giftsCount = 0;
-                if (persistentScores[userName].health === undefined) persistentScores[userName].health = 0;
+                if (persistentScores[userName].health === undefined || persistentScores[userName].health <= 0) persistentScores[userName].health = INITIAL_HEART_SLOTS;
                 if (persistentScores[userName].slots === undefined) persistentScores[userName].slots = INITIAL_HEART_SLOTS;
             }
 
@@ -10258,6 +11264,14 @@ var persistentScores = {};
             if (!sourcePick) sourcePick = pick; // fallback to main pick for offline play
 
             skillCooldowns[cdKey] = cloneCooldown;
+            
+            if (_audioStarted && typeof cloneSound !== 'undefined') {
+                try {
+                    var cS = cloneSFX(cloneSound);
+                    cS.play().catch(function(e){});
+                } catch(e){}
+            }
+
             var numClones = 5 + getPickaxeLevel(sourcePick);
             for (var i = 0; i < numClones; i++) {
                 extraPicks.push({
@@ -10346,7 +11360,7 @@ var persistentScores = {};
             g.gain.setValueAtTime(0.0001, t);
             g.gain.linearRampToValueAtTime(0.5, t + 0.1);
             g.gain.exponentialRampToValueAtTime(0.0001, t + 2);
-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 2.1);
+            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 2.1);
             // Whoosh
             var nLen = Math.ceil(ac.sampleRate * 1.5);
             var buf = ac.createBuffer(1, nLen, ac.sampleRate);
@@ -10355,7 +11369,7 @@ var persistentScores = {};
             var src = ac.createBufferSource(); src.buffer = buf;
             var filt = ac.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 200; filt.Q.value = 2;
             var ng = ac.createGain(); ng.gain.setValueAtTime(0.3, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
+            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
         }
 
         function sfxBlackHoleClose() {
@@ -10366,14 +11380,14 @@ var persistentScores = {};
             osc.type = 'sine'; osc.frequency.setValueAtTime(60, t);
             osc.frequency.exponentialRampToValueAtTime(800, t + 0.8);
             g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 1);
-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 1);
+            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 1);
             // Final pop/flash
             var pop = ac.createOscillator(), pg = ac.createGain();
             pop.type = 'triangle'; pop.frequency.setValueAtTime(1200, t + 0.8);
             pop.frequency.exponentialRampToValueAtTime(200, t + 1.2);
             pg.gain.setValueAtTime(0.0001, t + 0.8); pg.gain.linearRampToValueAtTime(0.25, t + 0.85);
             pg.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-            pop.connect(pg); pg.connect(ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
+            pop.connect(pg); pg.connect(gameSoundsGainNode || ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
         }
 
         function updateBlackHoles() {
@@ -10423,6 +11437,11 @@ var persistentScores = {};
                                 if (bh.userName) {
                                     if (!persistentScores[bh.userName]) persistentScores[bh.userName] = { score: 0, avatar: '' };
                                     if (pick.active || (bh.userName && bh.userName !== ownerName)) persistentScores[bh.userName].score += (obj.pts || 0);
+                                    var _bhKiller = findPickForTarget(bh.userName);
+                                    if (_bhKiller) {
+                                        var _bhVType = (witherSkeletons.indexOf(obj) !== -1) ? 'wither_skeleton' : (zombies.indexOf(obj) !== -1) ? 'zombie' : (spiders.indexOf(obj) !== -1) ? 'spider' : 'bat';
+                                        registerKill(_bhKiller, _bhVType);
+                                    }
                                 }
                                 spawnText(bh.x, bh.y - 30, '+' + (obj.pts || 0), '#cc44ff');
                                 sfxZombieDeath();
@@ -10608,6 +11627,13 @@ var persistentScores = {};
             var cdKey = userName + '_thor';
             if (skillCooldowns[cdKey] && skillCooldowns[cdKey] > 0) return;
 
+            if (_audioStarted && typeof thorSound !== 'undefined') {
+                try {
+                    var tS = cloneSFX(thorSound);
+                    tS.play();
+                } catch(e){}
+            }
+
             // Robust source identification (correcting ReferenceError)
             var sourcePlayer = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
             if (!sourcePlayer) sourcePlayer = pick;
@@ -10666,11 +11692,20 @@ var persistentScores = {};
                     spawnParts(target.x, target.y, '#ffffff', 8);
                     spawnParts(target.x, target.y, '#00ffff', 12);
 
-                    if (target.hp <= 0 && isZombie) {
-                        target.state = 'dead'; target.animTimer = 0; target.deadTimer = 0;
-                        if (pick.active || (userName && userName !== ownerName)) score += (target.pts || 100);
-                        spawnText(target.x, target.y - 65, '+' + (target.pts || 100), '#ffdd44');
-                        if (userName) addCycleScore(userName, target.pts || 100, 'kill');
+                    if (target.hp <= 0) {
+                        var _thorIsZombie = zombies.indexOf(target) !== -1;
+                        var _thorIsSpider = spiders.indexOf(target) !== -1;
+                        var _thorIsBat = bats.indexOf(target) !== -1;
+                        var _thorVType = _thorIsZombie ? 'zombie' : (_thorIsSpider ? 'spider' : (_thorIsBat ? 'bat' : 'enemy'));
+                        if (_thorIsZombie || _thorIsSpider || _thorIsBat) {
+                            target.state = 'dead';
+                            if (target.animTimer !== undefined) target.animTimer = 0;
+                            target.deadTimer = 0;
+                            if (pick.active || (userName && userName !== ownerName)) score += (target.pts || 100);
+                            spawnText(target.x, target.y - 65, '+' + (target.pts || 100), '#ffdd44');
+                            if (userName) addCycleScore(userName, target.pts || 100, 'kill');
+                            registerKill(sourcePlayer, _thorVType);
+                        }
                     }
                 }
                 spawnText(startX, startY - 60, '🌊 WATER SHOCK! ⚡', '#00ffff');
@@ -10695,9 +11730,10 @@ var persistentScores = {};
         // ── Spin Skill Functions ──────────────────────────────────────────────────
         function activateSpin(userName, direction) {
             userName = userName.replace(/^@@+/, '@');
-            // Cooldown per direction
+            // Cooldown per direction (bypass for owner)
             var cdKey = userName + '_' + direction;
-            if (spinCooldowns[cdKey] && spinCooldowns[cdKey] > 0) return;
+            var isOwner = (userName === ownerName || userName === '@owner' || (pick && userName === pick.userName));
+            if (!isOwner && spinCooldowns[cdKey] && spinCooldowns[cdKey] > 0) return;
             // Find the player's pick
             var targetPick = null;
             if (pick && pick.userName === userName) targetPick = pick;
@@ -11008,12 +12044,10 @@ var persistentScores = {};
                 if (ps && ps.avatar) {
                     var avatarImg = avatarCache[ps.avatar];
                     if (!avatarImg) {
-                        avatarImg = new Image();
-                        avatarImg.src = ps.avatar;
-                        avatarImg.onload = function () { avatarCache[ps.avatar] = avatarImg; };
+                        loadAvatar(ps.avatar);
                     }
 
-                    if (avatarImg && avatarImg.complete) {
+                    if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
                         ctx.save();
                         ctx.beginPath();
                         ctx.arc(58.5, 58.5, 21, 0, Math.PI * 2);
@@ -11119,7 +12153,7 @@ var persistentScores = {};
             osc.type = 'triangle'; osc.frequency.setValueAtTime(80, t);
             osc.frequency.exponentialRampToValueAtTime(300, t + 0.45);
             g.gain.setValueAtTime(0.18, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
-            osc.connect(g); g.connect(ac.destination);
+            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             osc.start(t); osc.stop(t + 0.5);
         }
 
@@ -11130,7 +12164,7 @@ var persistentScores = {};
             osc.type = 'triangle'; osc.frequency.setValueAtTime(250, t);
             osc.frequency.exponentialRampToValueAtTime(60, t + 0.35);
             g.gain.setValueAtTime(0.22, t); g.gain.linearRampToValueAtTime(0, t + 0.45);
-            osc.connect(g); g.connect(ac.destination);
+            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             osc.start(t); osc.stop(t + 0.45);
         }
 
@@ -11140,7 +12174,7 @@ var persistentScores = {};
             var osc = ac.createOscillator(); var g = ac.createGain();
             osc.type = 'square'; osc.frequency.setValueAtTime(800, t);
             g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0, t + 0.05);
-            osc.connect(g); g.connect(ac.destination);
+            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
             osc.start(t); osc.stop(t + 0.05);
         }
 
@@ -11172,7 +12206,7 @@ var persistentScores = {};
                 // Ensure all in-game players are in persistentScores
                 var inGamePlayers = {};
                 if (ownerName && pick.active) {
-                    inGamePlayers[ownerName] = true;
+                    inGamePlayers[ownerName] = { isDead: false };
                     if (!persistentScores[ownerName]) persistentScores[ownerName] = { score: 0, likes: 0, giftsValue: 0, avatar: pick.userAvatarUrl || '', health: 0, slots: INITIAL_HEART_SLOTS };
                     if (pick.userAvatarUrl && persistentScores[ownerName].avatar !== pick.userAvatarUrl) {
                         persistentScores[ownerName].avatar = pick.userAvatarUrl;
@@ -11180,15 +12214,33 @@ var persistentScores = {};
                 }
                 for (var j = 0; j < userPicks.length; j++) {
                     var uname = userPicks[j].userName;
-                    inGamePlayers[uname] = true;
+                    inGamePlayers[uname] = { isDead: false };
                     if (!persistentScores[uname]) persistentScores[uname] = { score: 0, likes: 0, giftsValue: 0, avatar: userPicks[j].userAvatarUrl || '', health: 0, slots: INITIAL_HEART_SLOTS };
                 }
+                // Incluir jogadores mortos aguardando like (permanecem no leaderboard)
+                Object.keys(_deadPlayers).forEach(function (dName) {
+                    if (!inGamePlayers[dName]) {
+                        inGamePlayers[dName] = { isDead: true };
+                    }
+                });
+
+                var nowTime = Date.now();
+                var OFFLINE_MS = 3 * 60 * 1000; // 3 minutos de inatividade para considerar que saiu da live
 
                 // Get all players sorted by global score (ignoring skeletons)
                 var allSorted = Object.keys(persistentScores)
-                    .filter(function (name) { 
+                    .filter(function (name) {
                         var lower = name.toLowerCase();
-                        return lower !== 'esqueleto wither' && lower !== '@player'; 
+                        if (lower === 'esqueleto wither' || lower === '@player') return false;
+                        
+                        // Manter owner sempre
+                        if (ownerName && lower === ownerName.toLowerCase()) return true;
+                        
+                        // Remover do leaderboard se não interage há mais de 3 minutos (saiu da live)
+                        var lastAct = lastActivity[name] || 0;
+                        if (nowTime - lastAct > OFFLINE_MS) return false;
+                        
+                        return true;
                     })
                     .map(function (name) {
                         var ps = persistentScores[name];
@@ -11207,6 +12259,7 @@ var persistentScores = {};
                 var playersInGame = allSorted
                     .filter(function (p) { return inGamePlayers[p.userName]; })
                     .map(function (p) {
+                        var isDead = inGamePlayers[p.userName] && inGamePlayers[p.userName].isDead === true;
                         var pTier = PICKAXES[0];
                         var extraCount = 0;
                         var goldTime = 0;
@@ -11240,7 +12293,8 @@ var persistentScores = {};
                             likes: p.likes, giftsValue: p.giftsValue, coins: p.coins || 0, userAvatarUrl: p.avatar, pickaxe: pTier,
                             extraCount: extraCount, goldTime: goldTime, diamondTime: diamondTime,
                             aSwords: aSwords, health: p.health, slots: p.slots,
-                            lastPointLossTime: p.lastPointLossTime || 0
+                            lastPointLossTime: p.lastPointLossTime || 0,
+                            isDead: isDead
                         };
                     }).slice(0, 10);
 
@@ -11250,11 +12304,32 @@ var persistentScores = {};
                 playersInGame.forEach(function (u, i) {
                     var av = u.userAvatarUrl || '';
                     var cachedImg = avatarCache[av];
-                    var avSrc = (cachedImg && cachedImg.src && cachedImg.naturalWidth > 0) ? cachedImg.src : av;
+                    var avSrc = av;
+                    if (cachedImg && cachedImg.failed) avSrc = 'tiktok.png';
+                    else if (cachedImg && cachedImg.src && cachedImg.naturalWidth > 0) avSrc = cachedImg.src;
                     var pickColor = u.pickaxe ? u.pickaxe.color : '#c8a464';
-                    var rankLabel = i < 3 ? rankEmoji[i] : '#' + u.globalRank;
+                    var rankLabel = u.globalRank <= 3 ? rankEmoji[u.globalRank - 1] : '#' + u.globalRank;
                     var displayName = u.userName.replace(/^@/, '');
+                    var stroke = 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; ';
+                    var fontBase = "font-family: Inter, Arial, sans-serif; ";
 
+                    // --- JOGADOR MORTO: layout especial com mensagem "like to return" ---
+                    if (u.isDead) {
+                        html += '<div class="lb-item lb-item-dead" style="display:flex; flex-direction:column; gap:2px; margin-bottom:4px; padding:3px 4px;">';
+                        html += '  <div style="display:flex; align-items:center; gap:6px;">';
+                        html += '    <span style="' + fontBase + ' font-size:12px; width:18px; font-weight:900; color:#777; ' + stroke + '">' + rankLabel + '</span>';
+                        html += '    <img src="' + avSrc + '" style="width:20px; height:20px; border-radius:50%; border:1px solid #ff4444; filter:grayscale(90%) brightness(0.5); box-shadow:0 0 4px #000;" onerror="this.style.display=\'none\'">';
+                        html += '    <div style="flex:1; display:flex; flex-direction:column; overflow:hidden; line-height:1.2;">';
+                        html += '      <span style="' + fontBase + ' font-size:12px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#999; ' + stroke + '">💀 ' + displayName + '</span>';
+                        html += '      <span class="lb-like-to-return">❤️ like to return</span>';
+                        html += '    </div>';
+                        html += '    <span style="' + fontBase + ' font-size:13px; font-weight:900; color:#777; ' + stroke + '">' + Math.floor(u.score) + '</span>';
+                        html += '  </div>';
+                        html += '</div>';
+                        return;
+                    }
+
+                    // --- JOGADOR ATIVO: renderização normal ---
                     var stats = '';
                     if (u.kills > 0) stats += '<img src="slime/Slime.png" style="width:14px;height:14px;vertical-align:middle;">' + u.kills + ' ';
                     if (u.sheep > 0) stats += '<img src="animais bonus/ovelha/ovo ovelha.png" style="width:14px;height:14px;vertical-align:middle;">' + u.sheep + ' ';
@@ -11262,14 +12337,11 @@ var persistentScores = {};
                     if (u.likes > 0) stats += '❤️' + u.likes + ' ';
                     if (u.giftsValue > 0) stats += '🎁' + u.giftsValue + ' ';
 
-                    var shadow = i < 3 ? 'box-shadow: inset 0 0 10px rgba(255,215,0,0.2); background: rgba(255,215,0,0.1); border-radius: 8px; padding: 4px;' : '';
-                    var font = i < 3 ? 'text-shadow: 0 0 5px rgba(255,255,255,0.5);' : '';
-
-                    var stroke = 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; ';
-                    var fontBase = 'font-family: \\\'Inter\\\', Arial, sans-serif; ';
+                    var shadow = u.globalRank <= 3 ? 'padding: 4px;' : '';
+                    var font = u.globalRank <= 3 ? 'text-shadow: 0 0 5px rgba(255,255,255,0.5);' : '';
 
                     var hearts = getHeartsHtml(u.health, u.slots);
-                    html += '<div class="lb-item" style="display:flex; flex-direction:column; gap:2px; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05); ' + shadow + ' ' + font + '">';
+                    html += '<div class="lb-item" style="display:flex; flex-direction:column; gap:2px; margin-bottom:4px; padding-bottom:2px; ' + shadow + ' ' + font + '">';
                     html += '  <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + hearts + '</div>';
                     html += '  <div style="display:flex; align-items:center; gap:6px;">';
                     html += '    <span style="' + fontBase + ' font-size:12px; width:18px; font-weight:900; color:#aaa; ' + stroke + '">' + rankLabel + '</span>';
@@ -11316,6 +12388,7 @@ var persistentScores = {};
                     html += '  </div>';
                     html += '</div>';
                 });
+
 
                 list.innerHTML = html || '<div style="text-align:center; opacity:0.5; font-size:11px;">Waiting... (uPicks: ' + userPicks.length + ', sorted: ' + allSorted.length + ', inGame: ' + playersInGame.length + ')</div>';
             } catch (e) {
@@ -12035,7 +13108,7 @@ var persistentScores = {};
                     img.crossOrigin = "anonymous";
                     img.onload = () => resolve(img);
                     img.onerror = () => resolve(null);
-                    img.src = '/proxy-image?url=' + encodeURIComponent(rawUrl);
+                    img.src = 'https://wsrv.nl/?url=' + encodeURIComponent(rawUrl);
                 });
             }
 
@@ -12392,7 +13465,7 @@ var persistentScores = {};
                     img.crossOrigin = "anonymous";
                     img.onload = () => resolve(img);
                     img.onerror = () => resolve(null);
-                    img.src = '/proxy-image?url=' + encodeURIComponent(rawUrl);
+                    img.src = 'https://wsrv.nl/?url=' + encodeURIComponent(rawUrl);
                 });
             }
 
@@ -12526,7 +13599,7 @@ var persistentScores = {};
         }
 
         function saveRankingToServer(dataUrl, filename) {
-            fetch('/save-ranking', {
+            fetch('/proxy.php?path=/save-ranking', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: dataUrl, filename: filename })
@@ -12620,12 +13693,16 @@ var persistentScores = {};
 
         var _ttsMode = 'browser';
         var _ttsVoice = 'en-US-GuyNeural';
+        var _ttsIgnoreEmojis = true;
 
         function saveTTSSettings() {
             _ttsMode = document.getElementById('ttsMode').value;
             _ttsVoice = document.getElementById('ttsVoice').value;
+            var ignoreToggle = document.getElementById('ttsIgnoreEmojis');
+            if (ignoreToggle) _ttsIgnoreEmojis = ignoreToggle.checked;
             localStorage.setItem('pd_tts_mode', _ttsMode);
             localStorage.setItem('pd_tts_voice', _ttsVoice);
+            localStorage.setItem('pd_tts_ignore_emojis', _ttsIgnoreEmojis.toString());
             document.getElementById('ttsVoice').style.display = (_ttsMode === 'tiktok' ? 'block' : 'none');
         }
 
@@ -12646,22 +13723,28 @@ var persistentScores = {};
             var voice = item.voice;
 
             if (_ttsMode === 'tiktok') {
-                var audio = new Audio('/tts?text=' + encodeURIComponent(text) + '&voice=' + voice);
+                var audio = new Audio('/proxy.php?path=' + encodeURIComponent('/tts?text=' + encodeURIComponent(text) + '&voice=' + voice));
+                audio.volume = messagesVolume;
+                currentMessageAudio = audio;
                 audio.onended = function () {
+                    if (currentMessageAudio === audio) currentMessageAudio = null;
                     setTimeout(processTTSQueue, 300);
                 };
                 audio.onerror = function () {
                     console.error('TikTok TTS Error');
                     _isSpeaking = false;
+                    if (currentMessageAudio === audio) currentMessageAudio = null;
                     processTTSQueue();
                 };
                 audio.play().catch(function (e) {
                     console.error('TTS Play Blocked/Error:', e);
                     _isSpeaking = false;
+                    if (currentMessageAudio === audio) currentMessageAudio = null;
                     processTTSQueue();
                 });
             } else {
                 var utterance = new SpeechSynthesisUtterance(text);
+                utterance.volume = messagesVolume;
                 var voices = window.speechSynthesis.getVoices();
                 var selectedVoice;
 
@@ -12693,16 +13776,28 @@ var persistentScores = {};
         var _mp3Index = 0;
         var _lastMp3Time = 0;
         var MP3_INTERVAL = 120000; // 2 minutos em ms
+        var _mp3AnnEnabled = false; // toggle independente para MP3 de anúncios
 
         function saveAnnouncementSettings() {
-            _announcementMode = document.getElementById('announcementMode').value;
+            _announcementMode = document.getElementById('announcementMode') ? document.getElementById('announcementMode').value : 'tts';
             localStorage.setItem('pd_announcement_mode', _announcementMode);
             if (_announcementMode === 'mp3') loadMp3Announcements();
             spawnText(canvas.width / 2, camY + 100, 'MODO: ' + _announcementMode.toUpperCase(), '#00ffff');
         }
 
+        function toggleMp3Announcements(enabled) {
+            _mp3AnnEnabled = enabled;
+            localStorage.setItem('pd_mp3ann_enabled', enabled);
+            if (enabled) {
+                loadMp3Announcements();
+                spawnText(canvas.width / 2, camY + 100, '📢 MP3 ANÚNICIOS ON', '#00ffff');
+            } else {
+                spawnText(canvas.width / 2, camY + 100, '📢 MP3 ANÚNICIOS OFF', '#ff4444');
+            }
+        }
+
         function loadMp3Announcements() {
-            fetch('/messages-list').then(r => r.json()).then(data => {
+            fetch('/proxy.php?path=/messages-list').then(r => r.json()).then(data => {
                 _mp3Playlist = data.files || [];
                 console.log('MP3 Messages loaded:', _mp3Playlist.length);
             }).catch(e => console.error('Error loading MP3 messages:', e));
@@ -12712,25 +13807,40 @@ var persistentScores = {};
             if (_isSpeaking) return;
             _isSpeaking = true;
             var audio = new Audio(url);
-            audio.onended = function () { _isSpeaking = false; };
-            audio.onerror = function () { _isSpeaking = false; };
-            audio.play().catch(function (e) { console.error('MP3 Play error:', e); _isSpeaking = false; });
+            audio.volume = messagesVolume;
+            currentMessageAudio = audio;
+            audio.onended = function () {
+                _isSpeaking = false;
+                if (currentMessageAudio === audio) currentMessageAudio = null;
+            };
+            audio.onerror = function () {
+                _isSpeaking = false;
+                if (currentMessageAudio === audio) currentMessageAudio = null;
+            };
+            audio.play().catch(function (e) {
+                console.error('MP3 Play error:', e);
+                _isSpeaking = false;
+                if (currentMessageAudio === audio) currentMessageAudio = null;
+            });
         }
 
         // Verifica anúncios periódicos a cada 10 segundos
         setInterval(function () {
-            if (!_ttsEnabled) return;
             var now = Date.now();
 
-            if (_announcementMode === 'tts') {
+            // Anúncios TTS periódicos (só quando TTS do chat está ativo)
+            if (_ttsEnabled) {
                 TTS_ANNOUNCEMENTS.forEach(function (ann) {
                     var elapsedMin = (now - ann.lastSent) / (1000 * 60);
                     if (elapsedMin >= ann.intervalMin) {
-                        speakTTS(ann.text);
+                        // speakTTS(ann.text);
                         ann.lastSent = now;
                     }
                 });
-            } else if (_announcementMode === 'mp3') {
+            }
+
+            // Anúncios MP3 periódicos (toggle independente)
+            if (_mp3AnnEnabled) {
                 if (_mp3Playlist.length > 0 && (now - _lastMp3Time >= MP3_INTERVAL)) {
                     if (_isSpeaking) return;
                     playMp3Announcement(_mp3Playlist[_mp3Index]);
@@ -12745,12 +13855,12 @@ var persistentScores = {};
             var saved = localStorage.getItem('pd_tts_enabled') === 'true';
             var savedMode = localStorage.getItem('pd_tts_mode') || 'browser';
             var savedVoice = localStorage.getItem('pd_tts_voice') || 'en-US-GuyNeural';
-            var savedAnnMode = localStorage.getItem('pd_announcement_mode') || 'tts';
+            var savedMp3Ann = localStorage.getItem('pd_mp3ann_enabled') === 'true';
 
             _ttsEnabled = saved;
             _ttsMode = savedMode;
             _ttsVoice = savedVoice;
-            _announcementMode = savedAnnMode;
+            _mp3AnnEnabled = savedMp3Ann;
 
             setTimeout(function () {
                 var el = document.getElementById('ttsToggle');
@@ -12765,10 +13875,10 @@ var persistentScores = {};
                     voiceEl.style.display = (savedMode === 'tiktok' ? 'block' : 'none');
                 }
 
-                var annEl = document.getElementById('announcementMode');
-                if (annEl) annEl.value = savedAnnMode;
+                var mp3AnnEl = document.getElementById('mp3AnnToggle');
+                if (mp3AnnEl) mp3AnnEl.checked = savedMp3Ann;
 
-                if (savedAnnMode === 'mp3') loadMp3Announcements();
+                if (savedMp3Ann) loadMp3Announcements();
 
                 if (window.speechSynthesis) window.speechSynthesis.getVoices();
             }, 1000);
@@ -12838,3 +13948,92 @@ var persistentScores = {};
                 } catch (e) { console.error('Failed to load cached gifts', e); }
             }
         })();
+
+        // ── Auto Host (Bot) Logic ──────────────────────────────────────────────────
+        window._autoHostEnabled = false;
+        window._autoHostWithSword = true;
+        window._autoHostWithoutSword = true;
+        window._autoHostTimer = null;
+
+        window.toggleAutoHost = function(checked) {
+            window._autoHostEnabled = checked;
+            if (window._autoHostEnabled) {
+                if (!window._autoHostTimer) {
+                    window.runAutoHost(); // Executa instantaneamente ao ativar
+                    window._autoHostTimer = setInterval(window.runAutoHost, 5000); // Executa a cada 5 segundos
+                }
+            } else {
+                if (window._autoHostTimer) {
+                    clearInterval(window._autoHostTimer);
+                    window._autoHostTimer = null;
+                }
+            }
+        };
+
+        window.toggleAutoHostSword = function(checked) {
+            window._autoHostWithSword = checked;
+        };
+
+        window.toggleAutoHostWithoutSword = function(checked) {
+            window._autoHostWithoutSword = checked;
+        };
+
+        window.runAutoHost = function() {
+            if (!window._autoHostEnabled) return;
+            
+            var p = pick; 
+            if (!p || !p.active) return; // Se o host estiver inativo/morto, não faz nada
+            var userName = p.userName || ownerName || '@owner';
+
+            // Auto-Like: Envia likes continuamente pelo host para recuperar vida e gerar upgrades gradativos
+            var simulatedLikes = 15 + Math.floor(Math.random() * 10); // Entre 15 e 24 likes por ciclo
+            processLiveEvent({ 
+                type: 'like', 
+                user: userName, 
+                avatar: p.userAvatarUrl || '', 
+                likeCount: simulatedLikes, 
+                msgId: 'autolike_' + Date.now() 
+            });
+
+            // Com Espada: Tenta ativar a espada periodicamente
+            if (window._autoHostWithSword) {
+                if (Math.random() > 0.3) {
+                    activateSword(p);
+                }
+            }
+
+            // Sem Espada: Tenta usar outras habilidades aleatórias
+            if (window._autoHostWithoutSword) {
+                if (Math.random() > 0.4) {
+                    var rand = Math.random();
+                    var tx = p.x;
+                    var ty = p.y;
+
+                    if (rand < 0.10) {
+                        activateTNT(tx, ty, userName);
+                    } else if (rand < 0.20) {
+                        activateMegaTNT(tx, ty, userName);
+                    } else if (rand < 0.30) {
+                        activateThor(tx, ty, userName);
+                    } else if (rand < 0.40) {
+                        activateStorm(p);
+                    } else if (rand < 0.50) {
+                        activateBall(tx, ty, userName);
+                    } else if (rand < 0.60) {
+                        spawnClone(userName, p.userAvatarUrl || '');
+                    } else if (rand < 0.70) {
+                        activateBlackHole(tx, ty, userName);
+                    } else if (rand < 0.80) {
+                        var dirs = ['up', 'down', 'left', 'right'];
+                        activateSpin(userName, dirs[Math.floor(Math.random() * dirs.length)]);
+                    } else if (rand < 0.90) {
+                        activateTormenta(p);
+                    } else {
+                        // Creeper
+                        for(var i = 0; i < 3; i++) {
+                            activateCreeper(tx + (Math.random() - 0.5) * 100, ty - Math.random() * 50, userName);
+                        }
+                    }
+                }
+            }
+        };

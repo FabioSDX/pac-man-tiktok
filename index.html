@@ -7,7 +7,52 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>" />
-    <link rel="stylesheet" href="css/style2.css">
+    <link rel="stylesheet" href="css/style2.css?v=2">
+    <style>
+        /* CSS PARA MOBILE */
+        .mobile-close-btn { display: none; }
+        
+        @media (max-width: 1200px) {
+            body { margin: 0; padding: 0; overflow: hidden; background: #000; display: block !important; }
+            #gameWrapper { width: 100vw !important; height: 100vh !important; position: fixed !important; top: 0 !important; left: 0 !important; margin: 0 !important; padding: 0 !important; z-index: 1; }
+            #gameCanvas { width: 100vw !important; height: 100vh !important; object-fit: contain !important; }
+            
+            #mobileMenuBtn { display: flex !important; }
+            .mobile-close-btn { display: block !important; }
+
+            /* Esconde todos os painéis externos por padrão no mobile */
+            #adminPanel, #gameControlsPanel, #animationControlModal, #playerManagementPanel { 
+                display: none !important; 
+            }
+
+            /* Quando o menu da engrenagem estiver aberto, transforma o body num container rolável e empilha todos os painéis */
+            body.mobile-open {
+                display: flex !important;
+                flex-direction: column !important;
+                overflow-y: auto !important;
+                background: rgba(10,10,15,0.95) !important;
+                padding: 15px !important;
+                box-sizing: border-box !important;
+            }
+            body.mobile-open #gameWrapper {
+                display: none !important; /* Oculta o jogo enquanto o menu está aberto */
+            }
+            body.mobile-open #adminPanel,
+            body.mobile-open #gameControlsPanel,
+            body.mobile-open #animationControlModal,
+            body.mobile-open #playerManagementPanel {
+                display: flex !important;
+                position: static !important;
+                width: 100% !important;
+                height: auto !important;
+                max-height: none !important;
+                max-width: 100% !important;
+                margin: 0 0 20px 0 !important;
+                box-sizing: border-box !important;
+                transform: none !important;
+            }
+        }
+    </style>
 </head>
 
 <body>
@@ -19,22 +64,25 @@
 
     <div id="gameWrapper"
         style="position:relative; z-index:0; display:flex; justify-content:flex-start; align-items:center; width:fit-content; height:100vh; overflow:hidden;">
+        
+        <button id="mobileMenuBtn" style="display:none; align-items:center; justify-content:center; position:absolute; top:15px; right:15px; z-index:15000; background:rgba(0,0,0,0.6); border:2px solid #fff; border-radius:50%; width:45px; height:45px; font-size:22px; color:#fff; cursor:pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5);" onclick="document.body.classList.add('mobile-open');">⚙️</button>
+
         <video id="bgVideo" autoplay loop muted playsinline></video>
         
-        <div id="infoBanner" style="position: absolute; top: 90px; left: 0; width: 100%;">
-            <div id="bannerText" class="banner-message" style="color: #ffff00;">💬 Type 'roulette' in chat to play!
+        <div id="infoBanner" style="position: absolute; top: 90px; left: 0; width: 100%; pointer-events: none;">
+            <div id="bannerText" class="banner-message" style="color: #ffff00; pointer-events: auto;">💬 Type 'roulette' in chat to play!
             </div>
         </div>
         <script src="js/script_2.js"></script>
 
-    <div id="uiSidebar" style="position: absolute; top: 140px; left: 0; width: 100%; display: flex; flex-direction: row-reverse; justify-content: space-between; z-index: 10000; box-sizing: border-box; padding: 0 10px;">
+    <div id="uiSidebar" style="position: absolute; top: 140px; left: 0; width: 100%; display: flex; flex-direction: row-reverse; justify-content: space-between; z-index: 10000; box-sizing: border-box; padding: 0 10px; pointer-events: none;">
     <div id="ui" style="position: static; max-width: 100%;">
 
         <div class="depth" id="depthDisplay" style="display:none;">Depth: 0m</div>
         <div class="score-display" id="scoreDisplay" style="display:none">&#9935; 0</div>
 
 
-        <div id="commandBox">
+        <div id="commandBox" style="pointer-events: auto;">
             <!-- Join removido -->
 
             <div class="panel-title">&#9889; Cmds</div>
@@ -100,6 +148,7 @@
                 </div>
 
                 <!-- Presentes do TikTok -->
+                <div id="ttPresentsPanel">
                 <div class="cmd-section-header"><img src="tiktok.png"
                         style="width:32px;height:32px;vertical-align:middle;margin-right:6px;" /> PRESENT
                 </div>
@@ -124,8 +173,7 @@
 
                     <img id="imgGiftDonut" src="images%20tiktok/Doughnut.png"
                         style="width:32px;height:32px;vertical-align:middle;" />
-                    <span id="txtGiftDonut" class="cmd-icon" style="display:none;"><img src="item/donut.png"
-                            style="width:32px;height:32px;vertical-align:middle;" /></span>
+                    <span id="txtGiftDonut" class="cmd-icon" style="display:none;">🍩</span>
                 </div>
                 <div class="cmd-row"
                     onclick="ensureAudio(); var m=(pick?pick.userName:'@player').toLowerCase(); processLiveEvent({ type: 'gift', user: m, avatar: pick.userAvatarUrl, giftName: 'heart me', diamondCount: 1, repeatCount: 1, msgId: 'test_' + Date.now(), giftPictureUrl: 'images tiktok/Heart_Me.png' });">
@@ -190,6 +238,7 @@
                     <img id="imgGiftHomer" src="" style="width:32px;height:32px;vertical-align:middle;display:none;" />
                     <span id="txtGiftHomer" class="cmd-icon">🍩</span>
                 </div>
+                </div> <!-- End of ttPresentsPanel -->
             </div>
         </div>
 
@@ -221,7 +270,11 @@
     
     <!-- Painel Administrativo -->
     <div id="adminPanel" style="background: rgba(20, 20, 30, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 20px; margin-left: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; font-family: 'Inter', sans-serif; width: 250px; height: fit-content; align-self: flex-start; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
-        <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; color: #ffdd44;">⚙️ ADMIN PANEL</h3>
+        
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">
+            <h3 style="margin: 0; color: #ffdd44;">⚙️ ADMIN PANEL</h3>
+            <button class="mobile-close-btn" onclick="document.body.classList.remove('mobile-open');" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:4px 8px; font-size:14px; cursor:pointer;">X FECHAR MENU</button>
+        </div>
         
         <!-- Live Setup -->
         <div id="apiSetupBox" style="color:#fff; font-family:Arial,sans-serif;">
@@ -229,12 +282,7 @@
                 <h2 style="margin:4px 0; color:#00ff88; font-size:16px;">Conexão Live</h2>
                 <p id="apiSetupMsg" style="font-size:11px; color:#aaa; margin:0;">Conecte-se à sua plataforma.</p>
             </div>
-            <div id="apiSetupError"
-                style="display:none; background:rgba(255,68,68,0.15); border:1px solid #ff4444; border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:12px; color:#ff8888;">
-            </div>
-            <div id="apiSetupSuccess"
-                style="display:none; background:rgba(0,255,136,0.1); border:1px solid #00ff88; border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:12px; color:#00ff88;">
-            </div>
+
             <!-- TikTok -->
             <div style="border:1px solid #00f2ea33; border-radius:10px; padding:10px 12px; margin-bottom:12px;">
                 <div style="font-size:12px; color:#00f2ea; font-weight:bold; margin-bottom:6px;">🎵 TikTok</div>
@@ -245,11 +293,23 @@
                         style="width:100%; padding:10px; border:none; border-radius:8px; background:#00f2ea; color:#000; font-weight:bold; font-size:13px; cursor:pointer;">Connect</button>
                 </div>
             </div>
+            <!-- YouTube -->
+            <div style="border:1px solid #ff000033; border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+                <div style="font-size:12px; color:#ff4444; font-weight:bold; margin-bottom:6px;">▶️ YouTube</div>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <input id="youtubeIdInput" type="text" placeholder="Channel ID ou URL do Vídeo"
+                        style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid #333; background:#0d0d1a; color:#fff; font-size:13px; box-sizing:border-box; outline:none;" />
+                    <input id="youtubeOwnerInput" type="text" placeholder="Seu Nome no chat (Dono)"
+                        style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid #333; background:#0d0d1a; color:#fff; font-size:13px; box-sizing:border-box; outline:none;" title="Evita que sua picareta suma por inatividade" />
+                    <button id="btnConnectYT" onclick="youtubeConnect()"
+                        style="width:100%; padding:10px; border:none; border-radius:8px; background:#ff4444; color:#fff; font-weight:bold; font-size:13px; cursor:pointer;">Connect YT</button>
+                </div>
+            </div>
             <div style="display:flex; gap:8px; justify-content:center; width:100%; margin-top:10px;">
                 <button onclick="platformSkip()"
                     style="flex:1; padding:10px 16px; border:1px solid #555; border-radius:8px; background:rgba(255,255,255,0.05); color:#ccc; font-size:13px; cursor:pointer; font-weight:bold; transition:all 0.2s;"
                     onmouseover="this.style.background='rgba(255,255,255,0.1)';"
-                    onmouseout="this.style.background='rgba(255,255,255,0.05)';">Play Offline</button>
+                    onmouseout="this.style.background='rgba(255,255,255,0.05)';">Ocultar Conexões</button>
             </div>
             <div style="width:100%; height:1px; background:rgba(255,255,255,0.1); margin:12px 0;"></div>
         </div>
@@ -259,27 +319,30 @@
         <div id="apiStatus" style="display:flex; flex-direction:column; align-items:flex-start; gap:8px; pointer-events: auto; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; margin-bottom: 10px;">
             <!-- TTS Toggle -->
             <div id="ttsControl" style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; width: 100%;">
+
+                <!-- TTS Voz do Chat -->
                 <div style="display:flex; align-items:center; gap:6px; width: 100%;">
-                    <span style="font-size:11px; opacity:0.6;" title="Anúncios">📢</span>
-                    <select id="announcementMode" onchange="saveAnnouncementSettings()"
-                        style="background:rgba(0,0,0,0.4); color:#fff; border:none; font-size:10px; border-radius:4px; padding:4px; outline:none; cursor:pointer; flex: 1;"
-                        title="Alternar entre TTS e MP3">
-                        <option value="tts">Voz (TTS)</option>
-                        <option value="mp3">Áudio (MP3)</option>
-                    </select>
-                </div>
-                
-                <div style="display:flex; align-items:center; gap:6px; width: 100%;">
-                    <span style="font-size:11px; opacity:0.6;" title="Voz do Chat">🗣️</span>
+                    <span style="font-size:11px; opacity:0.6;" title="Voz do Chat TTS">🗣️</span>
                     <label class="switch">
                         <input type="checkbox" id="ttsToggle" onchange="toggleTTS(this.checked)">
                         <span class="slider round"></span>
                     </label>
                     <select id="ttsMode" onchange="saveTTSSettings()"
-                        style="background:rgba(0,0,0,0.4); color:#fff; border:none; font-size:10px; border-radius:4px; margin-left:4px; padding:4px; outline:none; cursor:pointer; flex: 1;">
-                        <option value="browser">Nativo</option>
-                        <option value="tiktok">Natural (Microsoft)</option>
+                        style="background:rgba(0,0,0,0.4); color:#fff; border:none; font-size:10px; border-radius:4px; margin-left:4px; padding:4px; outline:none; cursor:pointer; flex: 1;"
+                        title="Modo de voz do chat">
+                        <option value="browser">TTS Nativo</option>
+                        <option value="tiktok">TTS Natural (MS)</option>
                     </select>
+                </div>
+                
+                <!-- TTS Ignorar Emojis -->
+                <div style="display:flex; align-items:center; gap:6px; width: 100%;">
+                    <span style="font-size:11px; opacity:0.6;" title="Ignorar Emojis na leitura">🚫😀</span>
+                    <label class="switch">
+                        <input type="checkbox" id="ttsIgnoreEmojis" onchange="saveTTSSettings()" checked>
+                        <span class="slider round"></span>
+                    </label>
+                    <span style="font-size:10px; color:#aaa; flex:1;">Ignorar Emojis</span>
                 </div>
 
                 <select id="ttsVoice" onchange="saveTTSSettings()"
@@ -293,6 +356,16 @@
                     <option value="pt-BR-AntonioNeural">Antonio (Português)</option>
                 </select>
 
+                <!-- Anúncios MP3 periódicos (independente do TTS) -->
+                <div style="display:flex; align-items:center; gap:6px; width: 100%;">
+                    <span style="font-size:11px; opacity:0.6;" title="Anúncios MP3 periódicos">📢</span>
+                    <label class="switch">
+                        <input type="checkbox" id="mp3AnnToggle" onchange="toggleMp3Announcements(this.checked)">
+                        <span class="slider round"></span>
+                    </label>
+                    <span style="font-size:10px; color:#aaa; flex:1;">MP3 Anúncios</span>
+                </div>
+
             </div>
             
             <div style="width:100%; height:1px; background:rgba(255,255,255,0.1); margin:4px 0;"></div>
@@ -300,8 +373,39 @@
             <div style="display:flex; align-items:center; gap:6px;">
                 <div class="status-dot" id="statusDotTT"></div>
                 <span id="statusTextTT" style="font-size:11px;">TT: —</span>
+                <div class="status-dot" id="statusDotYT" style="margin-left: 10px;"></div>
+                <span id="statusTextYT" style="font-size:11px;">YT: —</span>
             </div>
 
+        </div>
+        
+        <!-- Volume Controls -->
+        <div id="volumeControlsUI" style="background: rgba(0, 0, 0, 0.4); padding: 10px; border-radius: 6px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 12px; font-weight: bold; text-align: center; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🔊 CONTROLE DE VOLUME</div>
+            
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                    <span>🎮 Sons do Jogo</span>
+                    <span id="gameVolumeVal">50%</span>
+                </div>
+                <input type="range" id="volGame" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changeVolume('game', this.value)">
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                    <span>🎵 Música MP3</span>
+                    <span id="musicVolumeVal">50%</span>
+                </div>
+                <input type="range" id="volMusic" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changeVolume('music', this.value)">
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                    <span>💬 Mensagens MP3 / Voz</span>
+                    <span id="messagesVolumeVal">50%</span>
+                </div>
+                <input type="range" id="volMessages" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changeVolume('messages', this.value)">
+            </div>
         </div>
         
         <!-- Music Player -->
@@ -320,8 +424,7 @@
         <link rel="stylesheet" href="css/style.css">
         <button class="ui-action-btn ui-btn-report" onclick="generateScoreReport()" style="background: #3a86ff; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">📊 Relatório</button>
         <button class="ui-action-btn ui-btn-reset" onclick="resetAllScores()" style="background: #ef233c; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">🔄 Zerar</button>
-        <button class="ui-action-btn ui-btn-music" id="btnMusic" style="background: #8338ec; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">🎵 Trilha</button>
-        <button class="ui-action-btn ui-btn-video" onclick="cycleBgVideo()" style="background: #ff006e; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">📹 Vídeo</button>
+                <button class="ui-action-btn ui-btn-video" onclick="cycleBgVideo()" style="background: #ff006e; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.2s;">📹 Vídeo</button>
         <input type="file" id="bgmFileInput" accept="audio/*" style="display:none">
     </div>
 
@@ -331,6 +434,25 @@
     <div id="gameControlsPanel" style="background: rgba(20, 20, 30, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 15px; margin-left: 10px; display: flex; flex-direction: column; gap: 10px; color: #fff; font-family: 'Inter', sans-serif; width: 250px; height: fit-content; align-self: flex-start; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
         <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; color: #ffdd44; font-size: 14px; text-align: center;">🕹️ CONTROLES</h3>
         
+        <!-- Auto Host Panel -->
+        <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-size:11px; color:#ffdd44; font-weight:bold; display: flex; justify-content: space-between; align-items: center;">
+                <span>🤖 Auto Host (Bot)</span>
+                <label class="switch">
+                    <input type="checkbox" id="autoHostToggle" onchange="toggleAutoHost(this.checked)">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div style="display: flex; gap: 10px; font-size: 10px; align-items: center;">
+                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; color: #aaa;">
+                    <input type="checkbox" id="autoHostWithSword" onchange="toggleAutoHostSword(this.checked)" checked> ⚔️ Com Espada
+                </label>
+                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; color: #aaa;">
+                    <input type="checkbox" id="autoHostWithoutSword" onchange="toggleAutoHostWithoutSword(this.checked)" checked> ⛏️ Sem Espada
+                </label>
+            </div>
+        </div>
+        
         <!-- Game Actions -->
         <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
             <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:6px;">
@@ -338,8 +460,14 @@
                     style="background:rgba(255,0,0,0.2); color:#ff4444; border:1px solid #ff4444; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold;">Reset</button>
                 <button onclick="chromaKey = !chromaKey; document.title = chromaKey ? '[CHROMA] Chat Live Game' : 'Chat Live Game';" 
                     style="background:rgba(0,255,0,0.2); color:#00ff88; border:1px solid #00ff88; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold;">Chroma</button>
+                <button onclick="document.getElementById('apiSetupBox').style.display='block';" 
+                    style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">🔌 Exibir Conexões</button>
                 <button onclick="if(pick){ pick.active = !pick.active; spawnText(pick.x, pick.y-100, pick.active?'VOLTEI!':'SAÍ!', pick.active?'#00ff88':'#ff4444'); }" 
                     style="background:rgba(0,221,255,0.2); color:#00ddff; border:1px solid #00ddff; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">Toggle Ativo</button>
+                <button id="btnToggleGifts" onclick="var p1=document.getElementById('ttPresentsPanel'); var p2=document.getElementById('simGiftsPanel'); var state=(p1 && p1.style.display==='none')?'block':'none'; if(p1) p1.style.display=state; if(p2) p2.style.display=state; this.innerText=(state==='none')?'Mostrar Presentes':'Ocultar Presentes';" 
+                    style="background:rgba(255,165,0,0.2); color:#ffa500; border:1px solid #ffa500; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">Ocultar Presentes</button>
+                <button onclick="if(!document.fullscreenElement){document.documentElement.requestFullscreen().catch(e=>{});}else{document.exitFullscreen();}" 
+                    style="background:rgba(150,0,255,0.2); color:#dd88ff; border:1px solid #dd88ff; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">📺 Fullscreen</button>
             </div>
         </div>
 
@@ -373,7 +501,7 @@
         </div>
 
         <!-- Gifts -->
-        <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+        <div id="simGiftsPanel" style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
             <div style="font-size:11px; color:#aaa; margin-bottom:6px; font-weight:bold;">Gifts</div>
             <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:4px;">
                 <button onclick="getTargetUsers().forEach(u => { var data = persistentScores[u]; var av = data ? data.avatar : ''; processLiveEvent({ type: 'gift', user: u, avatar: av, giftName: 'rose', diamondCount: 1, repeatCount: 1, msgId: 'test_'+Date.now(), giftPictureUrl: 'images tiktok/Rose.png' }); });" 
@@ -432,6 +560,16 @@
         </div>
     </div>
 
+    <!-- Animation Control Panel -->
+    <div id="animationControlModal" style="background: rgba(20, 20, 30, 0.85); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 15px; margin-left: 10px; display: flex; flex-direction: column; gap: 10px; color: #fff; font-family: 'Inter', sans-serif; width: fit-content; max-width: 600px; height: fit-content; max-height: calc(100vh - 40px); align-self: flex-start; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+        <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; color: #aa22aa; font-size: 14px; text-align: center;">🎭 ANIMAÇÕES HD</h3>
+        
+        <div id="animGrid" style="flex:1; overflow-y:auto; overflow-x:hidden; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; align-content:start; padding-right: 5px;">
+            <!-- Cards renderizados via app.js -->
+        </div>
+    </div>
+
+
     <!-- Player Management Panel -->
     <div id="playerManagementPanel" style="background: rgba(20, 20, 30, 0.9); backdrop-filter: blur(10px); border-left: 1px solid rgba(255, 255, 255, 0.1); padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; font-family: 'Inter', sans-serif; width: 56.25vh; height: 100vh; position: fixed; right: 0; top: 0; box-shadow: -4px 0 15px rgba(0,0,0,0.5); z-index: 1000;">
         <h3 style="margin-top: 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; color: #ffdd44; font-size: 16px; text-align: center;">👥 JOGADORES</h3>
@@ -442,7 +580,24 @@
     </div>
     
 
-    <script src="js/app.js"></script>
+    <script src="js/app.js?v=28"></script>
+
+
+    <script>
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const player = urlParams.get('player');
+            if (player) {
+                setTimeout(() => {
+                    if(typeof spawnUserPickaxe === 'function') {
+                        spawnUserPickaxe(player, '');
+                        if(typeof addCycleScore === 'function') addCycleScore(player, 100, 'item');
+                        console.log(`[Offline Mode] Player ${player} joined.`);
+                    }
+                }, 1500);
+            }
+        });
+    </script>
 </body>
 
 </html>

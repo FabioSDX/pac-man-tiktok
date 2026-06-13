@@ -4,12 +4,25 @@ const path = require('path');
 const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const { WebcastPushConnection } = require('tiktok-live-connector');
+const { LiveChat } = require('youtube-chat');
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3000;
+
+app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
+
+// Global Metrics Tracking
+let eventsCounter = 0;
+let eventsHistory = new Array(60).fill(0);
+setInterval(() => {
+  eventsHistory.shift();
+  eventsHistory.push(eventsCounter);
+  eventsCounter = 0;
+}, 1000);
 
 
 // Silenciar console.log para mensagens repetitivas
@@ -23,7 +36,11 @@ console.log = function (...args) {
 // ── CORS headers ─────────────────────────────────────────────────────────────────
 app.use(function (req, res, next) {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, ngrok-skip-browser-warning, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
   next();
 });
 
@@ -41,7 +58,7 @@ app.use(express.static('.'));
 const sessions = new Map();
 
 function getSession(ws) {
-  if (!sessions.has(ws)) sessions.set(ws, { tiktok: null, lastTTConnect: 0 });
+  if (!sessions.has(ws)) sessions.set(ws, { tiktok: null, youtube: null, lastTTConnect: 0, lastYTConnect: 0 });
   return sessions.get(ws);
 }
 
@@ -65,6 +82,7 @@ function cleanupSession(ws) {
   var s = sessions.get(ws);
   if (!s) return;
   if (s.tiktok && s.tiktok.conn) { try { s.tiktok.conn.disconnect(); } catch (e) { } }
+  if (s.youtube && s.youtube.conn) { try { s.youtube.conn.stop(); } catch (e) { } }
   sessions.delete(ws);
 }
 
@@ -140,6 +158,7 @@ function connectTikTok(ws, username, sessionId) {
 function attachTikTokEvents(ws, tiktok, username, session) {
 
   tiktok.on('chat', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, username), nick = getNick(u, data, uid), av = getAvatar(u, data);
     var chatEv = { type: 'chat', platform: 'tiktok', user: uid, nickname: nick, avatar: av, comment: data.comment || '', msgId: data.msgId };
 
@@ -157,14 +176,17 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     }
   });
   tiktok.on('member', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (uid) send(ws, { type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('subscribe', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (uid) send(ws, { type: 'subscribe', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('gift', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     send(ws, {
       type: 'gift', platform: 'tiktok', user: uid, nickname: nick, avatar: av,
@@ -174,6 +196,7 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     });
   });
   tiktok.on('like', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (!uid) return;
 
@@ -197,11 +220,13 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     }
   });
   tiktok.on('follow', function (data) {
+    eventsCounter++;
     console.log('[TikTok] Follow event detected:', data.uniqueId || (data.user && data.user.uniqueId));
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     send(ws, { type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
   tiktok.on('share', function (data) {
+    eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     send(ws, { type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
   });
@@ -230,6 +255,131 @@ function attachTikTokEvents(ws, tiktok, username, session) {
   });
 }
 
+function formatYouTubeAvatar(thumbnail) {
+  if (!thumbnail || !thumbnail.url) return '';
+  let url = thumbnail.url;
+  if (url.startsWith('//')) url = 'https:' + url;
+  else if (url.startsWith('http://')) url = url.replace('http://', 'https://');
+  return url;
+}
+
+// ── YouTube Connection ───────────────────────────────────────────────────────
+function connectYouTube(ws, youtubeId) {
+  var session = getSession(ws);
+  if (session.youtube && session.youtube.conn) {
+    try { session.youtube.conn.stop(); } catch (e) { }
+  }
+
+  let parsedId = youtubeId;
+  if (youtubeId.includes('v=')) {
+      parsedId = youtubeId.split('v=')[1].split('&')[0];
+  } else if (youtubeId.includes('youtu.be/')) {
+      parsedId = youtubeId.split('youtu.be/')[1].split('?')[0];
+  } else if (youtubeId.includes('/live/')) {
+      parsedId = youtubeId.split('/live/')[1].split('?')[0];
+  }
+
+  var opts = {};
+  if (parsedId.startsWith('UC') && parsedId.length >= 24) {
+      opts.channelId = parsedId;
+  } else {
+      opts.liveId = parsedId;
+  }
+
+  var liveChat = new LiveChat(opts);
+  session.youtube = { conn: liveChat, channelId: parsedId, connected: false };
+  session.lastYTConnect = Date.now();
+
+  console.log('[YouTube] Connecting to ' + parsedId + '...');
+
+  liveChat.on('start', (liveId) => {
+    console.log('[YouTube] Connected to LiveId:', liveId);
+    if (session.youtube) session.youtube.connected = true;
+    send(ws, { type: 'connected', platform: 'youtube', username: parsedId, roomId: liveId, availableGifts: [] });
+  });
+
+  liveChat.on('chat', (chatItem) => {
+    var nick = chatItem.author.name || '';
+    var uid = nick.startsWith('@') ? nick : '@' + nick;
+    var av = formatYouTubeAvatar(chatItem.author.thumbnail);
+    var comment = '';
+    chatItem.message.forEach(item => {
+        if (item.text) comment += item.text;
+        else if (item.emojiText) comment += item.emojiText;
+    });
+
+    var isBroadcaster = false;
+    if (chatItem.author.badge) {
+        chatItem.author.badge.forEach(b => {
+            if (b.type === 'owner' || b.type === 'broadcaster' || (b.label && b.label.toLowerCase().includes('owner'))) {
+                isBroadcaster = true;
+            }
+        });
+    }
+
+    var chatEv = { type: 'chat', platform: 'youtube', user: uid, nickname: nick, avatar: av, comment: comment, msgId: chatItem.id, isBroadcaster: isBroadcaster };
+    
+    if (!session.chatBuffer) session.chatBuffer = [];
+    session.chatBuffer.push(chatEv);
+    if (!session.chatTimeout) {
+      session.chatTimeout = setTimeout(function () {
+        if (session.chatBuffer) {
+          session.chatBuffer.forEach(function (msg) { send(ws, msg); });
+          session.chatBuffer = [];
+        }
+        session.chatTimeout = null;
+      }, 100);
+    }
+  });
+
+  liveChat.on('superChat', (item) => {
+    var nick = item.author.name || 'unknown';
+    var uid = '@' + nick;
+    var av = formatYouTubeAvatar(item.author.thumbnail);
+    send(ws, {
+      type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
+      giftName: 'SuperChat ' + item.amount, diamondCount: 10,
+      repeatCount: 1, giftId: item.id, msgId: item.id,
+      giftPictureUrl: ''
+    });
+  });
+
+  liveChat.on('superSticker', (item) => {
+    var nick = item.author.name || 'unknown';
+    var uid = '@' + nick;
+    var av = formatYouTubeAvatar(item.author.thumbnail);
+    send(ws, {
+      type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
+      giftName: item.stickerName || 'SuperSticker', diamondCount: 10,
+      repeatCount: 1, giftId: item.id, msgId: item.id,
+      giftPictureUrl: ''
+    });
+  });
+
+  liveChat.on('member', (item) => {
+     var nick = item.author.name || 'unknown';
+     var uid = '@' + nick;
+     var av = formatYouTubeAvatar(item.author.thumbnail);
+     send(ws, { type: 'member', platform: 'youtube', user: uid, nickname: nick, avatar: av, msgId: item.id });
+  });
+
+  liveChat.on('error', (err) => {
+    console.error('[YouTube] Error:', err.message);
+    send(ws, { type: 'error', platform: 'youtube', message: 'YouTube: ' + err.message });
+  });
+  
+  liveChat.on('end', () => {
+    console.log('[YouTube] Stream ended / disconnected.');
+    if (session.youtube) session.youtube.connected = false;
+    send(ws, { type: 'disconnected', platform: 'youtube' });
+  });
+
+  liveChat.start().catch((err) => {
+      console.error('[YouTube] Start failed:', err.message);
+      send(ws, { type: 'error', platform: 'youtube', message: 'YouTube: ' + err.message });
+  });
+}
+
 
 // ── WebSocket handler ────────────────────────────────────────────────────────
 wss.on('connection', function (ws) {
@@ -252,10 +402,18 @@ wss.on('connection', function (ws) {
         if (!uname) { send(ws, { type: 'error', platform: 'tiktok', message: 'Username required.' }); return; }
         connectTikTok(ws, uname, msg.sessionId);
       }
+      else if (msg.action === 'connect_youtube' && msg.youtubeId) {
+        var yId = msg.youtubeId.trim();
+        if (!yId) { send(ws, { type: 'error', platform: 'youtube', message: 'Channel/Video ID required.' }); return; }
+        connectYouTube(ws, yId);
+      }
       else if (msg.action === 'disconnect') {
         var plat = msg.platform || 'all';
         if ((plat === 'all' || plat === 'tiktok') && session.tiktok && session.tiktok.conn) {
           try { session.tiktok.conn.disconnect(); } catch (e) { } session.tiktok = null;
+        }
+        if ((plat === 'all' || plat === 'youtube') && session.youtube && session.youtube.conn) {
+          try { session.youtube.conn.stop(); } catch (e) { } session.youtube = null;
         }
         send(ws, { type: 'disconnected', platform: plat });
       }
@@ -263,7 +421,9 @@ wss.on('connection', function (ws) {
         send(ws, {
           type: 'status',
           tiktok: !!(session.tiktok && session.tiktok.connected),
-          tiktokUser: session.tiktok ? session.tiktok.username : null
+          tiktokUser: session.tiktok ? session.tiktok.username : null,
+          youtube: !!(session.youtube && session.youtube.connected),
+          youtubeId: session.youtube ? session.youtube.channelId : null
         });
       }
     } catch (e) { console.error('[WS] Bad message:', e.message); }
@@ -280,6 +440,396 @@ wss.on('connection', function (ws) {
 
 // ── Health + Start ───────────────────────────────────────────────────────────
 app.get('/health', function (_req, res) { res.json({ status: 'ok', sessions: sessions.size, uptime: process.uptime() }); });
+
+// ── Admin Streamers API ──────────────────────────────────────────────────────
+app.get('/api/streamers', function (req, res) {
+  if (req.query.password !== '97690784n@') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const activeStreamers = [];
+  for (const session of sessions.values()) {
+    if (session.tiktok && session.tiktok.connected && session.tiktok.username) {
+      activeStreamers.push({
+        platform: 'tiktok',
+        username: session.tiktok.username,
+        link: 'https://www.tiktok.com/@' + session.tiktok.username + '/live'
+      });
+    }
+    if (session.youtube && session.youtube.connected && session.youtube.channelId) {
+      let link = '';
+      if (session.youtube.channelId.startsWith('UC') && session.youtube.channelId.length >= 24) {
+        link = 'https://www.youtube.com/channel/' + session.youtube.channelId + '/live';
+      } else {
+        link = 'https://www.youtube.com/watch?v=' + session.youtube.channelId;
+      }
+      activeStreamers.push({
+        platform: 'youtube',
+        username: session.youtube.channelId,
+        link: link
+      });
+    }
+  }
+
+  // Remover duplicatas baseadas no username+platform
+  const uniqueStreamers = [];
+  const seen = new Set();
+  for (const s of activeStreamers) {
+      const key = s.platform + ':' + s.username;
+      if (!seen.has(key)) {
+          seen.add(key);
+          uniqueStreamers.push(s);
+      }
+  }
+
+  res.json({ status: 'ok', count: uniqueStreamers.length, streamers: uniqueStreamers, metrics: eventsHistory });
+});
+
+// ── Serve avatares_hd ──────────────────────────────────────────────────────────
+app.use('/avatares_hd', express.static(path.join(__dirname, 'avatares_hd')));
+app.use('/avatares_video', express.static(path.join(__dirname, 'avatares_video')));
+
+// ── Lista de avatares HD da pasta /avatares_hd ──────────────────────────────────
+app.get('/avatar-list', function (_req, res) {
+  var hdDir = path.join(__dirname, 'avatares_hd');
+  try {
+    if (!fs.existsSync(hdDir)) {
+      return res.json({ files: [] });
+    }
+    var files = fs.readdirSync(hdDir);
+    var imageExt = ['.png', '.jpg', '.jpeg', '.webp'];
+    var avatarFiles = files.filter(function (f) {
+      var ext = path.extname(f).toLowerCase();
+      return imageExt.includes(ext);
+    });
+    avatarFiles = avatarFiles.map(function (f) { return 'avatares_hd/' + f; });
+
+    var videoFiles = [];
+    var videoDir = path.join(__dirname, 'avatares_video');
+    if (fs.existsSync(videoDir)) {
+      videoFiles = fs.readdirSync(videoDir).filter(function(f) { return f.endsWith('.mp4'); });
+      videoFiles = videoFiles.map(function (f) { return 'avatares_video/' + f; });
+    }
+
+    res.json({ files: avatarFiles, videos: videoFiles });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Upscale Endpoint & Helper ──────────────────────────────────────────────────
+function getAvatarUrlHash(url) {
+  if (!url) return '';
+  if (url.includes('avatares_hd/') && url.endsWith('.png')) {
+    const baseName = path.basename(url, '.png');
+    const parts = baseName.split('_');
+    return parts[parts.length - 1];
+  }
+  let targetUrl = url;
+  if (url.includes('/proxy-image') && url.includes('url=')) {
+    try {
+      const match = url.match(/[?&]url=([^&]+)/);
+      if (match) {
+        targetUrl = decodeURIComponent(match[1]);
+      }
+    } catch (e) {
+      console.error('[Hash Extraction Error]', e);
+    }
+  }
+  const cleanUrl = targetUrl.split('?')[0];
+  return require('crypto').createHash('md5').update(cleanUrl).digest('hex').substring(0, 8);
+}
+
+const { execFile } = require('child_process');
+
+
+// ── Replicate Live Portrait Endpoint ──────────────────────────────────────────
+const https = require('https');
+
+const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN || '';
+
+app.get('/api/animate-face', async function (req, res) {
+  let url = req.query.url || '';
+  let id  = req.query.id  || '';
+
+  if (!url || !id) {
+    return res.json({ error: 'URL and ID are required' });
+  }
+
+  id = id.replace(/[^a-zA-Z0-9_]/g, '');
+  const urlHash = getAvatarUrlHash(url);
+  const videoFileName = `${id}_${urlHash}.mp4`;
+  const outputFile = path.join(__dirname, 'avatares_video', videoFileName);
+  const outputUrl = `avatares_video/${videoFileName}`;
+
+  if (fs.existsSync(outputFile)) {
+    console.log(`[Animate] Cached video found: ${outputFile}`);
+    return res.json({ status: 'cached', url: outputUrl });
+  }
+
+  try {
+    if (!fs.existsSync(path.join(__dirname, 'avatares_video'))) {
+      fs.mkdirSync(path.join(__dirname, 'avatares_video'), { recursive: true });
+    }
+
+    // Must provide an absolute URL for Replicate
+    // If the URL is relative like "avatares_hd/...", we need to form a full URL.
+    // However, Laragon local URLs (localhost) cannot be reached by Replicate.
+    // The user's image must be publicly accessible. 
+    // BUT the 'url' param might already be the TikTok userAvatarUrl!
+    // Wait, the client passes 'url' which is availableAvatars[] (a local path) or the TikTok URL?
+    // In our implementation, availableAvatars gives "avatares_hd/xxx.png". Replicate can't download from localhost.
+    // So we CANNOT pass localhost URL to Replicate.
+    // Wait! Replicate also accepts base64 data URIs!
+    // Let's read the local HD image and convert it to base64.
+    
+    let localImagePath = '';
+    if (url.startsWith('avatares_hd/')) {
+        localImagePath = path.join(__dirname, url);
+    } else {
+        // Fallback: assume it's already an absolute URL (unlikely to be HD though)
+        // But if it's the TikTok URL, it is public.
+    }
+
+    let inputImageStr = url;
+    if (localImagePath && fs.existsSync(localImagePath)) {
+        const imgBuffer = fs.readFileSync(localImagePath);
+        const ext = path.extname(localImagePath).toLowerCase().substring(1) || 'png';
+        const mime = ext === 'jpg' ? 'jpeg' : ext;
+        inputImageStr = `data:image/${mime};base64,${imgBuffer.toString('base64')}`;
+    }
+
+    const payload = JSON.stringify({
+      version: "067dd98cc3e5cb396c4a9efb4bba3eec6c4a9d271211325c477518fc6485e146",
+      input: {
+        face_image: inputImageStr,
+        driving_video: "https://replicate.delivery/pbxt/LEQxLFMUNZMiKt5PWjyMJIbTdvKAb5j3f0spuiEwt9TEbo8B/d0.mp4"
+      }
+    });
+
+    const createOptions = {
+      hostname: 'api.replicate.com',
+      path: '/v1/predictions',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    };
+
+    console.log(`[Animate] Starting Replicate API for ID: ${id}`);
+
+    const reqReplicate = https.request(createOptions, (resRep) => {
+      let data = '';
+      resRep.on('data', chunk => { data += chunk; });
+      resRep.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (resRep.statusCode !== 201) {
+             console.error('[Animate] Replicate Create Error:', json);
+             return res.json({ status: 'error', error: json.detail || 'Failed to create prediction' });
+          }
+
+          const getUrl = json.urls.get;
+          
+          // Polling function
+          const poll = () => {
+             const pollReq = https.request(getUrl, {
+                 headers: { 'Authorization': `Bearer ${REPLICATE_API_TOKEN}` }
+             }, (pollRes) => {
+                 let pData = '';
+                 pollRes.on('data', chunk => { pData += chunk; });
+                 pollRes.on('end', () => {
+                    const pJson = JSON.parse(pData);
+                    if (pJson.status === 'succeeded') {
+                        // Download the MP4
+                        const outputMp4 = pJson.output;
+                        console.log(`[Animate] Replicate success! Downloading video from ${outputMp4}`);
+                        const downloadFile = async (downloadUrl, targetPath) => {
+                            try {
+                                const response = await fetch(downloadUrl);
+                                if (!response.ok) {
+                                    throw new Error(`Status: ${response.status} ${response.statusText}`);
+                                }
+                                const file = fs.createWriteStream(targetPath);
+                                const { Readable } = require('stream');
+                                const { finished } = require('stream/promises');
+                                await finished(Readable.fromWeb(response.body).pipe(file));
+                            } catch (err) {
+                                try { fs.unlinkSync(targetPath); } catch (_) {}
+                                throw err;
+                            }
+                        };
+
+                        downloadFile(outputMp4, outputFile).then(() => {
+                            console.log(`[Animate] Saved video to ${outputFile}`);
+                            res.json({ status: 'success', url: outputUrl });
+                        }).catch(err => {
+                            console.error('[Animate] Video download failed:', err);
+                            res.json({ status: 'error', error: 'Failed to download video: ' + err.message });
+                        });
+                    } else if (pJson.status === 'failed' || pJson.status === 'canceled') {
+                        console.error('[Animate] Prediction failed:', pJson.error);
+                        res.json({ status: 'error', error: pJson.error || 'Prediction failed' });
+                    } else {
+                        // Still processing/starting
+                        setTimeout(poll, 2000);
+                    }
+                 });
+             });
+             pollReq.on('error', (e) => res.json({ status: 'error', error: e.message }));
+             pollReq.end();
+          };
+          
+          // Start polling
+          setTimeout(poll, 3000);
+
+        } catch (e) {
+          console.error('[Animate] Parse error:', e);
+          res.json({ status: 'error', error: 'Invalid response from Replicate' });
+        }
+      });
+    });
+
+    reqReplicate.on('error', (e) => {
+      console.error('[Animate] Request error:', e);
+      res.json({ status: 'error', error: e.message });
+    });
+
+    reqReplicate.write(payload);
+    reqReplicate.end();
+
+  } catch (error) {
+    console.error('[Animate] Exception:', error.message);
+    res.json({ status: 'error', error: error.message });
+  }
+});
+
+
+const upscaleQueue = [];
+let upscaleActiveCount = 0;
+const MAX_CONCURRENT_UPSCALE = 1;
+
+async function processUpscaleQueue() {
+  if (upscaleQueue.length === 0 || upscaleActiveCount >= MAX_CONCURRENT_UPSCALE) {
+    return;
+  }
+  const task = upscaleQueue.shift();
+  upscaleActiveCount++;
+  try {
+    await task.run();
+  } catch (e) {
+    console.error('[Upscale Queue Task Error]', e);
+  } finally {
+    upscaleActiveCount--;
+    setImmediate(processUpscaleQueue);
+  }
+}
+
+app.get('/api/upscale', async function (req, res) {
+  let url = req.query.url || '';
+  let id  = req.query.id  || '';
+
+  if (!url || !id) {
+    return res.json({ error: 'URL and ID are required' });
+  }
+
+  id = id.replace(/[^a-zA-Z0-9_]/g, '');
+
+  console.log(`\n--- [Upscale Requested] ID: ${id} ---`);
+  const urlHash = getAvatarUrlHash(url);
+
+  const tempFile   = path.join(__dirname, 'temp_upscale', `${id}_${urlHash}.png`);
+  const outputFile = path.join(__dirname, 'avatares_hd',  `${id}_${urlHash}.png`);
+  const outputUrl  = `avatares_hd/${id}_${urlHash}.png`;
+
+  if (fs.existsSync(outputFile)) {
+    console.log(`[Upscale Cache Hit] ID: ${id} (${outputUrl})`);
+    return res.json({ status: 'cached', url: outputUrl });
+  }
+
+  const runUpscale = () => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        if (!fs.existsSync(path.join(__dirname, 'temp_upscale'))) {
+          fs.mkdirSync(path.join(__dirname, 'temp_upscale'), { recursive: true });
+        }
+        if (!fs.existsSync(path.join(__dirname, 'avatares_hd'))) {
+          fs.mkdirSync(path.join(__dirname, 'avatares_hd'), { recursive: true });
+        }
+
+        const downloadImage = (downloadUrl, targetPath) => {
+          return new Promise((resolveDl, rejectDl) => {
+            const proto = downloadUrl.startsWith('https') ? require('https') : require('http');
+            const options = {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              },
+              timeout: 15000
+            };
+            const req2 = proto.get(downloadUrl, options, (r) => {
+              if (r.statusCode === 301 || r.statusCode === 302) {
+                const redirectUrl = r.headers.location;
+                const absoluteUrl = redirectUrl.startsWith('http') ? redirectUrl : new URL(redirectUrl, downloadUrl).href;
+                return resolveDl(downloadImage(absoluteUrl, targetPath));
+              }
+              if (r.statusCode !== 200) return rejectDl(new Error(`Original status code invalid: ${r.statusCode}`));
+              const file = fs.createWriteStream(targetPath);
+              r.pipe(file);
+              file.on('finish', () => { file.close(() => { resolveDl(); }); });
+              file.on('error', (err) => { try { fs.unlinkSync(targetPath); } catch (_) {} rejectDl(err); });
+            });
+            req2.on('error', rejectDl);
+            req2.on('timeout', () => { req2.destroy(); rejectDl(new Error('Download timeout')); });
+          });
+        };
+        
+        console.log(`[Upscale Queue] Downloading image for ID: ${id}`);
+        await downloadImage(url, tempFile);
+
+        const upscalerExe = path.join(__dirname, 'upscaler', 'realesrgan-ncnn-vulkan.exe');
+        if (!fs.existsSync(upscalerExe)) {
+          console.error('[Upscale] Upscaler executable not found at:', upscalerExe);
+          try { fs.unlinkSync(tempFile); } catch (e) {}
+          return reject(new Error('Upscaler executable not found'));
+        }
+
+        const args = ['-i', tempFile, '-o', outputFile, '-n', 'realesrgan-x4plus', '-s', '4'];
+        console.log(`[Upscale Queue] Executing Real-ESRGAN for ID: ${id}`);
+        execFile(upscalerExe, args, { timeout: 45000 }, (error, stdout, stderr) => {
+          try { fs.unlinkSync(tempFile); } catch (e) {}
+          if (error) {
+            console.error(`[Upscale] Upscaler failed for ID ${id}:`, error);
+            return reject(new Error('Upscaling process failed'));
+          }
+          console.log(`[Upscale] Success for ID: ${id}! Saved to: ${outputFile}`);
+          resolve({ status: 'success', url: outputUrl });
+        });
+      } catch (error) {
+        try { fs.unlinkSync(tempFile); } catch (e) {}
+        console.error(`[Upscale Task Exception] ID: ${id} | Error:`, error.message);
+        reject(error);
+      }
+    });
+  };
+
+  upscaleQueue.push({
+    id: id,
+    run: async () => {
+      try {
+        const result = await runUpscale();
+        res.json(result);
+      } catch (err) {
+        res.json({ status: 'error', error: err.message });
+      }
+    }
+  });
+
+  console.log(`[Upscale Queue] Queued ID: ${id}. Queue length: ${upscaleQueue.length}`);
+  processUpscaleQueue();
+});
+
 
 // ── Lista de músicas da pasta /music ───────────────────────────────────────────
 app.get('/music-list', function (_req, res) {

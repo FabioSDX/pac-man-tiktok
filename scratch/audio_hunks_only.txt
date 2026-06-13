@@ -1,0 +1,1234 @@
+=== Hunk #1 ===
+@@ -10,6 +10,80 @@
+         var lastGiftRepeat = {}; // Tracker para evitar sobrecontagem em combos do TikTok
+         var lastGiftProcessed = new Map(); // Tracker para evitar duplicação de eventos reais em curto intervalo
+         var lastHeartDamage = {}; // Tracker para cooldown de dano (0.5 hearts)
++
++        // --- Volume Settings & Audio Registry ---
++        var gameSoundsVolume = parseFloat(localStorage.getItem('pd_gamesounds_volume') || '0.5');
++        var musicVolume = parseFloat(localStorage.getItem('pd_music_volume') || '0.5');
++        var messagesVolume = parseFloat(localStorage.getItem('pd_messages_volume') || '0.5');
++        var allSFXElements = [];
++        var gameSoundsGainNode = null;
++        var musicGainNode = null;
++        var currentMessageAudio = null;
++
++        function createSFX(src, baseVol) {
++            var audio = new Audio(src);
++            audio.baseVolume = baseVol !== undefined ? baseVol : 1.0;
++            audio.volume = audio.baseVolume * gameSoundsVolume;
++            allSFXElements.push(audio);
++            return audio;
++        }
++
++        function createSFXArray(sources, baseVol) {
++            return sources.map(function(src) {
++                return createSFX(src, baseVol);
++            });
++        }
++
++        function cloneSFX(audioElement) {
++            var cloned = audioElement.cloneNode();
++            cloned.baseVolume = audioElement.baseVolume !== undefined ? audioElement.baseVolume : 1.0;
++            cloned.volume = cloned.baseVolume * gameSoundsVolume;
++            return cloned;
++        }
++
++        function updateGameSoundsVolume(newVolume) {
++            gameSoundsVolume = newVolume;
++            localStorage.setItem('pd_gamesounds_volume', newVolume);
++            allSFXElements.forEach(function(audio) {
++                audio.volume = audio.baseVolume * gameSoundsVolume;
++            });
++            if (gameSoundsGainNode) {
++                gameSoundsGainNode.gain.value = gameSoundsVolume;
++            }
++        }
++
++        function updateMusicVolume(newVolume) {
++            musicVolume = newVolume;
++            localStorage.setItem('pd_music_volume', newVolume);
++            if (musicGainNode) {
++                musicGainNode.gain.value = musicVolume;
++            }
++        }
++
++        function updateMessagesVolume(newVolume) {
++            messagesVolume = newVolume;
++            localStorage.setItem('pd_messages_volume', newVolume);
++            if (currentMessageAudio) {
++                currentMessageAudio.volume = messagesVolume;
++            }
++        }
++
++        window.changeVolume = function(type, val) {
++            var floatVal = parseFloat(val) / 100;
++            if (type === 'game') {
++                updateGameSoundsVolume(floatVal);
++                var el = document.getElementById('gameVolumeVal');
++                if (el) el.textContent = val + '%';
++            } else if (type === 'music') {
++                updateMusicVolume(floatVal);
++                var el = document.getElementById('musicVolumeVal');
++                if (el) el.textContent = val + '%';
++            } else if (type === 'messages') {
++                updateMessagesVolume(floatVal);
++                var el = document.getElementById('messagesVolumeVal');
++                if (el) el.textContent = val + '%';
++            }
++        };
+ 
+         const INITIAL_HEART_SLOTS = 3;
+         const MAX_HEART_SLOTS = 10;
+
+============================================================
+
+=== Hunk #2 ===
+@@ -475,11 +549,11 @@
+             chickenFrames.push(img);
+         }
+         var chickenSounds = [
+-            new Audio('sons/galinha um.ogg'),
+-            new Audio('sons/galinha dois.ogg')
++            createSFX('sons/galinha um.ogg', 1.0),
++            createSFX('sons/galinha dois.ogg', 1.0)
+         ];
+-        var homerSound = new Audio('homer/homer.mp3');
+-        var coinSound = new Audio('sons/coin sound.mp3');
++        var homerSound = createSFX('homer/homer.mp3', 1.0);
++        var coinSound = createSFX('sons/coin sound.mp3', 1.0);
+         var steveFrames = [];
+         for (var i = 0; i <= 20; i++) {
+             var img = new Image();
+
+============================================================
+
+=== Hunk #3 ===
+@@ -1584,8 +1658,8 @@
+                 dragonFrames.push(img);
+             }
+             // Sons do Dragão
+-            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(new Audio('sons/dragon_idle' + i + '.ogg'));
+-            for (var i = 1; i <= 6; i++) dragonFlapSounds.push(new Audio('sons/dragon_flap' + i + '.ogg'));
++            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(createSFX('sons/dragon_idle' + i + '.ogg', 1.0));
++              for (var i = 1; i <= 6; i++) dragonFlapSounds.push(createSFX('sons/dragon_flap' + i + '.ogg', 1.0));
+         }
+         loadDragonAssets();
+ 
+
+============================================================
+
+=== Hunk #4 ===
+@@ -2766,110 +2840,8 @@
+             return best;
+         }
+ 
+-        function resolveBallBallCollisions() {
+-            for (var i = 0; i < activeBalls.length; i++) {
+-                var a = activeBalls[i];
+-                for (var j = i + 1; j < activeBalls.length; j++) {
+-                    var b = activeBalls[j];
+-                    var dx = a.x - b.x;
+-                    var dy = a.y - b.y;
+-                    var distSq = dx * dx + dy * dy;
+-                    var minDist = a.r + b.r;
+-                    if (distSq > 0 && distSq < minDist * minDist) {
+-                        var dist = Math.sqrt(distSq);
+-                        var nx = dx / dist;
+-                        var ny = dy / dist;
+-                        var overlap = (minDist - dist) * 0.5;
+-                        a.x += nx * overlap;
+-                        a.y += ny * overlap;
+-                        b.x -= nx * overlap;
+-                        b.y -= ny * overlap;
+-                        var relVx = a.vx - b.vx;
+-                        var relVy = a.vy - b.vy;
+-                        var dot = relVx * (-nx) + relVy * (-ny);
+-                        if (dot > 0) {
+-                            var impulse = dot * 1.2;
+-                            a.vx += nx * impulse;
+-                            a.vy += ny * impulse;
+-                            b.vx -= nx * impulse;
+-                            b.vy -= ny * impulse;
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-
+-        function resolvePlayerPlayerCollisions() {
+-            var all = [];
+-            if (pick && pick.active && !pick.stuck) {
+-                all.push(pick);
+-            }
+-            for (var u = 0; u < userPicks.length; u++) {
+-                var up = userPicks[u];
+-                if (up && !up.stuck) {
+-                    all.push(up);
+-                    if (up.companions) {
+-                        for (var c = 0; c < up.companions.length; c++) {
+-                            if (up.companions[c]) {
+-                                all.push(up.companions[c]);
+-                            }
+-                        }
+-                    }
+-                }
+-            }
+-
+-            for (var i = 0; i < all.length; i++) {
+-                var a = all[i];
+-                var ownerA = a.userName || ownerName || '@owner';
+-                for (var j = i + 1; j < all.length; j++) {
+-                    var b = all[j];
+-                    var ownerB = b.userName || ownerName || '@owner';
+-                    
+-                    if (ownerA === ownerB) continue;
+-
+-                    var dx = a.x - b.x;
+-                    var dy = a.y - b.y;
+-                    var distSq = dx * dx + dy * dy;
+-                    var minDist = (a.halfSize || PICK_HALF) + (b.halfSize || PICK_HALF);
+-                    
+-                    if (distSq > 0 && distSq < minDist * minDist) {
+-                        var dist = Math.sqrt(distSq);
+-                        var nx = dx / dist;
+-                        var ny = dy / dist;
+-                        
+-                        var overlap = (minDist - dist) * 0.5;
+-                        a.x += nx * overlap;
+-                        a.y += ny * overlap;
+-                        b.x -= nx * overlap;
+-                        b.y -= ny * overlap;
+-
+-                        var relVx = a.vx - b.vx;
+-                        var relVy = a.vy - b.vy;
+-                        var dot = relVx * (-nx) + relVy * (-ny);
+-                        if (dot > 0) {
+-                            var impulse = dot * 1.2;
+-                            a.vx += nx * impulse;
+-                            a.vy += ny * impulse;
+-                            b.vx -= nx * impulse;
+-                            b.vy -= ny * impulse;
+-                        }
+-
+-                        var aIsSword = isSwordState(a);
+-                        var bIsSword = isSwordState(b);
+-
+-                        if (aIsSword && !bIsSword) {
+-                            applyDamage(ownerB, 0.5, ownerA);
+-                            if (_audioStarted) playWitherHurt();
+-                            spawnParts(b.x, b.y, b.color || '#ff4444', 5);
+-                        } else if (bIsSword && !aIsSword) {
+-                            applyDamage(ownerA, 0.5, ownerB);
+-                            if (_audioStarted) playWitherHurt();
+-                            spawnParts(a.x, a.y, a.color || '#ff4444', 5);
+-                        }
+-                    }
+-                }
+-            }
+-        }
++"        function resolveBallBallCollisions() {\n            for (var i = 0; i < activeBalls.length; i++) {\n                var a = activeBalls[i];\n                for (var j = i + 1; j < activeBalls.length; j++) {\n                    var b = activeBalls[j];\n                    var dx = a.x - b.x;\n                    var dy = a.y - b.y;\n                    var distSq = dx * dx + dy * dy;\n                    var minDist = a.r + b.r;\n                    if (distSq > 0 && distSq < minDist * minDist) {\n                        var dist = Math.sqrt(distSq);\n                        var nx = dx / dist;\n                        var ny = dy / dist;\n                        var overlap = (minDist - dist) * 0.5;\n                        a.x += nx * overlap;\n                        a.y += ny * overlap;\n                        b.x -= nx * overlap;\n                        b.y -= ny * overlap;\n                        var relVx = a.vx - b.vx;\n                        var relVy = a.vy - b.vy;\n                        var dot = relVx * (-nx) + relVy * (-ny);\n                        if (dot > 0) {\n                            var impulse = dot * 1.2;\n                            a.vx += nx * impulse;\n                            a.vy += ny * impulse;\n                            b.vx -= nx * impulse;\n                            b.vy -= ny * impulse;\n                        }\n                    }\n                }\n            }\n        }\n\n        function resolvePlayerPlayerCollisions() {\n            var all = [];\n            if (pick && pick.active && !pick.stuck) all.push(pick);\n            for (var u = 0; u < userPicks.length; u++) {\n                var up = userPicks[u];\n                if (up && !up.stuck) {\n                    all.push(up);\n                    if (up.companions) {\n                        for (var c = 0; c < up.companions.length; c++) {\n                            if (up.companions[c]) all.push(up.companions[c]);\n                        }\n                    }\n                
++<truncated 2980 bytes>
+ 
+         function checkBallEnemyCollisions() {
+             for (var bi = activeBalls.length - 1; bi >= 0; bi--) {
+
+============================================================
+
+=== Hunk #8 ===
+@@ -3845,7 +3796,7 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(0.6, t + 0.05);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.6);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.6);
+             for (var i = 0; i < 6; i++) {
+                 playNote(220 * Math.pow(1.5, i), 'sawtooth', 0.08, 0.01, 0.2, t + i * 0.08);
+             }
+
+============================================================
+
+=== Hunk #9 ===
+@@ -3857,7 +3808,7 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.4, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+         function updateTormenta() {
+             if (!tormentaActive) return;
+
+============================================================
+
+=== Hunk #10 ===
+@@ -4459,7 +4410,7 @@
+                 o.type = 'sine'; o.frequency.value = 800 + Math.random() * 400;
+                 g.gain.setValueAtTime(0.15, ac.currentTime);
+                 g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+-                o.connect(g); g.connect(ac.destination);
++                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+                 o.start(); o.stop(ac.currentTime + 0.15);
+             } catch (e) { }
+         }
+
+============================================================
+
+=== Hunk #14 ===
+@@ -4802,10 +4734,11 @@
+                 dragonRoarTimer++;
+                 if (dragonRoarTimer > 400 && Math.random() < 0.01) {
+                     if (_audioStarted) {
+-                        var roar = dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)];
+-                        roar.volume = (dragonPhase === 'front' ? 1.0 : 0.4);
+-                        roar.play().catch(function (e) { });
+-                    }
++                          var roar = cloneSFX(dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)]);
++                          roar.baseVolume = (dragonPhase === 'front' ? 1.0 : 0.4);
++                          roar.volume = roar.baseVolume * gameSoundsVolume;
++                          roar.play().catch(function (e) { });
++                      }
+                     dragonRoarTimer = 0;
+                 }
+ 
+
+============================================================
+
+=== Hunk #15 ===
+@@ -4813,10 +4746,11 @@
+                 dragonFlapTimer++;
+                 if (dragonFlapTimer > 15) {
+                     if (_audioStarted) {
+-                        var flap = dragonFlapSounds[dragonFlapIdx];
+-                        flap.volume = (dragonPhase === 'front' ? 0.8 : 0.3);
+-                        flap.play().catch(function (e) { });
+-                    }
++                          var flap = cloneSFX(dragonFlapSounds[dragonFlapIdx]);
++                          flap.baseVolume = (dragonPhase === 'front' ? 0.8 : 0.3);
++                          flap.volume = flap.baseVolume * gameSoundsVolume;
++                          flap.play().catch(function (e) { });
++                      }
+                     dragonFlapIdx = (dragonFlapIdx + 1) % 6;
+                     dragonFlapTimer = 0;
+                 }
+
+============================================================
+
+=== Hunk #21 ===
+@@ -7079,13 +7007,13 @@
+                         // Kick pickaxe upward
+                         p.vy = Math.min(p.vy, -3);
+                         p.spin += (Math.random() - 0.5) * 0.2;
+-                        if (pSpeed > 1.5 && isSwordState(p)) {
++                        if (pSpeed > 1.5) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = 2;
++                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             s.hp -= finalDmg;
+-                            spawnText(s.x, s.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+-                            sfxSwordHit();
++                            spawnText(s.x, s.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
++                            if (swordMult > 1) sfxSwordHit();
+                             s.state = 'hurt'; s.hurtTimer = 12; s.animTimer = 0;
+                             playSpiderHurt();
+                             registerComboHit(p, s.x, s.y);
+
+============================================================
+
+=== Hunk #22 ===
+@@ -7688,14 +7616,14 @@
+                         p.vy = Math.min(p.vy, -3);
+                         p.spin += (Math.random() - 0.5) * 0.15;
+                         // Damage
+-                        if (pSpeed > 1.5) {
++                        if (pSpeed > 1.5 && isSwordState(p)) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
++                            var swordMult = 2;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             b.hp -= finalDmg;
+                             b.hurtTimer = 10;
+                             b.anim = 0;
+-                            if (swordMult > 1) sfxSwordHit();
++                            sfxSwordHit();
+                             sfxBatHurt();
+                             registerComboHit(p, b.x, b.y);
+                             spawnText(b.x, b.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
+
+============================================================
+
+=== Hunk #23 ===
+@@ -7838,7 +7766,7 @@
+             o.frequency.exponentialRampToValueAtTime(300, t + 0.08);
+             g.gain.setValueAtTime(0.1, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.1);
+         }
+ 
+
+============================================================
+
+=== Hunk #24 ===
+@@ -7852,7 +7780,7 @@
+             o.frequency.exponentialRampToValueAtTime(200, t + 0.12);
+             g.gain.setValueAtTime(0.15, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.15);
+             // Tiny noise burst
+             var nLen = Math.ceil(ac.sampleRate * 0.05);
+
+============================================================
+
+=== Hunk #25 ===
+@@ -7861,7 +7789,7 @@
+             for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / nLen);
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+-            src.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function spawnZombie(wx, wy) {
+
+============================================================
+
+=== Hunk #26 ===
+@@ -7970,13 +7898,13 @@
+                         p.vy = Math.min(p.vy, -3.5);
+                         p.spin += (Math.random() - 0.5) * 0.2;
+                         // Damage
+-                        if (pSpeed > 1.5 && isSwordState(p)) {
++                        if (pSpeed > 1.5) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = 2;
++                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             z.hp -= finalDmg;
+-                            spawnText(z.x, z.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+-                            sfxSwordHit();
++                            spawnText(z.x, z.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
++                            if (swordMult > 1) sfxSwordHit();
+                             z.state = 'hurt'; z.hurtTimer = 12; z.animTimer = 0;
+                             sfxZombieHurt();
+                             registerComboHit(p, z.x, z.y);
+
+============================================================
+
+=== Hunk #27 ===
+@@ -8606,17 +8534,30 @@
+         // ── BOSS: Aranha Gigante ─────────────────────────────────────────────────────
+ 
+         // ── Áudio ─────────────────────────────────────────────────────────────────
++        // --- Audio Context & Registry ---
+         var AC = null;
+         function getAC() {
+-            if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
++            if (!AC) {
++                AC = new (window.AudioContext || window.webkitAudioContext)();
++                
++                // Create game sounds gain node
++                gameSoundsGainNode = AC.createGain();
++                gameSoundsGainNode.gain.value = gameSoundsVolume;
++                gameSoundsGainNode.connect(AC.destination);
++                
++                // Create music gain node
++                musicGainNode = AC.createGain();
++                musicGainNode.gain.value = musicVolume;
++                musicGainNode.connect(AC.destination);
++            }
+             if (AC.state === 'suspended') AC.resume();
+             return AC;
+         }
+ 
+-        var _reverbNode = null;
+-        function getReverbNode() {
++        var _sfxReverbNode = null;
++        function getSFXReverbNode() {
+             var ac = getAC();
+-            if (_reverbNode && _reverbNode.context === ac) return _reverbNode;
++            if (_sfxReverbNode && _sfxReverbNode.context === ac) return _sfxReverbNode;
+             var len = ac.sampleRate * 2.2;
+             var buf = ac.createBuffer(2, len, ac.sampleRate);
+             for (var ch = 0; ch < 2; ch++) {
+
+============================================================
+
+=== Hunk #28 ===
+@@ -8625,16 +8566,58 @@
+             }
+             var conv = ac.createConvolver(); conv.buffer = buf;
+             var wetG = ac.createGain(); wetG.gain.value = 0.38;
+-            conv.connect(wetG); wetG.connect(ac.destination);
+-            _reverbNode = conv; return conv;
+-        }
+-
+-        function playNote(freq, type, vol, attack, decay, when) {
++            conv.connect(wetG);
++            if (gameSoundsGainNode) {
++                wetG.connect(gameSoundsGainNode);
++            } else {
++                wetG.connect(ac.destination);
++            }
++            _sfxReverbNode = conv; return conv;
++        }
++
++        var _musicReverbNode = null;
++        function getMusicReverbNode() {
++            var ac = getAC();
++            if (_musicReverbNode && _musicReverbNode.context === ac) return _musicReverbNode;
++            var len = ac.sampleRate * 2.2;
++            var buf = ac.createBuffer(2, len, ac.sampleRate);
++            for (var ch = 0; ch < 2; ch++) {
++                var d = buf.getChannelData(ch);
++                for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
++            }
++            var conv = ac.createConvolver(); conv.buffer = buf;
++            var wetG = ac.createGain(); wetG.gain.value = 0.38;
++            conv.connect(wetG);
++            if (musicGainNode) {
++                wetG.connect(musicGainNode);
++            } else {
++                wetG.connect(ac.destination);
++            }
++            _musicReverbNode = conv; return conv;
++        }
++
++        function playNote(freq, type, vol, attack, decay, when, isMusic) {
++            if (!_audioStarted) return;
+             var ac = getAC();
+             var osc = ac.createOscillator();
+             var gain = ac.createGain();
+-            var rev = getReverbNode();
+-            osc.connect(gain); gain.connect(ac.destination); gain.connect(rev);
++            
++            // Route to appropriate gain node
++            var destinationNode = isMusic ? musicGainNode : gameSoundsGainNode;
++            
++            // Reverb routing
++            var rev = isMusic ? getMusicReverbNode() : getSFXReverbNode();
++            
++            osc.connect(gain);
++            if (destinationNode) {
++                gain.connect(destinationNode);
++            } else {
++                gain.connect(ac.destination);
++            }
++            if (rev) {
++                gain.connect(rev);
++            }
++            
+             osc.type = type || 'sine';
+             osc.frequency.setValueAtTime(freq, when);
+             gain.gain.setValueAtTime(0.0001, when);
+
+============================================================
+
+=== Hunk #29 ===
+@@ -8644,6 +8627,7 @@
+         }
+ 
+         function sfxHit(blockType) {
++            if (!_audioStarted) return;
+             var ac = getAC(), t = ac.currentTime;
+             var len = Math.ceil(ac.sampleRate * 0.045);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+
+============================================================
+
+=== Hunk #30 ===
+@@ -8654,11 +8638,12 @@
+             filt.type = 'lowpass'; filt.frequency.value = 400 + blockType * 60;
+             var g = ac.createGain(); g.gain.setValueAtTime(0.09, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode);
+             src.start(t);
+         }
+ 
+         function sfxBreak(blockType) {
++            if (!_audioStarted) return;
+             var ac = getAC(), t = ac.currentTime;
+             var osc = ac.createOscillator(), og = ac.createGain();
+             var baseFreq = [55, 60, 58, 52, 48, 50, 44, 42, 40][Math.min(blockType, 8)];
+
+============================================================
+
+=== Hunk #31 ===
+@@ -8666,7 +8651,7 @@
+             osc.frequency.setValueAtTime(baseFreq * 1.8, t);
+             osc.frequency.exponentialRampToValueAtTime(baseFreq, t + 0.18);
+             og.gain.setValueAtTime(0.45, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+-            osc.connect(og); og.connect(ac.destination); osc.start(t); osc.stop(t + 0.35);
++            osc.connect(og); og.connect(gameSoundsGainNode); osc.start(t); osc.stop(t + 0.35);
+             var len = Math.ceil(ac.sampleRate * 0.22);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+
+============================================================
+
+=== Hunk #32 ===
+@@ -8676,7 +8661,7 @@
+             filt.type = 'lowpass'; filt.frequency.value = 300 + blockType * 40;
+             var g = ac.createGain(); g.gain.setValueAtTime(0.35, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode); src.start(t);
+         }
+ 
+         function sfxPlayerHurt() {
+
+============================================================
+
+=== Hunk #33 ===
+@@ -8688,7 +8673,7 @@
+             o.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+             g.gain.setValueAtTime(0.3, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.15);
+         }
+ 
+
+============================================================
+
+=== Hunk #34 ===
+@@ -8702,7 +8687,7 @@
+                 o.frequency.exponentialRampToValueAtTime(f * 0.5, t + i * 0.1 + 0.2);
+                 g.gain.setValueAtTime(0.15, t + i * 0.1);
+                 g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.1 + 0.2);
+-                o.connect(g); g.connect(ac.destination);
++                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+                 o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.2);
+             });
+         }
+
+============================================================
+
+=== Hunk #35 ===
+@@ -8722,7 +8707,7 @@
+             var g = ac.createGain(); g.gain.setValueAtTime(0.22, t);
+             g.gain.linearRampToValueAtTime(0.38, t + duration * 0.85);
+             g.gain.linearRampToValueAtTime(0.0001, t + duration);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             src.start(t); src.stop(t + duration + 0.05);
+             return src;
+         }
+
+============================================================
+
+=== Hunk #36 ===
+@@ -8735,14 +8720,14 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(0.9, t + 0.012);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 0.6);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 0.6);
+             var mid = ac.createOscillator(), midG = ac.createGain();
+             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+             mid.frequency.exponentialRampToValueAtTime(28, t + 0.35);
+             midG.gain.setValueAtTime(0.0001, t);
+             midG.gain.linearRampToValueAtTime(0.5, t + 0.008);
+             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.38);
++            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.38);
+             var len = Math.ceil(ac.sampleRate * 0.7);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+
+============================================================
+
+=== Hunk #37 ===
+@@ -8751,8 +8736,8 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 900;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.55, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+-            var rev = getReverbNode();
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
++            var rev = getSFXReverbNode();
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
+             src.start(t);
+         }
+ 
+
+============================================================
+
+=== Hunk #38 ===
+@@ -8764,14 +8749,14 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(1.0, t + 0.015);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.15);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.15);
+             var mid = ac.createOscillator(), midG = ac.createGain();
+             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+             mid.frequency.exponentialRampToValueAtTime(20, t + 0.7);
+             midG.gain.setValueAtTime(0.0001, t);
+             midG.gain.linearRampToValueAtTime(0.8, t + 0.01);
+             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.75);
++            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.75);
+             var len = Math.ceil(ac.sampleRate * 1.2);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+
+============================================================
+
+=== Hunk #39 ===
+@@ -8780,8 +8765,8 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 700;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.85, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+-            var rev = getReverbNode();
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
++            var rev = getSFXReverbNode();
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
+             src.start(t);
+         }
+ 
+
+============================================================
+
+=== Hunk #40 ===
+@@ -8810,7 +8795,7 @@
+             o.frequency.linearRampToValueAtTime(base, t + 0.25);
+             g.gain.setValueAtTime(0.06, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.3);
+         }
+ 
+
+============================================================
+
+=== Hunk #41 ===
+@@ -8824,7 +8809,7 @@
+             o.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+             g.gain.setValueAtTime(0.12, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.12);
+             // Wet splat noise
+             var nLen = Math.ceil(ac.sampleRate * 0.06);
+
+============================================================
+
+=== Hunk #42 ===
+@@ -8833,7 +8818,7 @@
+             for (var i = 0; i < nLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / nLen, 2);
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+-            src.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function sfxZombieDeath() {
+
+============================================================
+
+=== Hunk #43 ===
+@@ -8846,7 +8831,7 @@
+             o.frequency.exponentialRampToValueAtTime(80, t + 0.3);
+             g.gain.setValueAtTime(0.15, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.35);
+             // Pop at the end
+             var p = ac.createOscillator(), pg = ac.createGain();
+
+============================================================
+
+=== Hunk #44 ===
+@@ -8856,7 +8841,7 @@
+             pg.gain.setValueAtTime(0.0001, t + 0.25);
+             pg.gain.linearRampToValueAtTime(0.1, t + 0.27);
+             pg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            p.connect(pg); pg.connect(ac.destination);
++            p.connect(pg); pg.connect(gameSoundsGainNode || ac.destination);
+             p.start(t + 0.25); p.stop(t + 0.36);
+         }
+ 
+
+============================================================
+
+=== Hunk #45 ===
+@@ -8867,18 +8852,18 @@
+             playNote(880, 'sine', 0.1, 0.01, 0.18, t + 0.14);
+         }
+ 
+-        var swordTransitionSound = new Audio('sons/espada.mp3');
++        var swordTransitionSound = createSFX('sons/espada.mp3', 1.0);
+         function playSwordTransition() { if (_audioStarted) { swordTransitionSound.currentTime = 0; swordTransitionSound.play().catch(function (e) { }); } }
+-        var swordHitSound = new Audio('sons/ataque de espada.ogg');
+-        var sfxSpiderHurt = new Audio('enemy/Spider.ogg');
+-        var sfxSpiderDeath = new Audio('enemy/Spider_death.ogg');
++        var swordHitSound = createSFX('sons/ataque de espada.ogg', 0.5);
++        var sfxSpiderHurt = createSFX('enemy/Spider.ogg', 1.0);
++        var sfxSpiderDeath = createSFX('enemy/Spider_death.ogg', 1.0);
+         function playSpiderHurt() { if (_audioStarted) { sfxSpiderHurt.currentTime = 0; sfxSpiderHurt.play().catch(function (e) { }); } }
+         function playSpiderDeath() { if (_audioStarted) { sfxSpiderDeath.currentTime = 0; sfxSpiderDeath.play().catch(function (e) { }); } }
+-        var sfxWitherHurt = new Audio('enemy/Dano_Wither_skeleton.ogg');
+-        var sfxWitherDeath = new Audio('enemy/Death_Wither_skeleton.ogg');
+-        var powerUpSound = new Audio('sons/power-up-mario.mp3');
++        var sfxWitherHurt = createSFX('enemy/Dano_Wither_skeleton.ogg', 1.0);
++        var sfxWitherDeath = createSFX('enemy/Death_Wither_skeleton.ogg', 1.0);
++        var powerUpSound = createSFX('sons/power-up-mario.mp3', 1.0);
+         function playPowerUp() { if (_audioStarted) { powerUpSound.currentTime = 0; powerUpSound.play().catch(function (e) { }); } }
+-        var shrinkSound = new Audio('sons/super-mario-encolhe.mp3');
++        var shrinkSound = createSFX('sons/super-mario-encolhe.mp3', 1.0);
+         function playShrink() { if (_audioStarted) { shrinkSound.currentTime = 0; shrinkSound.play().catch(function (e) { }); } }
+ 
+         function playWitherHurt() { if (_audioStarted) { sfxWitherHurt.currentTime = 0; sfxWitherHurt.play().catch(e => { }); } }
+
+============================================================
+
+=== Hunk #46 ===
+@@ -8886,17 +8871,16 @@
+         function sfxSwordHit() {
+             if (!_audioStarted) return;
+             try {
+-                var s = swordHitSound.cloneNode();
+-                s.volume = 0.5;
++                var s = cloneSFX(swordHitSound);
+                 s.play();
+             } catch (e) { }
+         }
+ 
+-        var sheepSounds = [
+-            new Audio('sons/som ovelha um.ogg'),
+-            new Audio('sons/som ovelha dois.ogg'),
+-            new Audio('sons/som ovelha tres.ogg')
+-        ];
++        var sheepSounds = createSFXArray([
++            'sons/som ovelha um.ogg',
++            'sons/som ovelha dois.ogg',
++            'sons/som ovelha tres.ogg'
++        ], 0.4);
+         var activeSheepSounds = [];
+         function sfxSheep(force) {
+             if (!_audioStarted) return;
+
+============================================================
+
+=== Hunk #47 ===
+@@ -8912,18 +8896,17 @@
+             if (activeSheepSounds.length >= 3) return;
+ 
+             try {
+-                var s = sheepSounds[Math.floor(Math.random() * sheepSounds.length)].cloneNode();
+-                s.volume = 0.4;
++                var s = cloneSFX(sheepSounds[Math.floor(Math.random() * sheepSounds.length)]);
+                 s.play();
+                 activeSheepSounds.push(s);
+             } catch (e) { }
+         }
+ 
+-        var pigSounds = [
+-            new Audio('sons/som pig um.ogg'),
+-            new Audio('sons/som pig dois.ogg'),
+-            new Audio('sons/som pig tres.ogg')
+-        ];
++        var pigSounds = createSFXArray([
++            'sons/som pig um.ogg',
++            'sons/som pig dois.ogg',
++            'sons/som pig tres.ogg'
++        ], 0.4);
+         var activePigSounds = [];
+         function sfxPig(force) {
+             if (!_audioStarted) return;
+
+============================================================
+
+=== Hunk #48 ===
+@@ -8939,8 +8922,7 @@
+             if (activePigSounds.length >= 3) return;
+ 
+             try {
+-                var s = pigSounds[Math.floor(Math.random() * pigSounds.length)].cloneNode();
+-                s.volume = 0.4;
++                var s = cloneSFX(pigSounds[Math.floor(Math.random() * pigSounds.length)]);
+                 s.play();
+                 activePigSounds.push(s);
+             } catch (e) { }
+
+============================================================
+
+=== Hunk #49 ===
+@@ -9074,8 +9056,8 @@
+             // Bass
+             var bn = bass[bassStep % bass.length];
+             var bf = hScaleFreq(bn.d, bn.oct);
+-            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t);
+-            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t);
++            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t, true);
++            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t, true);
+             bassStep++;
+ 
+             // Melody (every 2 beats, or every beat in mega)
+
+============================================================
+
+=== Hunk #50 ===
+@@ -9084,8 +9066,8 @@
+                 // Variation: offset melody degrees on alternate phrases
+                 var melDeg = mn.d + (melodyVariation === 1 ? 2 : 0);
+                 var mf = hScaleFreq(melDeg, mn.oct);
+-                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t);
+-                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t);
++                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t, true);
++                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t, true);
+                 melStep++;
+             }
+ 
+
+============================================================
+
+=== Hunk #51 ===
+@@ -9095,7 +9077,7 @@
+                 for (var ci = 0; ci < chord.length; ci++) {
+                     var pf = hScaleFreq(chord[ci], 1);
+                     var padType = musicMode === 'boss' ? 'triangle' : 'sine';
+-                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t);
++                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t, true);
+                 }
+                 padStep++;
+             }
+
+============================================================
+
+=== Hunk #52 ===
+@@ -9104,19 +9086,19 @@
+             if (Math.random() < (musicMode === 'mega' ? 0.4 : 0.2)) {
+                 var gd = Math.floor(Math.random() * SCALE.length);
+                 var gf = hScaleFreq(gd, musicMode === 'mega' ? 3 : 2);
+-                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5);
++                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5, true);
+             }
+ 
+             // Counter-melody (every 8 beats, adds variety)
+             if (musicStep % 8 === 4 && musicMode === 'normal') {
+                 var cd = [7, 5, 4, 2][Math.floor(musicStep / 8) % 4];
+-                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t);
++                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t, true);
+             }
+ 
+             // Boss: dramatic low pulse + tension notes
+             if (musicMode === 'boss') {
+-                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t);
+-                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t);
++                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t, true);
++                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t, true);
+             }
+ 
+             musicStep++;
+
+============================================================
+
+=== Hunk #53 ===
+@@ -9148,7 +9130,11 @@
+             customBGMGain = ac.createGain();
+             customBGMGain.gain.value = 0.3; // volume da trilha (30% para não sobrepor SFX)
+             customBGMSource.connect(customBGMGain);
+-            customBGMGain.connect(ac.destination);
++            if (musicGainNode) {
++                customBGMGain.connect(musicGainNode);
++            } else {
++                customBGMGain.connect(ac.destination);
++            }
+         }
+ 
+         function handleBGMUpload(input) {
+
+============================================================
+
+=== Hunk #55 ===
+@@ -9677,47 +9583,15 @@
+ 
+             var p = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+ 
+-            if (p) {
+-                // Shake screen on any damage taken
+-                shakeAmt = Math.max(shakeAmt, 10);
+-                // Spawn red blood/spark particles at player position
+-                spawnParts(p.x, p.y, '#ff0000', 12);
+-            }
+-
+             if (ps.health > 0) {
+                 ps.health = Math.max(0, (ps.health || 0) - amount);
+                 if (p) {
+                     spawnText(p.x, p.y - 40, '-' + amount + ' ❤️', '#ff4444');
+-                    p.hurtTimer = 18; // Increase hurt timer for a longer flashing effect
++                    p.hurtTimer = 10;
+                 }
+                 if (ps.health <= 0) {
+                     sfxMoneyLoss();
+-                    if (p) spawnText(p.x, p.y - 60, '💀 ELIMINADO! 💔', '#ff0000');
+-
+-                    // Lógica de Morte e Reset de Pontos
+-                    ps.score = 0;
+-                    if (_cycleScores[userName]) _cycleScores[userName].score = 0;
+-
+-                    speakTTS(userName.replace('@', '') + ' morreu e perdeu todos os pontos.');
+-
+-                    if (sourceName) {
+-                        showKillBanner(sourceName, userName);
+-                    } else {
+-                        showDeathBanner(userName);
+-                    }
+-
+-                    if (p) {
+-                        spawnParts(p.x, p.y, p.color || '#ff4444', 25);
+-                        spawnParts(p.x, p.y, '#ff0000', 20); // blood red particles
+-                        explosions.push({ x: p.x, y: p.y, frame: 0, timer: 0, mega: true });
+-                        shakeAmt = Math.max(shakeAmt, 25); // Heavy screen shake
+-                        p.companions = [];
+-
+-                        if (p !== pick) {
+-                            var pIdx = userPicks.indexOf(p);
+-                            if (pIdx !== -1) userPicks.splice(pIdx, 1);
+-                        }
+-                    }
++                    if (p) spawnText(p.x, p.y - 60, '💔 HEALTH ZERO!', '#ff0000');
+                 }
+             } else {
+                 // Already at 0 HP, deduct score directly
+
+============================================================
+
+=== Hunk #57 ===
+@@ -9956,8 +9826,9 @@
+                     if (sPick) {
+                         sPick.isChicken = true;
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                         spawnText(sPick.x, sPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+
+============================================================
+
+=== Hunk #58 ===
+@@ -9966,7 +9837,10 @@
+                         var newP = userPicks.find(up => up.userName === mUser);
+                         if (newP) {
+                             newP.isChicken = true;
+-                            if (_audioStarted) chickenSounds[0].play().catch(e => { });
++                            if (_audioStarted) {
++                                var s = cloneSFX(chickenSounds[0]);
++                                s.play().catch(e => { });
++                            }
+                             spawnText(newP.x, newP.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                         }
+                     }
+
+============================================================
+
+=== Hunk #60 ===
+@@ -10174,8 +10043,9 @@
+                         spawnText(gx, gy - 30, statusMsg, statusColor);
+ 
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                     }
+
+============================================================
+
+=== Hunk #61 ===
+@@ -10215,8 +10085,10 @@
+ 
+                         if (_audioStarted && targetPlayer.isHomer) {
+                             sfxPickaxeChange();
+-                            homerSound.volume = 0.6;
+-                            homerSound.play().catch(function (e) { });
++                            var s = cloneSFX(homerSound);
++                            s.baseVolume = 0.6;
++                            s.volume = s.baseVolume * gameSoundsVolume;
++                            s.play().catch(function (e) { });
+                         }
+                     }
+                     resultingPickaxe = HOMER_PICKAXE;
+
+============================================================
+
+=== Hunk #63 ===
+@@ -10302,8 +10170,9 @@
+                     if (fPick) {
+                         fPick.isChicken = true;
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                         spawnText(fPick.x, fPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+
+============================================================
+
+=== Hunk #69 ===
+@@ -10641,7 +10491,7 @@
+             g.gain.setValueAtTime(0.0001, t);
+             g.gain.linearRampToValueAtTime(0.5, t + 0.1);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 2);
+-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 2.1);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 2.1);
+             // Whoosh
+             var nLen = Math.ceil(ac.sampleRate * 1.5);
+             var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+
+============================================================
+
+=== Hunk #70 ===
+@@ -10650,7 +10500,7 @@
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var filt = ac.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 200; filt.Q.value = 2;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.3, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function sfxBlackHoleClose() {
+
+============================================================
+
+=== Hunk #71 ===
+@@ -10661,14 +10511,14 @@
+             osc.type = 'sine'; osc.frequency.setValueAtTime(60, t);
+             osc.frequency.exponentialRampToValueAtTime(800, t + 0.8);
+             g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 1);
+-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 1);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 1);
+             // Final pop/flash
+             var pop = ac.createOscillator(), pg = ac.createGain();
+             pop.type = 'triangle'; pop.frequency.setValueAtTime(1200, t + 0.8);
+             pop.frequency.exponentialRampToValueAtTime(200, t + 1.2);
+             pg.gain.setValueAtTime(0.0001, t + 0.8); pg.gain.linearRampToValueAtTime(0.25, t + 0.85);
+             pg.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+-            pop.connect(pg); pg.connect(ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
++            pop.connect(pg); pg.connect(gameSoundsGainNode || ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
+         }
+ 
+         function updateBlackHoles() {
+
+============================================================
+
+=== Hunk #72 ===
+@@ -11414,7 +11264,7 @@
+             osc.type = 'triangle'; osc.frequency.setValueAtTime(80, t);
+             osc.frequency.exponentialRampToValueAtTime(300, t + 0.45);
+             g.gain.setValueAtTime(0.18, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.5);
+         }
+ 
+
+============================================================
+
+=== Hunk #73 ===
+@@ -11425,7 +11275,7 @@
+             osc.type = 'triangle'; osc.frequency.setValueAtTime(250, t);
+             osc.frequency.exponentialRampToValueAtTime(60, t + 0.35);
+             g.gain.setValueAtTime(0.22, t); g.gain.linearRampToValueAtTime(0, t + 0.45);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.45);
+         }
+ 
+
+============================================================
+
+=== Hunk #74 ===
+@@ -11435,7 +11285,7 @@
+             var osc = ac.createOscillator(); var g = ac.createGain();
+             osc.type = 'square'; osc.frequency.setValueAtTime(800, t);
+             g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0, t + 0.05);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.05);
+         }
+ 
+
+============================================================
+
+=== Hunk #75 ===
+@@ -12942,21 +12792,27 @@
+ 
+             if (_ttsMode === 'tiktok') {
+                 var audio = new Audio('/tts?text=' + encodeURIComponent(text) + '&voice=' + voice);
++                audio.volume = messagesVolume;
++                currentMessageAudio = audio;
+                 audio.onended = function () {
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     setTimeout(processTTSQueue, 300);
+                 };
+                 audio.onerror = function () {
+                     console.error('TikTok TTS Error');
+                     _isSpeaking = false;
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     processTTSQueue();
+                 };
+                 audio.play().catch(function (e) {
+                     console.error('TTS Play Blocked/Error:', e);
+                     _isSpeaking = false;
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     processTTSQueue();
+                 });
+             } else {
+                 var utterance = new SpeechSynthesisUtterance(text);
++                utterance.volume = messagesVolume;
+                 var voices = window.speechSynthesis.getVoices();
+                 var selectedVoice;
+ 
+
+============================================================
+
+=== Hunk #76 ===
+@@ -13007,9 +12863,21 @@
+             if (_isSpeaking) return;
+             _isSpeaking = true;
+             var audio = new Audio(url);
+-            audio.onended = function () { _isSpeaking = false; };
+-            audio.onerror = function () { _isSpeaking = false; };
+-            audio.play().catch(function (e) { console.error('MP3 Play error:', e); _isSpeaking = false; });
++            audio.volume = messagesVolume;
++            currentMessageAudio = audio;
++            audio.onended = function () {
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            };
++            audio.onerror = function () {
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            };
++            audio.play().catch(function (e) {
++                console.error('MP3 Play error:', e);
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            });
+         }
+ 
+         // Verifica anúncios periódicos a cada 10 segundos
+
+============================================================
+

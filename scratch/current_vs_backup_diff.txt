@@ -1,0 +1,1463 @@
+--- current_app_js
++++ backup_pvp_restore
+@@ -10,6 +10,80 @@
+         var lastGiftRepeat = {}; // Tracker para evitar sobrecontagem em combos do TikTok
+         var lastGiftProcessed = new Map(); // Tracker para evitar duplicação de eventos reais em curto intervalo
+         var lastHeartDamage = {}; // Tracker para cooldown de dano (0.5 hearts)
++
++        // --- Volume Settings & Audio Registry ---
++        var gameSoundsVolume = parseFloat(localStorage.getItem('pd_gamesounds_volume') || '0.5');
++        var musicVolume = parseFloat(localStorage.getItem('pd_music_volume') || '0.5');
++        var messagesVolume = parseFloat(localStorage.getItem('pd_messages_volume') || '0.5');
++        var allSFXElements = [];
++        var gameSoundsGainNode = null;
++        var musicGainNode = null;
++        var currentMessageAudio = null;
++
++        function createSFX(src, baseVol) {
++            var audio = new Audio(src);
++            audio.baseVolume = baseVol !== undefined ? baseVol : 1.0;
++            audio.volume = audio.baseVolume * gameSoundsVolume;
++            allSFXElements.push(audio);
++            return audio;
++        }
++
++        function createSFXArray(sources, baseVol) {
++            return sources.map(function(src) {
++                return createSFX(src, baseVol);
++            });
++        }
++
++        function cloneSFX(audioElement) {
++            var cloned = audioElement.cloneNode();
++            cloned.baseVolume = audioElement.baseVolume !== undefined ? audioElement.baseVolume : 1.0;
++            cloned.volume = cloned.baseVolume * gameSoundsVolume;
++            return cloned;
++        }
++
++        function updateGameSoundsVolume(newVolume) {
++            gameSoundsVolume = newVolume;
++            localStorage.setItem('pd_gamesounds_volume', newVolume);
++            allSFXElements.forEach(function(audio) {
++                audio.volume = audio.baseVolume * gameSoundsVolume;
++            });
++            if (gameSoundsGainNode) {
++                gameSoundsGainNode.gain.value = gameSoundsVolume;
++            }
++        }
++
++        function updateMusicVolume(newVolume) {
++            musicVolume = newVolume;
++            localStorage.setItem('pd_music_volume', newVolume);
++            if (musicGainNode) {
++                musicGainNode.gain.value = musicVolume;
++            }
++        }
++
++        function updateMessagesVolume(newVolume) {
++            messagesVolume = newVolume;
++            localStorage.setItem('pd_messages_volume', newVolume);
++            if (currentMessageAudio) {
++                currentMessageAudio.volume = messagesVolume;
++            }
++        }
++
++        window.changeVolume = function(type, val) {
++            var floatVal = parseFloat(val) / 100;
++            if (type === 'game') {
++                updateGameSoundsVolume(floatVal);
++                var el = document.getElementById('gameVolumeVal');
++                if (el) el.textContent = val + '%';
++            } else if (type === 'music') {
++                updateMusicVolume(floatVal);
++                var el = document.getElementById('musicVolumeVal');
++                if (el) el.textContent = val + '%';
++            } else if (type === 'messages') {
++                updateMessagesVolume(floatVal);
++                var el = document.getElementById('messagesVolumeVal');
++                if (el) el.textContent = val + '%';
++            }
++        };
+ 
+         const INITIAL_HEART_SLOTS = 3;
+         const MAX_HEART_SLOTS = 10;
+@@ -475,11 +549,11 @@
+             chickenFrames.push(img);
+         }
+         var chickenSounds = [
+-            new Audio('sons/galinha um.ogg'),
+-            new Audio('sons/galinha dois.ogg')
++            createSFX('sons/galinha um.ogg', 1.0),
++            createSFX('sons/galinha dois.ogg', 1.0)
+         ];
+-        var homerSound = new Audio('homer/homer.mp3');
+-        var coinSound = new Audio('sons/coin sound.mp3');
++        var homerSound = createSFX('homer/homer.mp3', 1.0);
++        var coinSound = createSFX('sons/coin sound.mp3', 1.0);
+         var steveFrames = [];
+         for (var i = 0; i <= 20; i++) {
+             var img = new Image();
+@@ -1584,8 +1658,8 @@
+                 dragonFrames.push(img);
+             }
+             // Sons do Dragão
+-            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(new Audio('sons/dragon_idle' + i + '.ogg'));
+-            for (var i = 1; i <= 6; i++) dragonFlapSounds.push(new Audio('sons/dragon_flap' + i + '.ogg'));
++            for (var i = 1; i <= 4; i++) dragonRoarSounds.push(createSFX('sons/dragon_idle' + i + '.ogg', 1.0));
++              for (var i = 1; i <= 6; i++) dragonFlapSounds.push(createSFX('sons/dragon_flap' + i + '.ogg', 1.0));
+         }
+         loadDragonAssets();
+ 
+@@ -2766,110 +2840,8 @@
+             return best;
+         }
+ 
+-        function resolveBallBallCollisions() {
+-            for (var i = 0; i < activeBalls.length; i++) {
+-                var a = activeBalls[i];
+-                for (var j = i + 1; j < activeBalls.length; j++) {
+-                    var b = activeBalls[j];
+-                    var dx = a.x - b.x;
+-                    var dy = a.y - b.y;
+-                    var distSq = dx * dx + dy * dy;
+-                    var minDist = a.r + b.r;
+-                    if (distSq > 0 && distSq < minDist * minDist) {
+-                        var dist = Math.sqrt(distSq);
+-                        var nx = dx / dist;
+-                        var ny = dy / dist;
+-                        var overlap = (minDist - dist) * 0.5;
+-                        a.x += nx * overlap;
+-                        a.y += ny * overlap;
+-                        b.x -= nx * overlap;
+-                        b.y -= ny * overlap;
+-                        var relVx = a.vx - b.vx;
+-                        var relVy = a.vy - b.vy;
+-                        var dot = relVx * (-nx) + relVy * (-ny);
+-                        if (dot > 0) {
+-                            var impulse = dot * 1.2;
+-                            a.vx += nx * impulse;
+-                            a.vy += ny * impulse;
+-                            b.vx -= nx * impulse;
+-                            b.vy -= ny * impulse;
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-
+-        function resolvePlayerPlayerCollisions() {
+-            var all = [];
+-            if (pick && pick.active && !pick.stuck) {
+-                all.push(pick);
+-            }
+-            for (var u = 0; u < userPicks.length; u++) {
+-                var up = userPicks[u];
+-                if (up && !up.stuck) {
+-                    all.push(up);
+-                    if (up.companions) {
+-                        for (var c = 0; c < up.companions.length; c++) {
+-                            if (up.companions[c]) {
+-                                all.push(up.companions[c]);
+-                            }
+-                        }
+-                    }
+-                }
+-            }
+-
+-            for (var i = 0; i < all.length; i++) {
+-                var a = all[i];
+-                var ownerA = a.userName || ownerName || '@owner';
+-                for (var j = i + 1; j < all.length; j++) {
+-                    var b = all[j];
+-                    var ownerB = b.userName || ownerName || '@owner';
+-                    
+-                    if (ownerA === ownerB) continue;
+-
+-                    var dx = a.x - b.x;
+-                    var dy = a.y - b.y;
+-                    var distSq = dx * dx + dy * dy;
+-                    var minDist = (a.halfSize || PICK_HALF) + (b.halfSize || PICK_HALF);
+-                    
+-                    if (distSq > 0 && distSq < minDist * minDist) {
+-                        var dist = Math.sqrt(distSq);
+-                        var nx = dx / dist;
+-                        var ny = dy / dist;
+-                        
+-                        var overlap = (minDist - dist) * 0.5;
+-                        a.x += nx * overlap;
+-                        a.y += ny * overlap;
+-                        b.x -= nx * overlap;
+-                        b.y -= ny * overlap;
+-
+-                        var relVx = a.vx - b.vx;
+-                        var relVy = a.vy - b.vy;
+-                        var dot = relVx * (-nx) + relVy * (-ny);
+-                        if (dot > 0) {
+-                            var impulse = dot * 1.2;
+-                            a.vx += nx * impulse;
+-                            a.vy += ny * impulse;
+-                            b.vx -= nx * impulse;
+-                            b.vy -= ny * impulse;
+-                        }
+-
+-                        var aIsSword = isSwordState(a);
+-                        var bIsSword = isSwordState(b);
+-
+-                        if (aIsSword && !bIsSword) {
+-                            applyDamage(ownerB, 0.5, ownerA);
+-                            if (_audioStarted) playWitherHurt();
+-                            spawnParts(b.x, b.y, b.color || '#ff4444', 5);
+-                        } else if (bIsSword && !aIsSword) {
+-                            applyDamage(ownerA, 0.5, ownerB);
+-                            if (_audioStarted) playWitherHurt();
+-                            spawnParts(a.x, a.y, a.color || '#ff4444', 5);
+-                        }
+-                    }
+-                }
+-            }
+-        }
++"        function resolveBallBallCollisions() {\n            for (var i = 0; i < activeBalls.length; i++) {\n                var a = activeBalls[i];\n                for (var j = i + 1; j < activeBalls.length; j++) {\n                    var b = activeBalls[j];\n                    var dx = a.x - b.x;\n                    var dy = a.y - b.y;\n                    var distSq = dx * dx + dy * dy;\n                    var minDist = a.r + b.r;\n                    if (distSq > 0 && distSq < minDist * minDist) {\n                        var dist = Math.sqrt(distSq);\n                        var nx = dx / dist;\n                        var ny = dy / dist;\n                        var overlap = (minDist - dist) * 0.5;\n                        a.x += nx * overlap;\n                        a.y += ny * overlap;\n                        b.x -= nx * overlap;\n                        b.y -= ny * overlap;\n                        var relVx = a.vx - b.vx;\n                        var relVy = a.vy - b.vy;\n                        var dot = relVx * (-nx) + relVy * (-ny);\n                        if (dot > 0) {\n                            var impulse = dot * 1.2;\n                            a.vx += nx * impulse;\n                            a.vy += ny * impulse;\n                            b.vx -= nx * impulse;\n                            b.vy -= ny * impulse;\n                        }\n                    }\n                }\n            }\n        }\n\n        function resolvePlayerPlayerCollisions() {\n            var all = [];\n            if (pick && pick.active && !pick.stuck) all.push(pick);\n            for (var u = 0; u < userPicks.length; u++) {\n                var up = userPicks[u];\n                if (up && !up.stuck) {\n                    all.push(up);\n                    if (up.companions) {\n                        for (var c = 0; c < up.companions.length; c++) {\n                            if (up.companions[c]) all.push(up.companions[c]);\n                        }\n                    }\n                
++<truncated 2980 bytes>
+ 
+         function checkBallEnemyCollisions() {
+             for (var bi = activeBalls.length - 1; bi >= 0; bi--) {
+@@ -3097,6 +3069,7 @@
+         function applyPhysics(p, r, opts) {
+             opts = opts || {};
+             if (!p) return false;
++            if (p.hurtTimer > 0) p.hurtTimer--;
+             if (p._spinLock) return false; // skip physics during spin dash
+             // Big mode — increase collision radius
+             if (p.bigTimer > 0) r = Math.floor(r * BIG_SCALE * (1 + getPickaxeLevel(p) * 0.1));
+@@ -3144,20 +3117,13 @@
+                         if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
+                             hitBlock(col, row, 100, p); // Safety destruction (no bounce)
+                         } else {
+-                            if (isSwordState(p)) {
+-                                var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
+-                                if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
+-                                else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
+-                                hitAny = true; break;
+-                            } else {
+-                                var dmg = Math.max(1, Math.floor(speed * dmgBase));
+-                                if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
+-                                hitBlock(col, row, dmg, p);
+-                                var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
+-                                if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
+-                                else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
+-                                hitAny = true; break;
+-                            }
++                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
++                            if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
++                            hitBlock(col, row, dmg, p);
++                            var bounceMult = hasPingPong ? 1.0 : (BOUNCE * FRICTION);
++                            if (p.vx > 0) { p.x = col * TILE - r - 1; p.vx = -p.vx * bounceMult; }
++                            else { p.x = (col + 1) * TILE + r + 1; p.vx = -p.vx * bounceMult; }
++                            hitAny = true; break;
+                         }
+                     }
+                 }
+@@ -3176,37 +3142,22 @@
+                         if (p.bigTimer > 0 && (p._safetyTimer || 0) > 0) {
+                             hitBlock(col, row, 100, p); // Safety destruction (no bounce)
+                         } else {
+-                            if (isSwordState(p)) {
+-                                var bMult = hasPingPong ? 1.0 : BOUNCE;
+-                                if (p.vy > 0) {
+-                                    p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
+-                                    if (!hasPingPong) {
+-                                        if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
+-                                    }
+-                                    if (cell.t === BEDROCK) {
+-                                        p.vy = Math.min(p.vy, -12);
+-                                        p.vx += (Math.random() - 0.5) * 4;
+-                                    }
+-                                } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
+-                                hitAny = true; hitY = true; break;
+-                            } else {
+-                                var dmg = Math.max(1, Math.floor(speed * dmgBase));
+-                                if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
+-                                hitBlock(col, row, dmg, p);
+-                                var bMult = hasPingPong ? 1.0 : BOUNCE;
+-                                if (p.vy > 0) {
+-                                    p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
+-                                    if (!hasPingPong) {
+-                                        if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
+-                                    }
+-                                    // Force continuous bounce on Bedrock to prevent parking
+-                                    if (cell.t === BEDROCK) {
+-                                        p.vy = Math.min(p.vy, -12);
+-                                        p.vx += (Math.random() - 0.5) * 4;
+-                                    }
+-                                } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
+-                                hitAny = true; hitY = true; break;
+-                            }
++                            var dmg = Math.max(1, Math.floor(speed * dmgBase));
++                            if (p.bigTimer > 0) dmg = Math.floor(dmg * 5 * (1 + getPickaxeLevel(p) * 0.1));
++                            hitBlock(col, row, dmg, p);
++                            var bMult = hasPingPong ? 1.0 : BOUNCE;
++                            if (p.vy > 0) {
++                                p.y = row * TILE - r - 1; p.vy = -p.vy * bMult;
++                                if (!hasPingPong) {
++                                    if (Math.abs(p.vy) > 0.8) p.vx += (Math.random() - 0.5) * 6; else p.vx *= FRICTION;
++                                }
++                                // Force continuous bounce on Bedrock to prevent parking
++                                if (cell.t === BEDROCK) {
++                                    p.vy = Math.min(p.vy, -12);
++                                    p.vx += (Math.random() - 0.5) * 4;
++                                }
++                            } else { p.y = (row + 1) * TILE + r + 1; p.vy = -p.vy * bMult; }
++                            hitAny = true; hitY = true; break;
+                         }
+                     }
+                 }
+@@ -3845,7 +3796,7 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(0.6, t + 0.05);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.6);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.6);
+             for (var i = 0; i < 6; i++) {
+                 playNote(220 * Math.pow(1.5, i), 'sawtooth', 0.08, 0.01, 0.2, t + i * 0.08);
+             }
+@@ -3857,7 +3808,7 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 600;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.4, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+         function updateTormenta() {
+             if (!tormentaActive) return;
+@@ -4459,7 +4410,7 @@
+                 o.type = 'sine'; o.frequency.value = 800 + Math.random() * 400;
+                 g.gain.setValueAtTime(0.15, ac.currentTime);
+                 g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+-                o.connect(g); g.connect(ac.destination);
++                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+                 o.start(); o.stop(ac.currentTime + 0.15);
+             } catch (e) { }
+         }
+@@ -4509,29 +4460,8 @@
+ 
+         function update() {
+             if (!pick) return;
+-
+-            // Garante que o host tem vida inicializada
+-            if (ownerName) {
+-                if (!persistentScores[ownerName]) {
+-                    persistentScores[ownerName] = {
+-                        score: score, likes: 0, giftsValue: 0,
+-                        health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS
+-                    };
+-                } else {
+-                    if (persistentScores[ownerName].health === undefined) {
+-                        persistentScores[ownerName].health = INITIAL_HEART_SLOTS;
+-                    }
+-                    if (persistentScores[ownerName].slots === undefined) {
+-                        persistentScores[ownerName].slots = INITIAL_HEART_SLOTS;
+-                    }
+-                }
+-            }
+-
+-            // Regra: se estiver sozinho (sem players e sem clones), mantém ativo se tiver vida
+-            var ownerHealth = (ownerName && persistentScores[ownerName]) ? persistentScores[ownerName].health : 1;
+-            if (userPicks.length === 0 && extraPicks.length === 0 && ownerHealth > 0) {
+-                pick.active = true;
+-            }
++            // Regra: se estiver sozinho (sem players e sem clones), mantém ativo
++            if (userPicks.length === 0 && extraPicks.length === 0) pick.active = true;
+ 
+             if (pick.active) {
+                 if (pick.stuck) {
+@@ -4687,6 +4617,7 @@
+             topRow = newTopRow;
+             updateUserPicks();
+             updateExtraPicks();
++            resolvePlayerPlayerCollisions();
+             updateTNTBlocks();
+ 
+             updateFallingBlocks();
+@@ -4735,7 +4666,8 @@
+                         userName: 'Esqueleto Wither',
+                         pickaxe: { damage: pData.damage * 0.8, tier: randomTier, color: pData.color, name: pData.name },
+                         stuck: false,
+-                        stuckTimer: 0
++                        stuckTimer: 0,
++                        isWitherSkeleton: true
+                     });
+                 }
+                 spawnText(fPick.x, camY + 100, '💀 WITHER SKELETONS!', '#ffffff');
+@@ -4802,10 +4734,11 @@
+                 dragonRoarTimer++;
+                 if (dragonRoarTimer > 400 && Math.random() < 0.01) {
+                     if (_audioStarted) {
+-                        var roar = dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)];
+-                        roar.volume = (dragonPhase === 'front' ? 1.0 : 0.4);
+-                        roar.play().catch(function (e) { });
+-                    }
++                          var roar = cloneSFX(dragonRoarSounds[Math.floor(Math.random() * dragonRoarSounds.length)]);
++                          roar.baseVolume = (dragonPhase === 'front' ? 1.0 : 0.4);
++                          roar.volume = roar.baseVolume * gameSoundsVolume;
++                          roar.play().catch(function (e) { });
++                      }
+                     dragonRoarTimer = 0;
+                 }
+ 
+@@ -4813,10 +4746,11 @@
+                 dragonFlapTimer++;
+                 if (dragonFlapTimer > 15) {
+                     if (_audioStarted) {
+-                        var flap = dragonFlapSounds[dragonFlapIdx];
+-                        flap.volume = (dragonPhase === 'front' ? 0.8 : 0.3);
+-                        flap.play().catch(function (e) { });
+-                    }
++                          var flap = cloneSFX(dragonFlapSounds[dragonFlapIdx]);
++                          flap.baseVolume = (dragonPhase === 'front' ? 0.8 : 0.3);
++                          flap.volume = flap.baseVolume * gameSoundsVolume;
++                          flap.play().catch(function (e) { });
++                      }
+                     dragonFlapIdx = (dragonFlapIdx + 1) % 6;
+                     dragonFlapTimer = 0;
+                 }
+@@ -5679,32 +5613,7 @@
+         }
+ 
+ 
+-        var tintCanvas = document.createElement('canvas');
+-        var tintCtx = tintCanvas.getContext('2d');
+-
+-        function drawTintedImage(targetCtx, img, x, y, w, h, tintColor) {
+-            var tw = Math.max(1, Math.ceil(w));
+-            var th = Math.max(1, Math.ceil(h));
+-            tintCanvas.width = tw;
+-            tintCanvas.height = th;
+-            tintCtx.clearRect(0, 0, tw, th);
+-            tintCtx.drawImage(img, 0, 0, tw, th);
+-            tintCtx.globalCompositeOperation = 'source-atop';
+-            tintCtx.fillStyle = tintColor;
+-            tintCtx.fillRect(0, 0, tw, th);
+-            tintCtx.globalCompositeOperation = 'source-over';
+-            targetCtx.drawImage(tintCanvas, x, y, w, h);
+-        }
+-
+         function drawPickaxeSprite(p) {
+-            function drawSprite(img, dx, dy, dw, dh) {
+-                if (p.hurtTimer > 0) {
+-                    drawTintedImage(ctx, img, dx, dy, dw, dh, 'rgba(255, 0, 0, 0.6)');
+-                } else {
+-                    ctx.drawImage(img, dx, dy, dw, dh);
+-                }
+-            }
+-
+             ctx.save();
+             ctx.translate(p.x, p.y);
+             ctx.rotate(p.ang);
+@@ -5750,14 +5659,14 @@
+                 if (p.isSteve && steveFrames.length > 0) {
+                     var frame = Math.floor((Date.now() / 50) % steveFrames.length);
+                     tex = steveFrames[frame];
+-                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
++                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                 } else if (p.isHomer && HOMER_PICKAXE.imgObj.complete) {
+                     tex = HOMER_PICKAXE.imgObj;
+-                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
++                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                 } else if (p.isChicken) {
+                     var frame = Math.floor((Date.now() / 100) % chickenFrames.length);
+                     tex = chickenFrames[frame];
+-                    drawSprite(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
++                    ctx.drawImage(tex, -PICK_HALF * 1.5 * scaleFactor, -PICK_HALF * 1.5 * scaleFactor, PICK_HALF * 3 * scaleFactor, PICK_HALF * 3 * scaleFactor);
+                 } else {
+                     var animFrames = null;
+                     var sType = '';
+@@ -5785,10 +5694,19 @@
+                         var mat = pickData.name || 'Wood';
+                         if (SWORD_ASSETS[mat]) tex = SWORD_ASSETS[mat];
+                     }
+-                    if (tex) drawSprite(tex, -PICK_HALF * scaleFactor, -PICK_HALF * scaleFactor, PICK_HALF * 2 * scaleFactor, PICK_HALF * 2 * scaleFactor);
++                    if (tex) {
++                        ctx.drawImage(tex, -PICK_HALF * scaleFactor, -PICK_HALF * scaleFactor, PICK_HALF * 2 * scaleFactor, PICK_HALF * 2 * scaleFactor);
++                        if (p.hurtTimer > 0 && Math.floor(p.hurtTimer / 3) % 2 === 0) {
++                            ctx.save();
++                            ctx.globalCompositeOperation = 'source-atop';
++                            ctx.fillStyle = 'rgba(255, 0, 0, 0.75)';
++                            ctx.fillRect(-PICK_HALF * scaleFactor, -PICK_HALF * scaleFactor, PICK_HALF * 2 * scaleFactor, PICK_HALF * 2 * scaleFactor);
++                            ctx.restore();
++                        }
++                    }
+                 }
+             } else if (pickData.color) {
+-                ctx.fillStyle = pickData.color;
++                ctx.fillStyle = (p.hurtTimer > 0 && Math.floor(p.hurtTimer / 3) % 2 === 0) ? '#ff0000' : pickData.color;
+                 ctx.fillRect(-PICK_HALF, -PICK_HALF, PICK_HALF * 2, PICK_HALF * 2);
+             }
+             ctx.restore();
+@@ -5839,6 +5757,14 @@
+ 
+             if (!p.isCompanion) {
+                 drawPlayerCooldowns(ctx, p.x - 10 - avSize / 2, avY, p.userName);
++
++                // Desenhar cora��es de vida do jogador
++                var ps = persistentScores[p.userName];
++                if (ps) {
++                    var currentHp = (ps.health || 0) * 3;
++                    var maxHp = (ps.slots || INITIAL_HEART_SLOTS) * 3;
++                    drawEnemyHearts(p.x, avY - 35, currentHp, maxHp, false);
++                }
+ 
+                 // Desenhar Bandeira (se houver)
+                 var ps = persistentScores[p.userName];
+@@ -6753,13 +6679,15 @@
+                         p.vy += ny * impact;
+                         p.stuck = false; w.stuck = false; // Unstick both
+ 
+-// Damage player if their material is inferior
++                        // Damage player if their material is inferior
++                        var pTier = (p.pickaxe && p.pickaxe.tier !== undefined) ? p.pickaxe.tier : 0;
++                        var wTier = (w.pickaxe && w.pickaxe.tier !== undefined) ? w.pickaxe.tier : 0;
+                         var isSuperBurst = (p.stormTimer > 0);
+-                        var hasSword = isSwordState(p);
++                        var hasSword = (p.swordTimer > 0 || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.isCompanion);
+ 
+                         if (isSuperBurst) {
+                             w.hp = 0; // Insta-kill
+-                        } else if (!hasSword) {
++                        } else if (pTier <= wTier && !hasSword) {
+                             applyDamage(p.userName, 0.5);
+                         }
+ 
+@@ -7079,13 +7007,13 @@
+                         // Kick pickaxe upward
+                         p.vy = Math.min(p.vy, -3);
+                         p.spin += (Math.random() - 0.5) * 0.2;
+-                        if (pSpeed > 1.5 && isSwordState(p)) {
++                        if (pSpeed > 1.5) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = 2;
++                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             s.hp -= finalDmg;
+-                            spawnText(s.x, s.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+-                            sfxSwordHit();
++                            spawnText(s.x, s.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
++                            if (swordMult > 1) sfxSwordHit();
+                             s.state = 'hurt'; s.hurtTimer = 12; s.animTimer = 0;
+                             playSpiderHurt();
+                             registerComboHit(p, s.x, s.y);
+@@ -7688,14 +7616,14 @@
+                         p.vy = Math.min(p.vy, -3);
+                         p.spin += (Math.random() - 0.5) * 0.15;
+                         // Damage
+-                        if (pSpeed > 1.5) {
++                        if (pSpeed > 1.5 && isSwordState(p)) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
++                            var swordMult = 2;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             b.hp -= finalDmg;
+                             b.hurtTimer = 10;
+                             b.anim = 0;
+-                            if (swordMult > 1) sfxSwordHit();
++                            sfxSwordHit();
+                             sfxBatHurt();
+                             registerComboHit(p, b.x, b.y);
+                             spawnText(b.x, b.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
+@@ -7838,7 +7766,7 @@
+             o.frequency.exponentialRampToValueAtTime(300, t + 0.08);
+             g.gain.setValueAtTime(0.1, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.1);
+         }
+ 
+@@ -7852,7 +7780,7 @@
+             o.frequency.exponentialRampToValueAtTime(200, t + 0.12);
+             g.gain.setValueAtTime(0.15, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.15);
+             // Tiny noise burst
+             var nLen = Math.ceil(ac.sampleRate * 0.05);
+@@ -7861,7 +7789,7 @@
+             for (var j = 0; j < nLen; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / nLen);
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+-            src.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function spawnZombie(wx, wy) {
+@@ -7970,13 +7898,13 @@
+                         p.vy = Math.min(p.vy, -3.5);
+                         p.spin += (Math.random() - 0.5) * 0.2;
+                         // Damage
+-                        if (pSpeed > 1.5 && isSwordState(p)) {
++                        if (pSpeed > 1.5) {
+                             var baseDmg = p.damage || 1;
+-                            var swordMult = 2;
++                            var swordMult = (p.swordTimer > 0 || (p.activeSwords && p.activeSwords.length > 0) || p.goldSwordsTimer > 0 || p.diamondSwordsTimer > 0) ? 2 : 1;
+                             var finalDmg = Math.ceil(baseDmg * swordMult);
+                             z.hp -= finalDmg;
+-                            spawnText(z.x, z.y - 40, '-' + finalDmg + ' ⚔️', '#ff4444');
+-                            sfxSwordHit();
++                            spawnText(z.x, z.y - 40, '-' + finalDmg + (swordMult > 1 ? ' ⚔️' : ' ⚡'), '#ff4444');
++                            if (swordMult > 1) sfxSwordHit();
+                             z.state = 'hurt'; z.hurtTimer = 12; z.animTimer = 0;
+                             sfxZombieHurt();
+                             registerComboHit(p, z.x, z.y);
+@@ -8606,17 +8534,30 @@
+         // ── BOSS: Aranha Gigante ─────────────────────────────────────────────────────
+ 
+         // ── Áudio ─────────────────────────────────────────────────────────────────
++        // --- Audio Context & Registry ---
+         var AC = null;
+         function getAC() {
+-            if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
++            if (!AC) {
++                AC = new (window.AudioContext || window.webkitAudioContext)();
++                
++                // Create game sounds gain node
++                gameSoundsGainNode = AC.createGain();
++                gameSoundsGainNode.gain.value = gameSoundsVolume;
++                gameSoundsGainNode.connect(AC.destination);
++                
++                // Create music gain node
++                musicGainNode = AC.createGain();
++                musicGainNode.gain.value = musicVolume;
++                musicGainNode.connect(AC.destination);
++            }
+             if (AC.state === 'suspended') AC.resume();
+             return AC;
+         }
+ 
+-        var _reverbNode = null;
+-        function getReverbNode() {
++        var _sfxReverbNode = null;
++        function getSFXReverbNode() {
+             var ac = getAC();
+-            if (_reverbNode && _reverbNode.context === ac) return _reverbNode;
++            if (_sfxReverbNode && _sfxReverbNode.context === ac) return _sfxReverbNode;
+             var len = ac.sampleRate * 2.2;
+             var buf = ac.createBuffer(2, len, ac.sampleRate);
+             for (var ch = 0; ch < 2; ch++) {
+@@ -8625,16 +8566,58 @@
+             }
+             var conv = ac.createConvolver(); conv.buffer = buf;
+             var wetG = ac.createGain(); wetG.gain.value = 0.38;
+-            conv.connect(wetG); wetG.connect(ac.destination);
+-            _reverbNode = conv; return conv;
+-        }
+-
+-        function playNote(freq, type, vol, attack, decay, when) {
++            conv.connect(wetG);
++            if (gameSoundsGainNode) {
++                wetG.connect(gameSoundsGainNode);
++            } else {
++                wetG.connect(ac.destination);
++            }
++            _sfxReverbNode = conv; return conv;
++        }
++
++        var _musicReverbNode = null;
++        function getMusicReverbNode() {
++            var ac = getAC();
++            if (_musicReverbNode && _musicReverbNode.context === ac) return _musicReverbNode;
++            var len = ac.sampleRate * 2.2;
++            var buf = ac.createBuffer(2, len, ac.sampleRate);
++            for (var ch = 0; ch < 2; ch++) {
++                var d = buf.getChannelData(ch);
++                for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
++            }
++            var conv = ac.createConvolver(); conv.buffer = buf;
++            var wetG = ac.createGain(); wetG.gain.value = 0.38;
++            conv.connect(wetG);
++            if (musicGainNode) {
++                wetG.connect(musicGainNode);
++            } else {
++                wetG.connect(ac.destination);
++            }
++            _musicReverbNode = conv; return conv;
++        }
++
++        function playNote(freq, type, vol, attack, decay, when, isMusic) {
++            if (!_audioStarted) return;
+             var ac = getAC();
+             var osc = ac.createOscillator();
+             var gain = ac.createGain();
+-            var rev = getReverbNode();
+-            osc.connect(gain); gain.connect(ac.destination); gain.connect(rev);
++            
++            // Route to appropriate gain node
++            var destinationNode = isMusic ? musicGainNode : gameSoundsGainNode;
++            
++            // Reverb routing
++            var rev = isMusic ? getMusicReverbNode() : getSFXReverbNode();
++            
++            osc.connect(gain);
++            if (destinationNode) {
++                gain.connect(destinationNode);
++            } else {
++                gain.connect(ac.destination);
++            }
++            if (rev) {
++                gain.connect(rev);
++            }
++            
+             osc.type = type || 'sine';
+             osc.frequency.setValueAtTime(freq, when);
+             gain.gain.setValueAtTime(0.0001, when);
+@@ -8644,6 +8627,7 @@
+         }
+ 
+         function sfxHit(blockType) {
++            if (!_audioStarted) return;
+             var ac = getAC(), t = ac.currentTime;
+             var len = Math.ceil(ac.sampleRate * 0.045);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+@@ -8654,11 +8638,12 @@
+             filt.type = 'lowpass'; filt.frequency.value = 400 + blockType * 60;
+             var g = ac.createGain(); g.gain.setValueAtTime(0.09, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode);
+             src.start(t);
+         }
+ 
+         function sfxBreak(blockType) {
++            if (!_audioStarted) return;
+             var ac = getAC(), t = ac.currentTime;
+             var osc = ac.createOscillator(), og = ac.createGain();
+             var baseFreq = [55, 60, 58, 52, 48, 50, 44, 42, 40][Math.min(blockType, 8)];
+@@ -8666,7 +8651,7 @@
+             osc.frequency.setValueAtTime(baseFreq * 1.8, t);
+             osc.frequency.exponentialRampToValueAtTime(baseFreq, t + 0.18);
+             og.gain.setValueAtTime(0.45, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+-            osc.connect(og); og.connect(ac.destination); osc.start(t); osc.stop(t + 0.35);
++            osc.connect(og); og.connect(gameSoundsGainNode); osc.start(t); osc.stop(t + 0.35);
+             var len = Math.ceil(ac.sampleRate * 0.22);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+@@ -8676,7 +8661,7 @@
+             filt.type = 'lowpass'; filt.frequency.value = 300 + blockType * 40;
+             var g = ac.createGain(); g.gain.setValueAtTime(0.35, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode); src.start(t);
+         }
+ 
+         function sfxPlayerHurt() {
+@@ -8688,7 +8673,7 @@
+             o.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+             g.gain.setValueAtTime(0.3, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.15);
+         }
+ 
+@@ -8702,7 +8687,7 @@
+                 o.frequency.exponentialRampToValueAtTime(f * 0.5, t + i * 0.1 + 0.2);
+                 g.gain.setValueAtTime(0.15, t + i * 0.1);
+                 g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.1 + 0.2);
+-                o.connect(g); g.connect(ac.destination);
++                o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+                 o.start(t + i * 0.1); o.stop(t + i * 0.1 + 0.2);
+             });
+         }
+@@ -8722,7 +8707,7 @@
+             var g = ac.createGain(); g.gain.setValueAtTime(0.22, t);
+             g.gain.linearRampToValueAtTime(0.38, t + duration * 0.85);
+             g.gain.linearRampToValueAtTime(0.0001, t + duration);
+-            src.connect(filt); filt.connect(g); g.connect(ac.destination);
++            src.connect(filt); filt.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             src.start(t); src.stop(t + duration + 0.05);
+             return src;
+         }
+@@ -8735,14 +8720,14 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(0.9, t + 0.012);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 0.6);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 0.6);
+             var mid = ac.createOscillator(), midG = ac.createGain();
+             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+             mid.frequency.exponentialRampToValueAtTime(28, t + 0.35);
+             midG.gain.setValueAtTime(0.0001, t);
+             midG.gain.linearRampToValueAtTime(0.5, t + 0.008);
+             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.38);
++            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.38);
+             var len = Math.ceil(ac.sampleRate * 0.7);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+@@ -8751,8 +8736,8 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 900;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.55, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+-            var rev = getReverbNode();
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
++            var rev = getSFXReverbNode();
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
+             src.start(t);
+         }
+ 
+@@ -8764,14 +8749,14 @@
+             subG.gain.setValueAtTime(0.0001, t);
+             subG.gain.linearRampToValueAtTime(1.0, t + 0.015);
+             subG.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+-            sub.connect(subG); subG.connect(ac.destination); sub.start(t); sub.stop(t + 1.15);
++            sub.connect(subG); subG.connect(gameSoundsGainNode || ac.destination); sub.start(t); sub.stop(t + 1.15);
+             var mid = ac.createOscillator(), midG = ac.createGain();
+             mid.type = 'triangle'; mid.frequency.setValueAtTime(65, t);
+             mid.frequency.exponentialRampToValueAtTime(20, t + 0.7);
+             midG.gain.setValueAtTime(0.0001, t);
+             midG.gain.linearRampToValueAtTime(0.8, t + 0.01);
+             midG.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+-            mid.connect(midG); midG.connect(ac.destination); mid.start(t); mid.stop(t + 0.75);
++            mid.connect(midG); midG.connect(gameSoundsGainNode || ac.destination); mid.start(t); mid.stop(t + 0.75);
+             var len = Math.ceil(ac.sampleRate * 1.2);
+             var buf = ac.createBuffer(1, len, ac.sampleRate);
+             var d = buf.getChannelData(0);
+@@ -8780,8 +8765,8 @@
+             var filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 700;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.85, t);
+             ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+-            var rev = getReverbNode();
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); ng.connect(rev);
++            var rev = getSFXReverbNode();
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); ng.connect(rev);
+             src.start(t);
+         }
+ 
+@@ -8810,7 +8795,7 @@
+             o.frequency.linearRampToValueAtTime(base, t + 0.25);
+             g.gain.setValueAtTime(0.06, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.3);
+         }
+ 
+@@ -8824,7 +8809,7 @@
+             o.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+             g.gain.setValueAtTime(0.12, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.12);
+             // Wet splat noise
+             var nLen = Math.ceil(ac.sampleRate * 0.06);
+@@ -8833,7 +8818,7 @@
+             for (var i = 0; i < nLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / nLen, 2);
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.08, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+-            src.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function sfxZombieDeath() {
+@@ -8846,7 +8831,7 @@
+             o.frequency.exponentialRampToValueAtTime(80, t + 0.3);
+             g.gain.setValueAtTime(0.15, t);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            o.connect(g); g.connect(ac.destination);
++            o.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             o.start(t); o.stop(t + 0.35);
+             // Pop at the end
+             var p = ac.createOscillator(), pg = ac.createGain();
+@@ -8856,7 +8841,7 @@
+             pg.gain.setValueAtTime(0.0001, t + 0.25);
+             pg.gain.linearRampToValueAtTime(0.1, t + 0.27);
+             pg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+-            p.connect(pg); pg.connect(ac.destination);
++            p.connect(pg); pg.connect(gameSoundsGainNode || ac.destination);
+             p.start(t + 0.25); p.stop(t + 0.36);
+         }
+ 
+@@ -8867,18 +8852,18 @@
+             playNote(880, 'sine', 0.1, 0.01, 0.18, t + 0.14);
+         }
+ 
+-        var swordTransitionSound = new Audio('sons/espada.mp3');
++        var swordTransitionSound = createSFX('sons/espada.mp3', 1.0);
+         function playSwordTransition() { if (_audioStarted) { swordTransitionSound.currentTime = 0; swordTransitionSound.play().catch(function (e) { }); } }
+-        var swordHitSound = new Audio('sons/ataque de espada.ogg');
+-        var sfxSpiderHurt = new Audio('enemy/Spider.ogg');
+-        var sfxSpiderDeath = new Audio('enemy/Spider_death.ogg');
++        var swordHitSound = createSFX('sons/ataque de espada.ogg', 0.5);
++        var sfxSpiderHurt = createSFX('enemy/Spider.ogg', 1.0);
++        var sfxSpiderDeath = createSFX('enemy/Spider_death.ogg', 1.0);
+         function playSpiderHurt() { if (_audioStarted) { sfxSpiderHurt.currentTime = 0; sfxSpiderHurt.play().catch(function (e) { }); } }
+         function playSpiderDeath() { if (_audioStarted) { sfxSpiderDeath.currentTime = 0; sfxSpiderDeath.play().catch(function (e) { }); } }
+-        var sfxWitherHurt = new Audio('enemy/Dano_Wither_skeleton.ogg');
+-        var sfxWitherDeath = new Audio('enemy/Death_Wither_skeleton.ogg');
+-        var powerUpSound = new Audio('sons/power-up-mario.mp3');
++        var sfxWitherHurt = createSFX('enemy/Dano_Wither_skeleton.ogg', 1.0);
++        var sfxWitherDeath = createSFX('enemy/Death_Wither_skeleton.ogg', 1.0);
++        var powerUpSound = createSFX('sons/power-up-mario.mp3', 1.0);
+         function playPowerUp() { if (_audioStarted) { powerUpSound.currentTime = 0; powerUpSound.play().catch(function (e) { }); } }
+-        var shrinkSound = new Audio('sons/super-mario-encolhe.mp3');
++        var shrinkSound = createSFX('sons/super-mario-encolhe.mp3', 1.0);
+         function playShrink() { if (_audioStarted) { shrinkSound.currentTime = 0; shrinkSound.play().catch(function (e) { }); } }
+ 
+         function playWitherHurt() { if (_audioStarted) { sfxWitherHurt.currentTime = 0; sfxWitherHurt.play().catch(e => { }); } }
+@@ -8886,17 +8871,16 @@
+         function sfxSwordHit() {
+             if (!_audioStarted) return;
+             try {
+-                var s = swordHitSound.cloneNode();
+-                s.volume = 0.5;
++                var s = cloneSFX(swordHitSound);
+                 s.play();
+             } catch (e) { }
+         }
+ 
+-        var sheepSounds = [
+-            new Audio('sons/som ovelha um.ogg'),
+-            new Audio('sons/som ovelha dois.ogg'),
+-            new Audio('sons/som ovelha tres.ogg')
+-        ];
++        var sheepSounds = createSFXArray([
++            'sons/som ovelha um.ogg',
++            'sons/som ovelha dois.ogg',
++            'sons/som ovelha tres.ogg'
++        ], 0.4);
+         var activeSheepSounds = [];
+         function sfxSheep(force) {
+             if (!_audioStarted) return;
+@@ -8912,18 +8896,17 @@
+             if (activeSheepSounds.length >= 3) return;
+ 
+             try {
+-                var s = sheepSounds[Math.floor(Math.random() * sheepSounds.length)].cloneNode();
+-                s.volume = 0.4;
++                var s = cloneSFX(sheepSounds[Math.floor(Math.random() * sheepSounds.length)]);
+                 s.play();
+                 activeSheepSounds.push(s);
+             } catch (e) { }
+         }
+ 
+-        var pigSounds = [
+-            new Audio('sons/som pig um.ogg'),
+-            new Audio('sons/som pig dois.ogg'),
+-            new Audio('sons/som pig tres.ogg')
+-        ];
++        var pigSounds = createSFXArray([
++            'sons/som pig um.ogg',
++            'sons/som pig dois.ogg',
++            'sons/som pig tres.ogg'
++        ], 0.4);
+         var activePigSounds = [];
+         function sfxPig(force) {
+             if (!_audioStarted) return;
+@@ -8939,8 +8922,7 @@
+             if (activePigSounds.length >= 3) return;
+ 
+             try {
+-                var s = pigSounds[Math.floor(Math.random() * pigSounds.length)].cloneNode();
+-                s.volume = 0.4;
++                var s = cloneSFX(pigSounds[Math.floor(Math.random() * pigSounds.length)]);
+                 s.play();
+                 activePigSounds.push(s);
+             } catch (e) { }
+@@ -9074,8 +9056,8 @@
+             // Bass
+             var bn = bass[bassStep % bass.length];
+             var bf = hScaleFreq(bn.d, bn.oct);
+-            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t);
+-            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t);
++            playNote(bf, 'sine', bn.vol, 0.02, bn.dur * 0.8, t, true);
++            if (musicMode !== 'mega') playNote(bf * 0.5, 'sine', bn.vol * 0.4, 0.02, bn.dur * 0.8, t, true);
+             bassStep++;
+ 
+             // Melody (every 2 beats, or every beat in mega)
+@@ -9084,8 +9066,8 @@
+                 // Variation: offset melody degrees on alternate phrases
+                 var melDeg = mn.d + (melodyVariation === 1 ? 2 : 0);
+                 var mf = hScaleFreq(melDeg, mn.oct);
+-                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t);
+-                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t);
++                playNote(mf, 'sine', mn.vol, 0.03, mn.dur, t, true);
++                if (musicMode !== 'boss') playNote(mf * 1.005, 'triangle', mn.vol * 0.3, 0.03, mn.dur * 1.2, t, true);
+                 melStep++;
+             }
+ 
+@@ -9095,7 +9077,7 @@
+                 for (var ci = 0; ci < chord.length; ci++) {
+                     var pf = hScaleFreq(chord[ci], 1);
+                     var padType = musicMode === 'boss' ? 'triangle' : 'sine';
+-                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t);
++                    playNote(pf, padType, musicMode === 'boss' ? 0.05 : 0.035, 0.1, beat * 3.5, t, true);
+                 }
+                 padStep++;
+             }
+@@ -9104,19 +9086,19 @@
+             if (Math.random() < (musicMode === 'mega' ? 0.4 : 0.2)) {
+                 var gd = Math.floor(Math.random() * SCALE.length);
+                 var gf = hScaleFreq(gd, musicMode === 'mega' ? 3 : 2);
+-                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5);
++                playNote(gf, 'sine', 0.035, 0.01, 0.2, t + Math.random() * beat * 0.5, true);
+             }
+ 
+             // Counter-melody (every 8 beats, adds variety)
+             if (musicStep % 8 === 4 && musicMode === 'normal') {
+                 var cd = [7, 5, 4, 2][Math.floor(musicStep / 8) % 4];
+-                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t);
++                playNote(hScaleFreq(cd, 2), 'triangle', 0.04, 0.05, beat * 2, t, true);
+             }
+ 
+             // Boss: dramatic low pulse + tension notes
+             if (musicMode === 'boss') {
+-                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t);
+-                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t);
++                if (musicStep % 2 === 0) playNote(curRoot * 0.5, 'triangle', 0.08, 0.05, beat * 1.5, t, true);
++                if (musicStep % 8 === 0) playNote(hScaleFreq(3, 0), 'sawtooth', 0.03, 0.1, beat * 3, t, true);
+             }
+ 
+             musicStep++;
+@@ -9148,7 +9130,11 @@
+             customBGMGain = ac.createGain();
+             customBGMGain.gain.value = 0.3; // volume da trilha (30% para não sobrepor SFX)
+             customBGMSource.connect(customBGMGain);
+-            customBGMGain.connect(ac.destination);
++            if (musicGainNode) {
++                customBGMGain.connect(musicGainNode);
++            } else {
++                customBGMGain.connect(ac.destination);
++            }
+         }
+ 
+         function handleBGMUpload(input) {
+@@ -9586,87 +9572,7 @@
+             if (liveEventQueue.length > 200) liveEventQueue.shift(); // Evita estouro da fila
+         }
+ 
+-        function showDeathBanner(userName) {
+-            var overlay = document.getElementById('announceOverlay');
+-            if (!overlay) return;
+-
+-            var ps = persistentScores[userName];
+-            var avatarUrl = (ps && ps.avatar) ? ps.avatar : '';
+-            var cleanName = userName;
+-
+-            var avatarHtml = '';
+-            if (avatarUrl) {
+-                avatarHtml = '<div class="avatar-container"><img class="death-avatar" src="' + avatarUrl + '" onerror="this.style.display=\'none\'"><div class="skull-icon">💀</div></div>';
+-            } else {
+-                avatarHtml = '<div class="avatar-container"><div class="death-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:bold; border:2px solid #ff4444; box-shadow:0 0 10px rgba(255, 68, 68, 0.8); color:#ff6666; width:52px; height:52px; border-radius:50%;">' + cleanName.replace('@','').charAt(0).toUpperCase() + '</div><div class="skull-icon">💀</div></div>';
+-            }
+-
+-            var card = document.createElement('div');
+-            card.className = 'death-announce-card';
+-            card.innerHTML = 
+-                avatarHtml +
+-                '<div class="death-info">' +
+-                '  <div class="death-title">Eliminado do Jogo</div>' +
+-                '  <div class="death-name">' + cleanName + '</div>' +
+-                '</div>';
+-
+-            overlay.appendChild(card);
+-
+-            setTimeout(function () {
+-                card.classList.add('fade-out');
+-                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+-            }, 3500);
+-        }
+-
+-        function showKillBanner(killerName, victimName) {
+-            var overlay = document.getElementById('announceOverlay');
+-            if (!overlay) return;
+-
+-            var psKiller = persistentScores[killerName];
+-            var psVictim = persistentScores[victimName];
+-
+-            var killerAvatar = (psKiller && psKiller.avatar) ? psKiller.avatar : '';
+-            var victimAvatar = (psVictim && psVictim.avatar) ? psVictim.avatar : '';
+-
+-            var killerHtml = '';
+-            if (killerAvatar) {
+-                killerHtml = '<img class="killer-avatar" src="' + killerAvatar + '" onerror="this.style.display=\'none\'" />';
+-            } else {
+-                killerHtml = '<div class="killer-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:bold; border:3px solid #ffdd44; box-shadow:0 0 12px rgba(255, 221, 68, 0.8); color:#fff; width:58px; height:58px; border-radius:50%;">' + killerName.replace('@','').charAt(0).toUpperCase() + '</div>';
+-            }
+-
+-            var victimHtml = '';
+-            if (victimAvatar) {
+-                victimHtml = '<img class="victim-avatar" src="' + victimAvatar + '" onerror="this.style.display=\'none\'" />';
+-            } else {
+-                victimHtml = '<div class="victim-avatar" style="background:#444; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:bold; border:3px solid #ff4444; box-shadow:0 0 12px rgba(255, 68, 68, 0.8); color:#fff; width:58px; height:58px; border-radius:50%;">' + victimName.replace('@','').charAt(0).toUpperCase() + '</div>';
+-            }
+-
+-            var card = document.createElement('div');
+-            card.className = 'kill-announce-card';
+-            card.innerHTML = 
+-                '<div class="player-box">' +
+-                killerHtml +
+-                '<div class="player-name">' + killerName + '</div>' +
+-                '</div>' +
+-                '<div class="vs-box">' +
+-                '<div class="vs-swords">⚔️</div>' +
+-                '<div class="vs-title">PVP K.O.</div>' +
+-                '</div>' +
+-                '<div class="player-box">' +
+-                victimHtml +
+-                '<div class="player-name">' + victimName + '</div>' +
+-                '</div>';
+-
+-            overlay.appendChild(card);
+-
+-            setTimeout(function () {
+-                card.classList.add('fade-out');
+-                setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 800);
+-            }, 3500);
+-        }
+-
+-        function applyDamage(userName, amount, sourceName) {
++        function applyDamage(userName, amount) {
+             var ps = persistentScores[userName];
+             if (!ps) return;
+             var now = Date.now();
+@@ -9677,47 +9583,15 @@
+ 
+             var p = (ownerName && userName === ownerName) ? pick : userPicks.find(function (up) { return up.userName === userName; });
+ 
+-            if (p) {
+-                // Shake screen on any damage taken
+-                shakeAmt = Math.max(shakeAmt, 10);
+-                // Spawn red blood/spark particles at player position
+-                spawnParts(p.x, p.y, '#ff0000', 12);
+-            }
+-
+             if (ps.health > 0) {
+                 ps.health = Math.max(0, (ps.health || 0) - amount);
+                 if (p) {
+                     spawnText(p.x, p.y - 40, '-' + amount + ' ❤️', '#ff4444');
+-                    p.hurtTimer = 18; // Increase hurt timer for a longer flashing effect
++                    p.hurtTimer = 10;
+                 }
+                 if (ps.health <= 0) {
+                     sfxMoneyLoss();
+-                    if (p) spawnText(p.x, p.y - 60, '💀 ELIMINADO! 💔', '#ff0000');
+-
+-                    // Lógica de Morte e Reset de Pontos
+-                    ps.score = 0;
+-                    if (_cycleScores[userName]) _cycleScores[userName].score = 0;
+-
+-                    speakTTS(userName.replace('@', '') + ' morreu e perdeu todos os pontos.');
+-
+-                    if (sourceName) {
+-                        showKillBanner(sourceName, userName);
+-                    } else {
+-                        showDeathBanner(userName);
+-                    }
+-
+-                    if (p) {
+-                        spawnParts(p.x, p.y, p.color || '#ff4444', 25);
+-                        spawnParts(p.x, p.y, '#ff0000', 20); // blood red particles
+-                        explosions.push({ x: p.x, y: p.y, frame: 0, timer: 0, mega: true });
+-                        shakeAmt = Math.max(shakeAmt, 25); // Heavy screen shake
+-                        p.companions = [];
+-
+-                        if (p !== pick) {
+-                            var pIdx = userPicks.indexOf(p);
+-                            if (pIdx !== -1) userPicks.splice(pIdx, 1);
+-                        }
+-                    }
++                    if (p) spawnText(p.x, p.y - 60, '💔 HEALTH ZERO!', '#ff0000');
+                 }
+             } else {
+                 // Already at 0 HP, deduct score directly
+@@ -9942,11 +9816,7 @@
+                 if (data.avatar) loadAvatar(data.avatar);
+ 
+                 // --- Proteção Contra Spam de Inscrição ---
+-                if (!persistentScores[mUser]) {
+-                    persistentScores[mUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', subscribeCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+-                } else {
+-                    persistentScores[mUser].health = persistentScores[mUser].slots || INITIAL_HEART_SLOTS;
+-                }
++                if (!persistentScores[mUser]) persistentScores[mUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', subscribeCount: 0 };
+                 persistentScores[mUser].subscribeCount = (persistentScores[mUser].subscribeCount || 0) + 1;
+ 
+                 if (persistentScores[mUser].subscribeCount > 1 || persistentScores[mUser].isChicken) {
+@@ -9956,8 +9826,9 @@
+                     if (sPick) {
+                         sPick.isChicken = true;
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                         spawnText(sPick.x, sPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+@@ -9966,7 +9837,10 @@
+                         var newP = userPicks.find(up => up.userName === mUser);
+                         if (newP) {
+                             newP.isChicken = true;
+-                            if (_audioStarted) chickenSounds[0].play().catch(e => { });
++                            if (_audioStarted) {
++                                var s = cloneSFX(chickenSounds[0]);
++                                s.play().catch(e => { });
++                            }
+                             spawnText(newP.x, newP.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+                         }
+                     }
+@@ -10001,11 +9875,6 @@
+                 }
+                 lastGiftProcessed.set(giftSig, { time: now });
+ 
+-                if (!persistentScores[gUser]) {
+-                    persistentScores[gUser] = { score: 0, avatar: gAvatar, color: '#ff88ff', likes: 0, giftsValue: 0, giftsCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+-                } else {
+-                    persistentScores[gUser].health = persistentScores[gUser].slots || INITIAL_HEART_SLOTS;
+-                }
+                 lastActivity[gUser] = Date.now(); if (gAvatar) loadAvatar(gAvatar); spawnUserPickaxe(gUser, gAvatar);
+                 var gPick = userPicks.find(function (up) { return up.userName === gUser; });
+                 var refP = (pick.active) ? pick : (camTarget || pick);
+@@ -10174,8 +10043,9 @@
+                         spawnText(gx, gy - 30, statusMsg, statusColor);
+ 
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                     }
+@@ -10215,8 +10085,10 @@
+ 
+                         if (_audioStarted && targetPlayer.isHomer) {
+                             sfxPickaxeChange();
+-                            homerSound.volume = 0.6;
+-                            homerSound.play().catch(function (e) { });
++                            var s = cloneSFX(homerSound);
++                            s.baseVolume = 0.6;
++                            s.volume = s.baseVolume * gameSoundsVolume;
++                            s.play().catch(function (e) { });
+                         }
+                     }
+                     resultingPickaxe = HOMER_PICKAXE;
+@@ -10286,11 +10158,7 @@
+                 console.log('[Follow Event] User:', fUser);
+ 
+                 // --- Proteção Contra Spam de Follow/Unfollow ---
+-                if (!persistentScores[fUser]) {
+-                    persistentScores[fUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', followCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+-                } else {
+-                    persistentScores[fUser].health = persistentScores[fUser].slots || INITIAL_HEART_SLOTS;
+-                }
++                if (!persistentScores[fUser]) persistentScores[fUser] = { score: 0, avatar: data.avatar || '', color: '#ffdd44', followCount: 0 };
+                 persistentScores[fUser].followCount = (persistentScores[fUser].followCount || 0) + 1;
+                 console.log('[Follow Event] Count for', fUser, 'is', persistentScores[fUser].followCount);
+ 
+@@ -10302,8 +10170,9 @@
+                     if (fPick) {
+                         fPick.isChicken = true;
+                         if (_audioStarted) {
+-                            var snd = chickenSounds[Math.floor(Math.random() * chickenSounds.length)];
+-                            snd.volume = 0.6;
++                            var snd = cloneSFX(chickenSounds[Math.floor(Math.random() * chickenSounds.length)]);
++                            snd.baseVolume = 0.6;
++                            snd.volume = snd.baseVolume * gameSoundsVolume;
+                             snd.play().catch(function (e) { });
+                         }
+                         spawnText(fPick.x, fPick.y - 60, '🐔 PUNIDO POR SPAM!', '#ff4444');
+@@ -10339,18 +10208,6 @@
+                 var lNameRaw = data.user || '';
+                 if (!lNameRaw) return; var lUser = (lNameRaw.charAt(0) === '@' ? lNameRaw : '@' + lNameRaw).toLowerCase();
+                 var lAvatar = data.avatar || ''; lastActivity[lUser] = Date.now(); if (lAvatar) loadAvatar(lAvatar);
+-
+-                // Contabilizar likes no ranking
+-                if (!persistentScores[lUser]) {
+-                    persistentScores[lUser] = { score: 0, avatar: lAvatar, color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0, health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS };
+-                } else {
+-                    if (persistentScores[lUser].health === undefined) {
+-                        persistentScores[lUser].health = INITIAL_HEART_SLOTS;
+-                    } else if (persistentScores[lUser].health <= 0) {
+-                        persistentScores[lUser].health = 1; // reviver com 1 HP/coração
+-                    }
+-                }
+-
+                 spawnUserPickaxe(lUser, lAvatar);
+                 var lPick = userPicks.find(function (up) { return up.userName === lUser; });
+                 var refP = (pick.active) ? pick : (camTarget || pick);
+@@ -10359,23 +10216,17 @@
+                 var likeCount = data.likeCount || 1;
+                 var likePts = Math.min(likeCount, 10) * 0.5;
+                 if (pick.active) score += likePts;
++                // Gerar heartTNT apenas se não estiver no período de ignoração inicial
++                if (Date.now() >= _ignoreLikesUntil) {
++                    activateHeartTNT(lx, ly, lUser, lAvatar);
++                }
++                spawnParts(lx, ly, '#ff4488', Math.min(likeCount, 5));
++                spawnText(lx, ly - 20, '+' + likePts + ' ❤', '#ff4488');
++                // Contabilizar likes no ranking
++                if (!persistentScores[lUser]) persistentScores[lUser] = { score: 0, avatar: lAvatar, color: '#ff4488', likes: 0, giftsValue: 0, giftsCount: 0 };
+ 
+                 var oldLikes = persistentScores[lUser].likes || 0;
+                 var newLikes = oldLikes + likeCount;
+-
+-                // Gerar heartTNT apenas se não estiver no período de ignoração inicial e a cada 10 likes acumulados
+-                if (Date.now() >= _ignoreLikesUntil) {
+-                    var oldMilestone = Math.floor(oldLikes / 10);
+-                    var newMilestone = Math.floor(newLikes / 10);
+-                    if (newMilestone > oldMilestone) {
+-                        var countToSpawn = newMilestone - oldMilestone;
+-                        for (var s = 0; s < countToSpawn; s++) {
+-                            activateHeartTNT(lx, ly, lUser, lAvatar);
+-                        }
+-                    }
+-                }
+-                spawnParts(lx, ly, '#ff4488', Math.min(likeCount, 5));
+-                spawnText(lx, ly - 20, '+' + likePts + ' ❤', '#ff4488');
+ 
+                 // Milestone: Cada 1000 likes ganha um upgrade de picareta
+                 if (Math.floor(newLikes / 1000) > Math.floor(oldLikes / 1000)) {
+@@ -10473,7 +10324,6 @@
+         function spawnUserPickaxe(userName, avatarUrl) {
+             userName = userName.replace(/^@@+/, '@');
+             if (ownerName && userName === ownerName) return;
+-            if (persistentScores[userName] && persistentScores[userName].health <= 0) return;
+             // O limite de 30 já é tratado abaixo com shift(), removendo o return fixo de 50 para garantir rotação.
+             if (userPicks.some(up => up.userName === userName)) return;
+ 
+@@ -10514,7 +10364,7 @@
+                 persistentScores[userName] = {
+                     score: p.score, avatar: avatarUrl, color: p.color,
+                     likes: 0, giftsValue: 0, giftsCount: 0,
+-                    health: INITIAL_HEART_SLOTS, slots: INITIAL_HEART_SLOTS
++                    health: 0, slots: INITIAL_HEART_SLOTS
+                 };
+             } else {
+                 if (avatarUrl) persistentScores[userName].avatar = avatarUrl;
+@@ -10522,7 +10372,7 @@
+                 if (persistentScores[userName].likes === undefined) persistentScores[userName].likes = 0;
+                 if (persistentScores[userName].giftsValue === undefined) persistentScores[userName].giftsValue = 0;
+                 if (persistentScores[userName].giftsCount === undefined) persistentScores[userName].giftsCount = 0;
+-                if (persistentScores[userName].health === undefined || persistentScores[userName].health <= 0) persistentScores[userName].health = INITIAL_HEART_SLOTS;
++                if (persistentScores[userName].health === undefined) persistentScores[userName].health = 0;
+                 if (persistentScores[userName].slots === undefined) persistentScores[userName].slots = INITIAL_HEART_SLOTS;
+             }
+ 
+@@ -10641,7 +10491,7 @@
+             g.gain.setValueAtTime(0.0001, t);
+             g.gain.linearRampToValueAtTime(0.5, t + 0.1);
+             g.gain.exponentialRampToValueAtTime(0.0001, t + 2);
+-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 2.1);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 2.1);
+             // Whoosh
+             var nLen = Math.ceil(ac.sampleRate * 1.5);
+             var buf = ac.createBuffer(1, nLen, ac.sampleRate);
+@@ -10650,7 +10500,7 @@
+             var src = ac.createBufferSource(); src.buffer = buf;
+             var filt = ac.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 200; filt.Q.value = 2;
+             var ng = ac.createGain(); ng.gain.setValueAtTime(0.3, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+-            src.connect(filt); filt.connect(ng); ng.connect(ac.destination); src.start(t);
++            src.connect(filt); filt.connect(ng); ng.connect(gameSoundsGainNode || ac.destination); src.start(t);
+         }
+ 
+         function sfxBlackHoleClose() {
+@@ -10661,14 +10511,14 @@
+             osc.type = 'sine'; osc.frequency.setValueAtTime(60, t);
+             osc.frequency.exponentialRampToValueAtTime(800, t + 0.8);
+             g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 1);
+-            osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + 1);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination); osc.start(t); osc.stop(t + 1);
+             // Final pop/flash
+             var pop = ac.createOscillator(), pg = ac.createGain();
+             pop.type = 'triangle'; pop.frequency.setValueAtTime(1200, t + 0.8);
+             pop.frequency.exponentialRampToValueAtTime(200, t + 1.2);
+             pg.gain.setValueAtTime(0.0001, t + 0.8); pg.gain.linearRampToValueAtTime(0.25, t + 0.85);
+             pg.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+-            pop.connect(pg); pg.connect(ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
++            pop.connect(pg); pg.connect(gameSoundsGainNode || ac.destination); pop.start(t + 0.8); pop.stop(t + 1.3);
+         }
+ 
+         function updateBlackHoles() {
+@@ -11414,7 +11264,7 @@
+             osc.type = 'triangle'; osc.frequency.setValueAtTime(80, t);
+             osc.frequency.exponentialRampToValueAtTime(300, t + 0.45);
+             g.gain.setValueAtTime(0.18, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.5);
+         }
+ 
+@@ -11425,7 +11275,7 @@
+             osc.type = 'triangle'; osc.frequency.setValueAtTime(250, t);
+             osc.frequency.exponentialRampToValueAtTime(60, t + 0.35);
+             g.gain.setValueAtTime(0.22, t); g.gain.linearRampToValueAtTime(0, t + 0.45);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.45);
+         }
+ 
+@@ -11435,7 +11285,7 @@
+             var osc = ac.createOscillator(); var g = ac.createGain();
+             osc.type = 'square'; osc.frequency.setValueAtTime(800, t);
+             g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0, t + 0.05);
+-            osc.connect(g); g.connect(ac.destination);
++            osc.connect(g); g.connect(gameSoundsGainNode || ac.destination);
+             osc.start(t); osc.stop(t + 0.05);
+         }
+ 
+@@ -12942,21 +12792,27 @@
+ 
+             if (_ttsMode === 'tiktok') {
+                 var audio = new Audio('/tts?text=' + encodeURIComponent(text) + '&voice=' + voice);
++                audio.volume = messagesVolume;
++                currentMessageAudio = audio;
+                 audio.onended = function () {
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     setTimeout(processTTSQueue, 300);
+                 };
+                 audio.onerror = function () {
+                     console.error('TikTok TTS Error');
+                     _isSpeaking = false;
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     processTTSQueue();
+                 };
+                 audio.play().catch(function (e) {
+                     console.error('TTS Play Blocked/Error:', e);
+                     _isSpeaking = false;
++                    if (currentMessageAudio === audio) currentMessageAudio = null;
+                     processTTSQueue();
+                 });
+             } else {
+                 var utterance = new SpeechSynthesisUtterance(text);
++                utterance.volume = messagesVolume;
+                 var voices = window.speechSynthesis.getVoices();
+                 var selectedVoice;
+ 
+@@ -13007,9 +12863,21 @@
+             if (_isSpeaking) return;
+             _isSpeaking = true;
+             var audio = new Audio(url);
+-            audio.onended = function () { _isSpeaking = false; };
+-            audio.onerror = function () { _isSpeaking = false; };
+-            audio.play().catch(function (e) { console.error('MP3 Play error:', e); _isSpeaking = false; });
++            audio.volume = messagesVolume;
++            currentMessageAudio = audio;
++            audio.onended = function () {
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            };
++            audio.onerror = function () {
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            };
++            audio.play().catch(function (e) {
++                console.error('MP3 Play error:', e);
++                _isSpeaking = false;
++                if (currentMessageAudio === audio) currentMessageAudio = null;
++            });
+         }
+ 
+         // Verifica anúncios periódicos a cada 10 segundos
