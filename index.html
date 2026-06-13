@@ -52,11 +52,46 @@
                 transform: none !important;
             }
         }
+
+        /* OFFLINE MODE CSS */
+        body.offline-mode #uiSidebar,
+        body.offline-mode #animationControlModal,
+        body.offline-mode #playerManagementPanel,
+        body.offline-mode #mobileMenuBtn {
+            display: none !important;
+        }
+        body.offline-mode #gameWrapper {
+            width: 100vw !important;
+            justify-content: center !important;
+        }
+        body.offline-mode #gameCanvas {
+            margin: 0 auto;
+        }
+        .btn-back-home {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 20000;
+            background: #ff0050;
+            color: #fff;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-family: 'Inter', sans-serif;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            text-decoration: none;
+        }
+        body.offline-mode .btn-back-home {
+            display: block;
+        }
     </style>
 </head>
 
 <body>
-
+    <a href="home.html" class="btn-back-home">⬅️ Voltar para a Home</a>
 
     <!-- Live Setup Modal -->
 
@@ -588,6 +623,7 @@
             const urlParams = new URLSearchParams(window.location.search);
             const player = urlParams.get('player');
             if (player) {
+                document.body.classList.add('offline-mode');
                 setTimeout(() => {
                     if(typeof spawnUserPickaxe === 'function') {
                         spawnUserPickaxe(player, '');
