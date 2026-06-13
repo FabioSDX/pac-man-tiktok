@@ -1798,6 +1798,12 @@ var persistentScores = {};
 
         function genRow(r) {
             var row = [];
+            if (window.IS_TITLE_MODE) {
+                for (var c = 0; c < COLS; c++) {
+                    row[c] = { t: E, hp: 0, cr: 0 };
+                }
+                return row;
+            }
             var depth = r;
             var zone = Math.floor(r / CLEARING_INTERVAL);
             var zoneStart = zone * CLEARING_INTERVAL;
@@ -14037,3 +14043,180 @@ var persistentScores = {};
                 }
             }
         };
+
+        // ── TITLE MODE LOGIC ────────────────────────────────────────────────────────
+        if (window.IS_TITLE_MODE) {
+            var titleLetters = {
+                'F': ["XXX", "X  ", "XXX", "X  ", "X  "],
+                'A': [" XXX ", "X   X", "XXXXX", "X   X", "X   X"],
+                'L': ["X  ", "X  ", "X  ", "X  ", "XXX"],
+                'I': ["XXX", " X ", " X ", " X ", "XXX"],
+                'N': ["X   X", "XX  X", "X X X", "X  XX", "X   X"],
+                'G': [" XXX ", "X    ", "X  XX", "X   X", " XXX "],
+                'P': ["XXX ", "X  X", "XXX ", "X   ", "X   "],
+                'C': [" XXX", "X   ", "X   ", "X   ", " XXX"],
+                'K': ["X  X", "X X ", "XX  ", "X X ", "X  X"],
+                'X': ["X   X", " X X ", "  X  ", " X X ", "X   X"],
+                'E': ["XXX", "X  ", "XXX", "X  ", "XXX"],
+                'D': ["XX  ", "X X ", "X  X", "X X ", "XX  "],
+                'R': ["XXX ", "X  X", "XXX ", "X X ", "X  X"],
+                'O': [" XX ", "X  X", "X  X", "X  X", " XX "],
+            };
+            
+            var titleWords = [
+                { word: "FALLING", rowStart: 5 },
+                { word: "PICKAXE", rowStart: 18 },
+                { word: "DROP", rowStart: 31 }
+            ];
+
+            var titleSequence = [];
+            var titleTypes = [D, S, C, I, G, DIA];
+
+            function buildSequence() {
+                titleSequence = [];
+                for (var w = 0; w < titleWords.length; w++) {
+                    var wordInfo = titleWords[w];
+                    var str = wordInfo.word;
+                    var rowBase = wordInfo.rowStart;
+                    
+                    var totalWidth = 0;
+                    for (var i = 0; i < str.length; i++) totalWidth += titleLetters[str[i]][0].length * 2 + 2;
+                    totalWidth -= 2;
+                    
+                    var colBase = Math.floor((COLS - totalWidth) / 2);
+                    if (colBase < 0) colBase = 0; // Previne bordas vazando
+                    
+                    for (var i = 0; i < str.length; i++) {
+                        var charMask = titleLetters[str[i]];
+                        var wLen = charMask[0].length;
+                        
+                        for (var r = 0; r < charMask.length; r++) {
+                            for (var c = 0; c < charMask[r].length; c++) {
+                                if (charMask[r][c] === 'X') {
+                                    // Espessura dupla (2x2 blocos por 'pixel')
+                                    for (var dr = 0; dr < 2; dr++) {
+                                        for (var dc = 0; dc < 2; dc++) {
+                                            titleSequence.push({
+                                                r: rowBase + r * 2 + dr,
+                                                c: colBase + c * 2 + dc,
+                                                t: titleTypes[Math.floor(Math.random() * titleTypes.length)]
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        colBase += wLen * 2 + 2; // Espaço entre letras
+                    }
+                }
+                
+                // Embaralha para que caia aleatório
+                for (var i = titleSequence.length - 1; i > 0; i--) {
+                    var j = Math.floor(Math.random() * (i + 1));
+                    var temp = titleSequence[i];
+                    titleSequence[i] = titleSequence[j];
+                    titleSequence[j] = temp;
+                }
+            }
+
+            var titleState = 0; 
+            var titleBuildTimer = null;
+
+            function runTitleLoop() {
+                if (titleState === 0) {
+                    // Start building
+                    buildSequence();
+                    // Limpa mapa inteiramente
+                    for (var rr = 0; rr < 100; rr++) {
+                        if (worldMap[rr]) {
+                            for (var cc = 0; cc < COLS; cc++) {
+                                worldMap[rr][cc] = { t: E, hp: 0, cr: 0 };
+                            }
+                        } else {
+                            worldMap[rr] = genRow(rr);
+                        }
+                    }
+                    camY = 25 * TILE; // Centraliza a visão na tela
+                    titleState = 1;
+                    
+                    titleBuildTimer = setInterval(function() {
+                        for (var k = 0; k < 6; k++) { // Desce 6 blocos por vez
+                            if (titleSequence.length > 0) {
+                                var b = titleSequence.pop();
+                                // Spawn como falling block caindo lá do alto
+                                fallingBlocks.push({
+                                    x: b.c * TILE + TILE / 2,
+                                    y: camY - 600 - Math.random() * 300,
+                                    vx: 0,
+                                    vy: 10 + Math.random() * 5, // cai rapido
+                                    t: b.t,
+                                    size: TILE,
+                                    ang: 0,
+                                    spin: 0,
+                                    hp: BDEF[b.t] ? BDEF[b.t].hp : 1,
+                                    bounces: 0,
+                                    owner: null,
+                                    targetR: b.r,
+                                    targetC: b.c
+                                });
+                            } else {
+                                clearInterval(titleBuildTimer);
+                                titleState = 2;
+                                setTimeout(runTitleLoop, 4000);
+                                break;
+                            }
+                        }
+                    }, 50);
+
+                } else if (titleState === 2) {
+                    // Strike Golden Pickaxe!
+                    var tX = (COLS / 2) * TILE;
+                    var tY = 20 * TILE; // Meio do texto
+                    
+                    // Cria uma picareta visual impactando
+                    spawnUserPickaxe('Golden', '');
+                    var pk = extraPickaxes[extraPickaxes.length - 1];
+                    if (pk) {
+                        pk.x = tX;
+                        pk.y = camY - 600; // Vem do alto
+                        pk.vx = 0;
+                        pk.vy = 30; // Bem rápido 
+                        pk.stormTimer = 500; // para nao desaparecer
+                        
+                        setTimeout(function() {
+                            // Causa explosão real de blocos
+                            activateThor(tX, tY, 'Golden');
+                        }, 500);
+                    }
+                    
+                    titleState = 3;
+                    setTimeout(runTitleLoop, 8000); // 8s de explosão e reinicia
+
+                } else if (titleState === 3) {
+                    titleState = 0;
+                    runTitleLoop();
+                }
+            }
+
+            // Inicia o loop
+            setTimeout(runTitleLoop, 2000);
+            
+            // Interceptar a lógica de desenho
+            var originalDraw = draw;
+            draw = function() {
+                originalDraw();
+                // Ajudar fallingBlocks com target a assentar no mapa real
+                for (var i = fallingBlocks.length - 1; i >= 0; i--) {
+                    var fb = fallingBlocks[i];
+                    if (fb.targetR !== undefined) {
+                        var targetY = fb.targetR * TILE + TILE / 2;
+                        if (fb.y >= targetY) {
+                            if (!worldMap[fb.targetR]) worldMap[fb.targetR] = genRow(fb.targetR);
+                            worldMap[fb.targetR][fb.targetC] = { t: fb.t, hp: fb.hp, cr: 0 };
+                            // Remover caindo
+                            fallingBlocks.splice(i, 1);
+                        }
+                    }
+                }
+            };
+        }

@@ -624,6 +624,25 @@
         window.addEventListener('load', () => {
             const urlParams = new URLSearchParams(window.location.search);
             const player = urlParams.get('player');
+            const isTitleMode = urlParams.get('title_mode') === '1';
+            
+            if (isTitleMode) {
+                window.IS_TITLE_MODE = true;
+                document.body.style.background = 'transparent';
+                document.body.style.overflow = 'hidden';
+                const bgv = document.getElementById('bgVideo');
+                if (bgv) bgv.style.display = 'none';
+                const uiSb = document.getElementById('uiSidebar');
+                if (uiSb) uiSb.style.display = 'none';
+                
+                const gw = document.getElementById('gameWrapper');
+                if (gw) {
+                    gw.style.width = '100vw';
+                    gw.style.height = '100vh';
+                    gw.style.justifyContent = 'center';
+                }
+            }
+
             if (player) {
                 document.body.classList.add('offline-mode');
                 setTimeout(() => {
