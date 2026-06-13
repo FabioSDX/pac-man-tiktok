@@ -363,7 +363,7 @@ var persistentScores = {};
         var ctx = canvas.getContext('2d');
 
         // Resolução Tradicional (Vertical 9:16 aprox)
-        var TILE = window.IS_TITLE_MODE ? Math.max(12, Math.min(60, Math.floor(window.innerWidth / 40), Math.floor(window.innerHeight / 26))) : 72;
+        var TILE = window.IS_TITLE_MODE ? Math.max(12, Math.min(60, Math.floor(window.innerWidth / 40), Math.floor(window.innerHeight / 45))) : 72;
         var COLS = window.IS_TITLE_MODE ? Math.ceil(window.innerWidth / TILE) : 15;
         var VIS = window.IS_TITLE_MODE ? Math.ceil(window.innerHeight / TILE) : 27;
 
@@ -14070,8 +14070,7 @@ var persistentScores = {};
                 'O': [" XX ", "X  X", "X  X", "X  X", " XX "],
             };
             var totalLines = 17;
-            // Empurra as letras drasticamente para baixo, ancorando na parte inferior (com margem de 15% do fundo)
-            var centerRow = VIS - totalLines - Math.floor(VIS * 0.15); 
+            var centerRow = Math.floor((VIS - totalLines) / 2);
             if (centerRow < 1) centerRow = 1;
 
             var titleWords = [
