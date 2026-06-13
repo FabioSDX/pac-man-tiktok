@@ -633,7 +633,7 @@
                     display: none !important;
                 }
                 body { background: transparent !important; }
-                #bgVideo { display: none !important; }
+                #bgVideo { display: block !important; opacity: 0.15 !important; filter: blur(3px) !important; z-index: -10 !important; }
                 #gameWrapper { width: 100vw !important; height: 100vh !important; justify-content: center !important; }
             `;
             document.head.appendChild(style);

@@ -9,13 +9,15 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>" />
 </head>
 <body>
+    <!-- Título físico via Iframe do jogo em Tela Cheia -->
+    <iframe src="index.html?title_mode=1" id="titleIframe" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; border: none; pointer-events: none; overflow: hidden;"></iframe>
+
     <div id="particles-container"></div>
     <div id="enemies-container"></div>
     <div id="pickaxe-falling-container"></div>
 
     <div class="hero">
-        <!-- Título físico via Iframe do jogo -->
-        <iframe src="index.html?title_mode=1" id="titleIframe" style="width:100%; height:450px; border:none; pointer-events:none; margin-bottom: 20px; overflow:hidden;"></iframe>
+        <h1 style="display:none;">FALLING PICKAXE DROP</h1> <!-- Fallback caso Iframe falhe -->
         <p class="subtitle">O jogo interativo onde sua live pega fogo! 🔥</p>
     </div>
 

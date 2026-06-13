@@ -358,8 +358,9 @@ var persistentScores = {};
         var ctx = canvas.getContext('2d');
 
         // Resolução Tradicional (Vertical 9:16 aprox)
-        var COLS = 15, TILE = 72;
-        var VIS = 27;
+        var TILE = 72;
+        var COLS = window.IS_TITLE_MODE ? Math.max(15, Math.ceil(window.innerWidth / TILE)) : 15;
+        var VIS = window.IS_TITLE_MODE ? Math.max(27, Math.ceil(window.innerHeight / TILE)) : 27;
 
         canvas.width = COLS * TILE;
         canvas.height = VIS * TILE;
@@ -14064,9 +14065,9 @@ var persistentScores = {};
             };
             
             var titleWords = [
-                { word: "FALLING", rowStart: 5 },
-                { word: "PICKAXE", rowStart: 18 },
-                { word: "DROP", rowStart: 31 }
+                { word: "FALLING", rowStart: 2 },
+                { word: "PICKAXE", rowStart: 8 },
+                { word: "DROP", rowStart: 14 }
             ];
 
             var titleSequence = [];
@@ -14080,11 +14081,11 @@ var persistentScores = {};
                     var rowBase = wordInfo.rowStart;
                     
                     var totalWidth = 0;
-                    for (var i = 0; i < str.length; i++) totalWidth += titleLetters[str[i]][0].length * 2 + 2;
-                    totalWidth -= 2;
+                    for (var i = 0; i < str.length; i++) totalWidth += titleLetters[str[i]][0].length + 1;
+                    totalWidth -= 1;
                     
                     var colBase = Math.floor((COLS - totalWidth) / 2);
-                    if (colBase < 0) colBase = 0; // Previne bordas vazando
+                    if (colBase < 0) colBase = 0;
                     
                     for (var i = 0; i < str.length; i++) {
                         var charMask = titleLetters[str[i]];
@@ -14093,24 +14094,19 @@ var persistentScores = {};
                         for (var r = 0; r < charMask.length; r++) {
                             for (var c = 0; c < charMask[r].length; c++) {
                                 if (charMask[r][c] === 'X') {
-                                    // Espessura dupla (2x2 blocos por 'pixel')
-                                    for (var dr = 0; dr < 2; dr++) {
-                                        for (var dc = 0; dc < 2; dc++) {
-                                            titleSequence.push({
-                                                r: rowBase + r * 2 + dr,
-                                                c: colBase + c * 2 + dc,
-                                                t: titleTypes[Math.floor(Math.random() * titleTypes.length)]
-                                            });
-                                        }
-                                    }
+                                    titleSequence.push({
+                                        r: rowBase + r,
+                                        c: colBase + c,
+                                        t: titleTypes[Math.floor(Math.random() * titleTypes.length)]
+                                    });
                                 }
                             }
                         }
-                        colBase += wLen * 2 + 2; // Espaço entre letras
+                        colBase += wLen + 1;
                     }
                 }
                 
-                // Embaralha para que caia aleatório
+                // Embaralha para chuva de blocos
                 for (var i = titleSequence.length - 1; i > 0; i--) {
                     var j = Math.floor(Math.random() * (i + 1));
                     var temp = titleSequence[i];
@@ -14121,33 +14117,57 @@ var persistentScores = {};
 
             var titleState = 0; 
             var titleBuildTimer = null;
+            var rainTimer = null;
 
             function runTitleLoop() {
                 if (titleState === 0) {
-                    // Start building
                     buildSequence();
-                    // Limpa mapa inteiramente
-                    for (var rr = 0; rr < 100; rr++) {
-                        if (worldMap[rr]) {
-                            for (var cc = 0; cc < COLS; cc++) {
-                                worldMap[rr][cc] = { t: E, hp: 0, cr: 0 };
+                    
+                    // Preenche o mundo inteiro de blocos, exceto a clareira!
+                    for (var rr = 0; rr < VIS; rr++) {
+                        if (!worldMap[rr]) worldMap[rr] = genRow(rr);
+                        var isClearing = (rr >= 1 && rr <= 19); // Espaço limpo para o texto
+                        for (var cc = 0; cc < COLS; cc++) {
+                            var isInTitleZone = (cc >= 1 && cc <= COLS - 2); 
+                            if (isClearing && isInTitleZone) {
+                                worldMap[rr][cc] = { t: E, hp: 0, cr: 0 }; // Vazio
+                            } else {
+                                // Background de blocos escuros/pedra
+                                worldMap[rr][cc] = { t: Math.random() > 0.8 ? D : S, hp: 9999, cr: 0 };
                             }
-                        } else {
-                            worldMap[rr] = genRow(rr);
                         }
                     }
-                    camY = 25 * TILE; // Centraliza a visão na tela
-                    titleState = 1;
                     
+                    camY = (VIS * TILE) / 2; // Câmera estática cobrindo do 0 ao VIS
+                    if (window.camTarget) window.camTarget.y = camY;
+
+                    // Inicia a chuva maluca de itens no fundo
+                    if (!rainTimer) {
+                        rainTimer = setInterval(function() {
+                            var randX = Math.random() * (COLS * TILE);
+                            var randY = camY - (VIS * TILE)/2 - 200; // Do topo
+                            var r = Math.random();
+                            if (r < 0.2) activateCreeper(randX, randY, 'Bot');
+                            else if (r < 0.4) activateTNT(randX, randY, 'Bot');
+                            else if (r < 0.6) activateBall(randX, randY, 'Bot');
+                            else if (r < 0.8) {
+                                spawnUserPickaxe('Diamond', '');
+                                var p = extraPickaxes[extraPickaxes.length - 1];
+                                if (p) { p.x = randX; p.y = randY; p.vy = 20; p.vx = (Math.random()-0.5)*10; }
+                            }
+                        }, 2000);
+                    }
+
+                    titleState = 1;
                     titleBuildTimer = setInterval(function() {
-                        for (var k = 0; k < 2; k++) { // Desce 2 blocos por vez apenas
+                        for (var k = 0; k < 2; k++) { 
                             if (titleSequence.length > 0) {
                                 var b = titleSequence.pop();
                                 fallingBlocks.push({
                                     x: b.c * TILE + TILE / 2,
-                                    y: camY - 600 - Math.random() * 200,
+                                    y: camY - (VIS * TILE)/2 - Math.random() * 200,
                                     vx: 0,
-                                    vy: 1 + Math.random() * 2, // Cai BEM mais devagar
+                                    vy: 1 + Math.random() * 2,
                                     t: b.t,
                                     size: TILE,
                                     ang: 0,
@@ -14165,31 +14185,30 @@ var persistentScores = {};
                                 break;
                             }
                         }
-                    }, 80); // Intervalo um pouco maior
+                    }, 80);
 
                 } else if (titleState === 2) {
-                    // Strike Golden Pickaxe!
+                    // Golden Pickaxe bate no nome!
                     var tX = (COLS / 2) * TILE;
-                    var tY = 20 * TILE; // Meio do texto
+                    var tY = 10 * TILE; 
                     
-                    // Cria uma picareta visual impactando
                     spawnUserPickaxe('Golden', '');
                     var pk = extraPickaxes[extraPickaxes.length - 1];
                     if (pk) {
                         pk.x = tX;
-                        pk.y = camY - 600; // Vem do alto
+                        pk.y = camY - (VIS * TILE)/2 - 200; 
                         pk.vx = 0;
-                        pk.vy = 30; // Bem rápido 
-                        pk.stormTimer = 500; // para nao desaparecer
+                        pk.vy = 30; 
+                        pk.stormTimer = 500; 
                         
                         setTimeout(function() {
-                            // Causa explosão real de blocos
                             activateThor(tX, tY, 'Golden');
+                            activateStorm(pk); // Faz ela quicar alucinadamente
                         }, 500);
                     }
                     
                     titleState = 3;
-                    setTimeout(runTitleLoop, 8000); // 8s de explosão e reinicia
+                    setTimeout(runTitleLoop, 10000); // 10s de explosão e reset
 
                 } else if (titleState === 3) {
                     titleState = 0;
@@ -14215,6 +14234,14 @@ var persistentScores = {};
                         }
                     }
                 }
+            };
+
+            // Bloqueia a rolagem de câmera do jogo nativo
+            var originalUpdate = update;
+            update = function() {
+                originalUpdate();
+                camY = (VIS * TILE) / 2;
+                if (window.camTarget) window.camTarget.y = camY;
             };
 
             // Ocultar Overlay Nativo do Jogo
