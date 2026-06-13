@@ -90,15 +90,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const size = 40 + Math.random() * 60;
         asset.style.width = size + 'px';
         
-        // Posição inicial (embaixo da tela)
+        // Posição inicial (em cima da tela)
         const startX = Math.random() * window.innerWidth;
-        const startY = window.innerHeight + 150;
+        const startY = -150 - Math.random() * 200;
         
         asset.style.left = startX + 'px';
         asset.style.top = startY + 'px';
         
         // Variáveis de animação
-        const speedY = 0.5 + Math.random() * 1.5; // Sobe devagar
+        const speedY = 0.5 + Math.random() * 1.5; // Cai devagar
         const swaySpeed = 0.01 + Math.random() * 0.02;
         const swayAmount = 30 + Math.random() * 70;
         const rotateSpeed = (Math.random() - 0.5) * 2;
@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
         enemiesContainer.appendChild(asset);
 
         function animate() {
-            currentY -= speedY;
+            currentY += speedY; // Adiciona para cair
             angle += swaySpeed;
             
             const x = currentX + Math.sin(angle) * swayAmount;
@@ -129,8 +129,8 @@ document.addEventListener('DOMContentLoaded', () => {
             
             asset.style.transform = `translate(${x - startX}px, ${currentY - startY}px) rotate(${currentRotation}deg)`;
 
-            // Remove quando sair por cima
-            if (currentY < -150) {
+            // Remove quando sair por baixo
+            if (currentY > window.innerHeight + 150) {
                 asset.remove();
             } else {
                 requestAnimationFrame(animate);
