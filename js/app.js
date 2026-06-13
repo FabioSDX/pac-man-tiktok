@@ -14258,7 +14258,7 @@ var persistentScores = {};
                     if (window.titleBlocks) {
                         for (var i = 0; i < window.titleBlocks.length; i++) {
                             var tb = window.titleBlocks[i];
-                            var img = BDEF[tb.t] ? BDEF[tb.t].img : null;
+                            var img = BTEX[tb.t] || null;
                             if (img) {
                                 ctx.save();
                                 ctx.translate(tb.x, tb.y - camY + canvas.height / 2);
