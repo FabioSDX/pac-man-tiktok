@@ -621,6 +621,22 @@
         const earlyUrlParams = new URLSearchParams(window.location.search);
         if (earlyUrlParams.get('title_mode') === '1') {
             window.IS_TITLE_MODE = true;
+            document.documentElement.classList.add('offline-mode');
+            
+            // Força a ocultação via CSS injetado para garantir
+            const style = document.createElement('style');
+            style.innerHTML = `
+                #uiSidebar, #adminPanel, #gameControlsPanel, 
+                #animationControlModal, #playerManagementPanel, 
+                #mobileMenuBtn, #infoBanner, .back-btn-container, 
+                #commandBox, #gift-combo-container {
+                    display: none !important;
+                }
+                body { background: transparent !important; }
+                #bgVideo { display: none !important; }
+                #gameWrapper { width: 100vw !important; height: 100vh !important; justify-content: center !important; }
+            `;
+            document.head.appendChild(style);
         }
     </script>
     <script src="js/app.js?v=28"></script>

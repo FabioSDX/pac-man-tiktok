@@ -14140,15 +14140,14 @@ var persistentScores = {};
                     titleState = 1;
                     
                     titleBuildTimer = setInterval(function() {
-                        for (var k = 0; k < 6; k++) { // Desce 6 blocos por vez
+                        for (var k = 0; k < 2; k++) { // Desce 2 blocos por vez apenas
                             if (titleSequence.length > 0) {
                                 var b = titleSequence.pop();
-                                // Spawn como falling block caindo lá do alto
                                 fallingBlocks.push({
                                     x: b.c * TILE + TILE / 2,
-                                    y: camY - 600 - Math.random() * 300,
+                                    y: camY - 600 - Math.random() * 200,
                                     vx: 0,
-                                    vy: 10 + Math.random() * 5, // cai rapido
+                                    vy: 1 + Math.random() * 2, // Cai BEM mais devagar
                                     t: b.t,
                                     size: TILE,
                                     ang: 0,
@@ -14166,7 +14165,7 @@ var persistentScores = {};
                                 break;
                             }
                         }
-                    }, 50);
+                    }, 80); // Intervalo um pouco maior
 
                 } else if (titleState === 2) {
                     // Strike Golden Pickaxe!
@@ -14205,7 +14204,6 @@ var persistentScores = {};
             var originalDraw = draw;
             draw = function() {
                 originalDraw();
-                // Ajudar fallingBlocks com target a assentar no mapa real
                 for (var i = fallingBlocks.length - 1; i >= 0; i--) {
                     var fb = fallingBlocks[i];
                     if (fb.targetR !== undefined) {
@@ -14213,10 +14211,17 @@ var persistentScores = {};
                         if (fb.y >= targetY) {
                             if (!worldMap[fb.targetR]) worldMap[fb.targetR] = genRow(fb.targetR);
                             worldMap[fb.targetR][fb.targetC] = { t: fb.t, hp: fb.hp, cr: 0 };
-                            // Remover caindo
                             fallingBlocks.splice(i, 1);
                         }
                     }
                 }
             };
+
+            // Ocultar Overlay Nativo do Jogo
+            var originalDrawCycleOverlay = window.drawCycleOverlay;
+            if (typeof drawCycleOverlay === 'function') {
+                drawCycleOverlay = function() {
+                    // Não desenha NADA no modo título (limpa UI e leaderboards)
+                };
+            }
         }
