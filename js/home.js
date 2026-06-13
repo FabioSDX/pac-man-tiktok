@@ -20,55 +20,148 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = 'index.html';
     });
 
-    // --- Animação do Título com a Picareta ---
-    const spans = document.querySelectorAll('.block-text span');
-    
-    function strikeTitle() {
-        if(spans.length === 0) return;
+    // --- Animação do Título com Física no Canvas ---
+    const canvas = document.getElementById('titleCanvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        const blockImg = new Image();
+        blockImg.src = 'block/diamond_ore.png'; 
         
-        // Remove letras quebradas (invisíveis) para não focar nelas
-        const activeSpans = Array.from(spans).filter(s => !s.classList.contains('broken'));
-        if(activeSpans.length === 0) {
-            // Se todas quebraram, reseta tudo!
-            spans.forEach(s => {
-                s.classList.remove('damaged', 'broken');
-            });
-            return;
+        const pickImg = new Image();
+        pickImg.src = 'pickaxe/golden_pickaxe.png';
+
+        const titleGrid = [
+            "  PPP  III  CCC  K  K  AAA  X   X EEE  ",
+            "  P  P  I  C     K K  A   A  X X  E    ",
+            "  PPP   I  C     KK   AAAAA   X   EEE  ",
+            "  P     I  C     K K  A   A  X X  E    ",
+            "  P    III  CCC  K  K A   A X   X EEE  "
+        ];
+        
+        const blockSize = 18;
+        let blocks = [];
+        let pickaxeObj = null;
+
+        const startX = (canvas.width - (titleGrid[0].length * blockSize)) / 2;
+        const startY = 120;
+
+        function initBlocks() {
+            blocks = [];
+            for (let r = 0; r < titleGrid.length; r++) {
+                for (let c = 0; c < titleGrid[r].length; c++) {
+                    if (titleGrid[r][c] !== ' ') {
+                        blocks.push({
+                            targetX: startX + c * blockSize,
+                            targetY: startY + r * blockSize,
+                            x: startX + c * blockSize,
+                            y: -Math.random() * 800 - 50, // Starts high up
+                            vx: 0,
+                            vy: Math.random() * 5 + 5, // Fall speed
+                            isSettled: false,
+                            rotation: 0,
+                            vr: 0, 
+                            isBroken: false
+                        });
+                    }
+                }
+            }
+            pickaxeObj = null;
         }
 
-        // Escolhe uma letra aleatória
-        const targetSpan = activeSpans[Math.floor(Math.random() * activeSpans.length)];
-        const rect = targetSpan.getBoundingClientRect();
-        
-        // Cria a picareta caindo
-        const pick = document.createElement('div');
-        pick.className = 'falling-pickaxe';
-        pick.style.left = (rect.left + rect.width / 2 - 35) + 'px';
-        pick.style.top = (rect.top - 60) + 'px'; // Começa o impacto um pouco acima
-        
-        document.getElementById('pickaxe-falling-container').appendChild(pick);
-        
-        // Quando a picareta bater (0.8s da animação - bate aos ~80%)
-        setTimeout(() => {
-            // Aplica dano ou quebra
-            if (!targetSpan.classList.contains('damaged')) {
-                targetSpan.classList.add('damaged');
-            } else {
-                targetSpan.classList.remove('damaged');
-                targetSpan.classList.add('broken');
-            }
-        }, 640); // 80% de 800ms
-        
-        // Remove a picareta depois de cair
-        setTimeout(() => {
-            pick.remove();
-        }, 850);
-    }
+        initBlocks();
 
-    // Picareta cai no título aleatoriamente a cada 2 a 5 segundos
-    setInterval(() => {
-        strikeTitle();
-    }, 2000 + Math.random() * 3000);
+        function dropPickaxe() {
+            pickaxeObj = {
+                x: canvas.width / 2,
+                y: -100,
+                vy: 20, // Falls fast
+                rotation: 45, 
+                state: 'falling'
+            };
+        }
+
+        setInterval(() => {
+            initBlocks();
+            setTimeout(dropPickaxe, 3500); 
+        }, 8000);
+
+        setTimeout(dropPickaxe, 3500);
+
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            for (let b of blocks) {
+                if (!b.isBroken) {
+                    if (!b.isSettled) {
+                        b.y += b.vy;
+                        if (b.y >= b.targetY) {
+                            b.y = b.targetY;
+                            b.isSettled = true;
+                        }
+                    }
+                } else {
+                    b.x += b.vx;
+                    b.y += b.vy;
+                    b.vy += 0.5; // gravity
+                    b.rotation += b.vr;
+                }
+                
+                ctx.save();
+                ctx.translate(b.x + blockSize/2, b.y + blockSize/2);
+                ctx.rotate(b.rotation * Math.PI / 180);
+                if (blockImg.complete) {
+                    ctx.drawImage(blockImg, -blockSize/2, -blockSize/2, blockSize, blockSize);
+                } else {
+                    ctx.fillStyle = '#0ff';
+                    ctx.fillRect(-blockSize/2, -blockSize/2, blockSize, blockSize);
+                }
+                ctx.restore();
+            }
+
+            if (pickaxeObj) {
+                if (pickaxeObj.state === 'falling') {
+                    pickaxeObj.y += pickaxeObj.vy;
+                    ctx.save();
+                    ctx.translate(pickaxeObj.x, pickaxeObj.y);
+                    ctx.rotate(pickaxeObj.rotation * Math.PI / 180);
+                    if (pickImg.complete) {
+                        ctx.drawImage(pickImg, -40, -40, 80, 80);
+                    }
+                    ctx.restore();
+
+                    if (pickaxeObj.y >= startY + (titleGrid.length * blockSize) / 2) {
+                        pickaxeObj.state = 'hit';
+                        for (let b of blocks) {
+                            let dx = b.x - pickaxeObj.x;
+                            let dy = b.y - pickaxeObj.y;
+                            let dist = Math.sqrt(dx*dx + dy*dy);
+                            if (dist < 180) {
+                                b.isBroken = true;
+                                b.vx = (dx / dist) * (Math.random() * 15 + 5);
+                                b.vy = (dy / dist) * (Math.random() * 10 + 5) - 15; 
+                                b.vr = (Math.random() - 0.5) * 30;
+                            }
+                        }
+                    }
+                } else if (pickaxeObj.state === 'hit') {
+                    pickaxeObj.y -= 3;
+                    pickaxeObj.x += 4;
+                    pickaxeObj.rotation += 10;
+                    ctx.save();
+                    ctx.translate(pickaxeObj.x, pickaxeObj.y);
+                    ctx.rotate(pickaxeObj.rotation * Math.PI / 180);
+                    if (pickImg.complete) {
+                        ctx.drawImage(pickImg, -40, -40, 80, 80);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        update();
+    }
 
 
     // --- Animação de Inimigos e Itens no Fundo ---
