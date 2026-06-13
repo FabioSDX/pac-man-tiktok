@@ -13941,12 +13941,7 @@ var persistentScores = {};
                     var txt = document.getElementById('txtGiftDonut');
                     if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
                 }
-                if (g.name.includes('fatia de bolo') || g.name.includes('cake slice')) {
-                    var el = document.getElementById('imgGiftCake');
-                    var txt = document.getElementById('txtGiftCake');
-                    if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
-                }
-                if (g.name.includes('presente popular') || g.name.includes('super popular') || g.name.includes('vote')) {
+                    if (g.name.includes('presente popular') || g.name.includes('super popular') || g.name.includes('vote')) {
                     var el = document.getElementById('imgGiftSteve');
                     var txt = document.getElementById('txtGiftSteve');
                     if (el && txt) { el.src = getProxyUrl(g.url); el.style.display = 'inline-block'; txt.style.display = 'none'; }
@@ -14081,11 +14076,24 @@ var persistentScores = {};
                 { word: "DROP", rowStart: 13 }
             ];
 
-            var titleSequence = [];
             var titleTypes = [1, 2, 3, 4, 5, 7]; // DIRT=1, STONE=2, COAL=3, IRON=4, GOLD=5, DIAMOND=7
 
-            function buildSequence() {
-                titleSequence = [];
+            function buildStaticTitle() {
+                // 1. Gera o mundo base com a clareira
+                for (var rr = 0; rr < VIS; rr++) {
+                    if (!worldMap[rr]) worldMap[rr] = genRow(rr);
+                    var isClearingRow = (rr >= 1 && rr <= 18);
+                    for (var cc = 0; cc < COLS; cc++) {
+                        var isClearingCol = (cc >= Math.floor((COLS - 36)/2) && cc <= Math.floor((COLS + 36)/2));
+                        if (isClearingRow && isClearingCol) {
+                            worldMap[rr][cc] = { t: 0, hp: 0, cr: 0 }; 
+                        } else {
+                            worldMap[rr][cc] = { t: Math.random() > 0.8 ? 1 : 2, hp: 9999, cr: 0 }; 
+                        }
+                    }
+                }
+
+                // 2. Insere as letras diretamente na clareira
                 for (var w = 0; w < titleWords.length; w++) {
                     var wordInfo = titleWords[w];
                     var str = wordInfo.word;
@@ -14097,76 +14105,28 @@ var persistentScores = {};
                     
                     var colBase = Math.floor((COLS - totalWidth) / 2);
                     if (colBase < 0) colBase = 0;
-                    
+
                     for (var i = 0; i < str.length; i++) {
                         var charMask = titleLetters[str[i]];
                         var wLen = charMask[0].length;
                         
+                        var letterType = titleTypes[Math.floor(Math.random() * titleTypes.length)];
+                        if (str[i] === 'P' || str[i] === 'D') letterType = 7; // Destacar algumas letras
+
                         for (var r = 0; r < charMask.length; r++) {
                             for (var c = 0; c < charMask[r].length; c++) {
                                 if (charMask[r][c] === 'X') {
-                                    titleSequence.push({
-                                        r: rowBase + r,
-                                        c: colBase + c,
-                                        t: titleTypes[Math.floor(Math.random() * titleTypes.length)]
-                                    });
+                                    var tr = rowBase + r;
+                                    var tc = colBase + c;
+                                    if (worldMap[tr] && worldMap[tr][tc]) {
+                                        worldMap[tr][tc] = { t: letterType, hp: BDEF[letterType] ? BDEF[letterType].hp : 1, cr: 0 };
+                                    }
                                 }
                             }
                         }
                         colBase += wLen + 1;
                     }
                 }
-                
-                // Embaralha para chuva de blocos
-                for (var i = titleSequence.length - 1; i > 0; i--) {
-                    var j = Math.floor(Math.random() * (i + 1));
-                    var temp = titleSequence[i];
-                    titleSequence[i] = titleSequence[j];
-                    titleSequence[j] = temp;
-                }
-            }
-
-            var titleState = 0; 
-            var titleBuildTimer = null;
-            var rainTimer = null;
-
-            function runTitleLoop() {
-                if (titleState === 0) {
-                    buildSequence();
-                    
-                    // Preenche o mundo inteiro de blocos, exceto a clareira!
-                    for (var rr = 0; rr < VIS; rr++) {
-                        if (!worldMap[rr]) worldMap[rr] = genRow(rr);
-                        var isClearingRow = (rr >= 1 && rr <= 18); // Espaço limpo para o texto
-                        for (var cc = 0; cc < COLS; cc++) {
-                            // Clareira centralizada no meio da tela
-                            var isClearingCol = (cc >= Math.floor((COLS - 36)/2) && cc <= Math.floor((COLS + 36)/2));
-                            if (isClearingRow && isClearingCol) {
-                                worldMap[rr][cc] = { t: 0, hp: 0, cr: 0 }; // E = 0 (Vazio)
-                            } else {
-                                // Background de blocos escuros/pedra
-                                worldMap[rr][cc] = { t: Math.random() > 0.8 ? 1 : 2, hp: 9999, cr: 0 }; // DIRT = 1, STONE = 2
-                            }
-                        }
-                    }
-                    
-                    camY = (VIS * TILE) / 2; // Câmera estática cobrindo do 0 ao VIS
-                    if (window.camTarget) window.camTarget.y = camY;
-
-                    // Inicia a chuva maluca de itens no fundo
-                    if (!rainTimer) {
-                        rainTimer = setInterval(function() {
-                            var randX = Math.random() * (COLS * TILE);
-                            var randY = camY - (VIS * TILE)/2 - 200; // Do topo
-                            var r = Math.random();
-                            if (r < 0.2) activateCreeper(randX, randY, 'Bot');
-                            else if (r < 0.4) activateTNT(randX, randY, 'Bot');
-                            else if (r < 0.6) activateBall(randX, randY, 'Bot');
-                            else if (r < 0.8) {
-                                spawnUserPickaxe('Diamond', '');
-                                var p = userPicks[userPicks.length - 1];
-                                if (p) { p.x = randX; p.y = randY; p.vy = 20; p.vx = (Math.random()-0.5)*10; }
-                            }
                         }, 2000);
                     }
 
