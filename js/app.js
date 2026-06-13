@@ -14127,106 +14127,49 @@ var persistentScores = {};
                         colBase += wLen + 1;
                     }
                 }
-                        }, 2000);
-                    }
-
-                    titleState = 1;
-                    titleBuildTimer = setInterval(function() {
-                        for (var k = 0; k < 2; k++) { 
-                            if (titleSequence.length > 0) {
-                                var b = titleSequence.pop();
-                                window.titleBlocks = window.titleBlocks || [];
-                                window.titleBlocks.push({
-                                    x: b.c * TILE + TILE / 2,
-                                    y: camY - (VIS * TILE)/2 - Math.random() * 200,
-                                    vx: 0,
-                                    vy: 1 + Math.random() * 2,
-                                    t: b.t,
-                                    size: TILE,
-                                    targetR: b.r,
-                                    targetC: b.c,
-                                    hp: BDEF[b.t] ? BDEF[b.t].hp : 1
-                                });
-                            } else {
-                                clearInterval(titleBuildTimer);
-                                titleState = 2;
-                                setTimeout(runTitleLoop, 4000);
-                                break;
-                            }
-                        }
-                    }, 80);
-
-                } else if (titleState === 2) {
-                    // Golden Pickaxe bate no nome!
-                    var tX = (COLS / 2) * TILE;
-                    var tY = 10 * TILE; 
-                    
-                    spawnUserPickaxe('Golden', '');
-                    var pk = userPicks[userPicks.length - 1];
-                    if (pk) {
-                        pk.x = tX;
-                        pk.y = camY - (VIS * TILE)/2 - 200; 
-                        pk.vx = 0;
-                        pk.vy = 30; 
-                        pk.stormTimer = 500; 
-                        
-                        setTimeout(function() {
-                            activateThor(tX, tY, 'Golden');
-                            activateStorm(pk); // Faz ela quicar alucinadamente
-                        }, 500);
-                    }
-                    
-                    titleState = 3;
-                    setTimeout(runTitleLoop, 10000); // 10s de explosão e reset
-
-                } else if (titleState === 3) {
-                    titleState = 0;
-                    runTitleLoop();
-                }
             }
 
-            // Inicia o loop
-            setTimeout(runTitleLoop, 2000);
-            
-            // Interceptar a lógica de desenho
-            // Bloqueia a rolagem de câmera do jogo nativo e atualiza nossos titleBlocks
+            // Constrói tudo estático no início
+            buildStaticTitle();
+
+            // Bloqueia a rolagem de câmera do jogo nativo e foca a clareira
             var originalUpdate = update;
             update = function() {
                 originalUpdate();
                 camY = (VIS * TILE) / 2;
                 if (window.camTarget) window.camTarget.y = camY;
-
-                if (window.titleBlocks) {
-                    for (var i = window.titleBlocks.length - 1; i >= 0; i--) {
-                        var tb = window.titleBlocks[i];
-                        tb.y += tb.vy;
-                        var targetY = tb.targetR * TILE + TILE / 2;
-                        if (tb.y >= targetY) {
-                            if (!worldMap[tb.targetR]) worldMap[tb.targetR] = genRow(tb.targetR);
-                            worldMap[tb.targetR][tb.targetC] = { t: tb.t, hp: tb.hp, cr: 0 };
-                            window.titleBlocks.splice(i, 1);
-                        }
-                    }
-                }
             };
 
-            // Ocultar Overlay Nativo do Jogo
+            // Chuva de destruição constante sobre os blocos estáticos
+            setInterval(function() {
+                var r = Math.random();
+                var randX = Math.random() * canvas.width;
+                var randY = camY - (VIS * TILE)/2 - 100;
+
+                if (r < 0.2) {
+                    fallingBlocks.push({
+                        x: randX, y: randY, vx: (Math.random()-0.5)*5, vy: 10,
+                        t: 100, size: TILE, ang: 0, spin: 0.1, hp: 1, bounces: 0, owner: null
+                    });
+                } else if (r < 0.4) {
+                    activateSword(randX, randY, (Math.random()-0.5)*15, 25, 'Diamond', '');
+                } else if (r < 0.6) {
+                    activateBall(randX, randY, 'Bot');
+                } else if (r < 0.8) {
+                    spawnUserPickaxe('Diamond', '');
+                    var p = userPicks[userPicks.length - 1];
+                    if (p) { p.x = randX; p.y = randY; p.vy = 20; p.vx = (Math.random()-0.5)*10; }
+                } else {
+                    activateCreeper(randX, randY, 'Creeper');
+                }
+            }, 1000);
+
+            // Ocultar Overlay Nativo do Jogo e as animações de titleBlocks
             var originalDrawCycleOverlay = window.drawCycleOverlay;
             if (typeof drawCycleOverlay === 'function') {
                 drawCycleOverlay = function() {
-                    // Desenha os titleBlocks no topo de tudo
-                    if (window.titleBlocks) {
-                        for (var i = 0; i < window.titleBlocks.length; i++) {
-                            var tb = window.titleBlocks[i];
-                            var img = BTEX[tb.t] || null;
-                            if (img) {
-                                ctx.save();
-                                ctx.translate(tb.x, tb.y - camY + canvas.height / 2);
-                                ctx.drawImage(img, -tb.size / 2, -tb.size / 2, tb.size, tb.size);
-                                ctx.restore();
-                            }
-                        }
-                    }
+                    window.titleBlocks = null; // Impede render de blocos caindo
                 };
+            }
             }
         }
