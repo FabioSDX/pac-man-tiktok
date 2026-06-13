@@ -263,14 +263,19 @@ var persistentScores = {};
 
         function loadVideoList() {
             fetch('/proxy.php?path=/video-list')
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    if (data.files && data.files.length > 0) {
-                        bgVideos = data.files;
-                        console.log('Videos carregados:', bgVideos);
-                    }
+                .then(function (r) { 
+                    if (!r.ok) throw new Error('Proxy down');
+                    return r.text(); 
                 })
-                .catch(function (e) { console.warn('Erro ao carregar lista de vídeos:', e); });
+                .then(function (text) {
+                    try {
+                        var data = JSON.parse(text);
+                        if (data.files && data.files.length > 0) {
+                            bgVideos = data.files;
+                        }
+                    } catch (e) { /* Silencia erro de parse se vier HTML do proxy */ }
+                })
+                .catch(function (e) { /* Silencia erro 502/etc */ });
         }
         loadVideoList();
 
@@ -9719,16 +9724,22 @@ var persistentScores = {};
         window.playerLooping = false;
 
         function loadPlaylist() {
-            fetch('/proxy.php?path=/music-list').then(r => r.json()).then(data => {
-                if (data.files && data.files.length > 0) {
-                    window.playlist = data.files;
-                    window.currentTrackIndex = 0;
-                    updatePlayerUI();
-                } else {
-                    var t = document.getElementById('mpTrackName');
-                    if (t) t.textContent = 'Pasta /music vazia';
-                }
-            }).catch(e => console.error(e));
+            fetch('/proxy.php?path=/music-list').then(r => {
+                if (!r.ok) throw new Error('Proxy down');
+                return r.text();
+            }).then(text => {
+                try {
+                    var data = JSON.parse(text);
+                    if (data.files && data.files.length > 0) {
+                        window.playlist = data.files;
+                        window.currentTrackIndex = 0;
+                        updatePlayerUI();
+                    } else {
+                        var t = document.getElementById('mpTrackName');
+                        if (t) t.textContent = 'Pasta /music vazia';
+                    }
+                } catch(e) {}
+            }).catch(e => { /* Silencia erros */ });
         }
 
         window.playTrack = function (index) {
