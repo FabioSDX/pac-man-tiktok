@@ -4951,7 +4951,9 @@ var persistentScores = {};
             var visBot = Math.ceil((camY + canvas.height) / TILE) + 4;
             ensureRows(0, visBot);
             var newTopRow = Math.max(0, Math.floor(camY / TILE) - 6);
-            for (var rr = topRow; rr < newTopRow; rr++) { delete worldMap[rr]; }
+            if (!window.IS_TITLE_MODE) {
+                for (var rr = topRow; rr < newTopRow; rr++) { delete worldMap[rr]; }
+            }
             topRow = newTopRow;
             updateUserPicks();
             updateExtraPicks();
@@ -14145,29 +14147,7 @@ var persistentScores = {};
                 if (window.camTarget) window.camTarget.y = camY;
             };
 
-            // Chuva de destruição constante sobre os blocos estáticos
-            setInterval(function() {
-                var r = Math.random();
-                var randX = Math.random() * canvas.width;
-                var randY = camY - (VIS * TILE)/2 - 100;
-
-                if (r < 0.2) {
-                    fallingBlocks.push({
-                        x: randX, y: randY, vx: (Math.random()-0.5)*5, vy: 10,
-                        t: 100, size: TILE, ang: 0, spin: 0.1, hp: 1, bounces: 0, owner: null
-                    });
-                } else if (r < 0.4) {
-                    activateSword(randX, randY, (Math.random()-0.5)*15, 25, 'Diamond', '');
-                } else if (r < 0.6) {
-                    activateBall(randX, randY, 'Bot');
-                } else if (r < 0.8) {
-                    spawnUserPickaxe('Diamond', '');
-                    var p = userPicks[userPicks.length - 1];
-                    if (p) { p.x = randX; p.y = randY; p.vy = 20; p.vx = (Math.random()-0.5)*10; }
-                } else {
-                    activateCreeper(randX, randY, 'Creeper');
-                }
-            }, 1000);
+            // Removed falling blocks interval as per user request
 
             // Ocultar Overlay Nativo do Jogo e as animações de titleBlocks
             var originalDrawCycleOverlay = window.drawCycleOverlay;
