@@ -14076,9 +14076,9 @@ var persistentScores = {};
             };
             
             var titleWords = [
-                { word: "FALLING", rowStart: 2 },
-                { word: "PICKAXE", rowStart: 8 },
-                { word: "DROP", rowStart: 14 }
+                { word: "FALLING", rowStart: 1 },
+                { word: "PICKAXE", rowStart: 7 },
+                { word: "DROP", rowStart: 13 }
             ];
 
             var titleSequence = [];
@@ -14137,10 +14137,10 @@ var persistentScores = {};
                     // Preenche o mundo inteiro de blocos, exceto a clareira!
                     for (var rr = 0; rr < VIS; rr++) {
                         if (!worldMap[rr]) worldMap[rr] = genRow(rr);
-                        var isClearingRow = (rr >= 2 && rr <= 18); // Espaço limpo para o texto
+                        var isClearingRow = (rr >= 1 && rr <= 18); // Espaço limpo para o texto
                         for (var cc = 0; cc < COLS; cc++) {
                             // Clareira centralizada no meio da tela
-                            var isClearingCol = (cc >= Math.floor((COLS - 35)/2) && cc <= Math.floor((COLS + 35)/2));
+                            var isClearingCol = (cc >= Math.floor((COLS - 36)/2) && cc <= Math.floor((COLS + 36)/2));
                             if (isClearingRow && isClearingCol) {
                                 worldMap[rr][cc] = { t: 0, hp: 0, cr: 0 }; // E = 0 (Vazio)
                             } else {
@@ -14175,20 +14175,17 @@ var persistentScores = {};
                         for (var k = 0; k < 2; k++) { 
                             if (titleSequence.length > 0) {
                                 var b = titleSequence.pop();
-                                fallingBlocks.push({
+                                window.titleBlocks = window.titleBlocks || [];
+                                window.titleBlocks.push({
                                     x: b.c * TILE + TILE / 2,
                                     y: camY - (VIS * TILE)/2 - Math.random() * 200,
                                     vx: 0,
                                     vy: 1 + Math.random() * 2,
                                     t: b.t,
                                     size: TILE,
-                                    ang: 0,
-                                    spin: 0,
-                                    hp: BDEF[b.t] ? BDEF[b.t].hp : 1,
-                                    bounces: 0,
-                                    owner: null,
                                     targetR: b.r,
-                                    targetC: b.c
+                                    targetC: b.c,
+                                    hp: BDEF[b.t] ? BDEF[b.t].hp : 1
                                 });
                             } else {
                                 clearInterval(titleBuildTimer);
@@ -14232,35 +14229,44 @@ var persistentScores = {};
             setTimeout(runTitleLoop, 2000);
             
             // Interceptar a lógica de desenho
-            var originalDraw = draw;
-            draw = function() {
-                originalDraw();
-                for (var i = fallingBlocks.length - 1; i >= 0; i--) {
-                    var fb = fallingBlocks[i];
-                    if (fb.targetR !== undefined) {
-                        var targetY = fb.targetR * TILE + TILE / 2;
-                        if (fb.y >= targetY) {
-                            if (!worldMap[fb.targetR]) worldMap[fb.targetR] = genRow(fb.targetR);
-                            worldMap[fb.targetR][fb.targetC] = { t: fb.t, hp: fb.hp, cr: 0 };
-                            fallingBlocks.splice(i, 1);
-                        }
-                    }
-                }
-            };
-
-            // Bloqueia a rolagem de câmera do jogo nativo
+            // Bloqueia a rolagem de câmera do jogo nativo e atualiza nossos titleBlocks
             var originalUpdate = update;
             update = function() {
                 originalUpdate();
                 camY = (VIS * TILE) / 2;
                 if (window.camTarget) window.camTarget.y = camY;
+
+                if (window.titleBlocks) {
+                    for (var i = window.titleBlocks.length - 1; i >= 0; i--) {
+                        var tb = window.titleBlocks[i];
+                        tb.y += tb.vy;
+                        var targetY = tb.targetR * TILE + TILE / 2;
+                        if (tb.y >= targetY) {
+                            if (!worldMap[tb.targetR]) worldMap[tb.targetR] = genRow(tb.targetR);
+                            worldMap[tb.targetR][tb.targetC] = { t: tb.t, hp: tb.hp, cr: 0 };
+                            window.titleBlocks.splice(i, 1);
+                        }
+                    }
+                }
             };
 
             // Ocultar Overlay Nativo do Jogo
             var originalDrawCycleOverlay = window.drawCycleOverlay;
             if (typeof drawCycleOverlay === 'function') {
                 drawCycleOverlay = function() {
-                    // Não desenha NADA no modo título (limpa UI e leaderboards)
+                    // Desenha os titleBlocks no topo de tudo
+                    if (window.titleBlocks) {
+                        for (var i = 0; i < window.titleBlocks.length; i++) {
+                            var tb = window.titleBlocks[i];
+                            var img = BDEF[tb.t] ? BDEF[tb.t].img : null;
+                            if (img) {
+                                ctx.save();
+                                ctx.translate(tb.x, tb.y - camY + canvas.height / 2);
+                                ctx.drawImage(img, -tb.size / 2, -tb.size / 2, tb.size, tb.size);
+                                ctx.restore();
+                            }
+                        }
+                    }
                 };
             }
         }
