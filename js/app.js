@@ -14069,20 +14069,25 @@ var persistentScores = {};
                 'R': ["XXX ", "X  X", "XXX ", "X X ", "X  X"],
                 'O': [" XX ", "X  X", "X  X", "X  X", " XX "],
             };
-            
+            var totalLines = 17;
+            var centerRow = Math.floor((VIS - totalLines) / 2);
+            if (centerRow < 1) centerRow = 1;
+
             var titleWords = [
-                { word: "FALLING", rowStart: 4 },
-                { word: "PICKAXE", rowStart: 10 },
-                { word: "DROP", rowStart: 16 }
+                { word: "FALLING", rowStart: centerRow },
+                { word: "PICKAXE", rowStart: centerRow + 6 },
+                { word: "DROP", rowStart: centerRow + 12 }
             ];
 
             var titleTypes = [1, 2, 3, 4, 5, 7]; // DIRT=1, STONE=2, COAL=3, IRON=4, GOLD=5, DIAMOND=7
 
             function buildStaticTitle() {
+                var clStart = centerRow - 2;
+                var clEnd = centerRow + totalLines + 1;
                 // 1. Gera o mundo base com a clareira
                 for (var rr = 0; rr < VIS; rr++) {
                     if (!worldMap[rr]) worldMap[rr] = genRow(rr);
-                    var isClearingRow = (rr >= 2 && rr <= 22);
+                    var isClearingRow = (rr >= clStart && rr <= clEnd);
                     for (var cc = 0; cc < COLS; cc++) {
                         var isClearingCol = (cc >= Math.floor((COLS - 36)/2) && cc <= Math.floor((COLS + 36)/2));
                         if (isClearingRow && isClearingCol) {
