@@ -617,6 +617,12 @@
     </div>
     
 
+    <script>
+        const earlyUrlParams = new URLSearchParams(window.location.search);
+        if (earlyUrlParams.get('title_mode') === '1') {
+            window.IS_TITLE_MODE = true;
+        }
+    </script>
     <script src="js/app.js?v=28"></script>
 
 
