@@ -14071,9 +14071,9 @@ var persistentScores = {};
             };
             
             var titleWords = [
-                { word: "FALLING", rowStart: 1 },
-                { word: "PICKAXE", rowStart: 7 },
-                { word: "DROP", rowStart: 13 }
+                { word: "FALLING", rowStart: 4 },
+                { word: "PICKAXE", rowStart: 10 },
+                { word: "DROP", rowStart: 16 }
             ];
 
             var titleTypes = [1, 2, 3, 4, 5, 7]; // DIRT=1, STONE=2, COAL=3, IRON=4, GOLD=5, DIAMOND=7
@@ -14082,7 +14082,7 @@ var persistentScores = {};
                 // 1. Gera o mundo base com a clareira
                 for (var rr = 0; rr < VIS; rr++) {
                     if (!worldMap[rr]) worldMap[rr] = genRow(rr);
-                    var isClearingRow = (rr >= 1 && rr <= 18);
+                    var isClearingRow = (rr >= 2 && rr <= 22);
                     for (var cc = 0; cc < COLS; cc++) {
                         var isClearingCol = (cc >= Math.floor((COLS - 36)/2) && cc <= Math.floor((COLS + 36)/2));
                         if (isClearingRow && isClearingCol) {
