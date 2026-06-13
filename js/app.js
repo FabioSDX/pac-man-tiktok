@@ -14152,7 +14152,7 @@ var persistentScores = {};
                             else if (r < 0.6) activateBall(randX, randY, 'Bot');
                             else if (r < 0.8) {
                                 spawnUserPickaxe('Diamond', '');
-                                var p = extraPickaxes[extraPickaxes.length - 1];
+                                var p = userPicks[userPicks.length - 1];
                                 if (p) { p.x = randX; p.y = randY; p.vy = 20; p.vx = (Math.random()-0.5)*10; }
                             }
                         }, 2000);
@@ -14193,7 +14193,7 @@ var persistentScores = {};
                     var tY = 10 * TILE; 
                     
                     spawnUserPickaxe('Golden', '');
-                    var pk = extraPickaxes[extraPickaxes.length - 1];
+                    var pk = userPicks[userPicks.length - 1];
                     if (pk) {
                         pk.x = tX;
                         pk.y = camY - (VIS * TILE)/2 - 200; 
