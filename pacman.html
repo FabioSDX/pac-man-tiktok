@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <title>Pac-Man Live Arena</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👾</text></svg>" />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/pacman.css?v=4">
+</head>
+<body>
+    <div id="gameWrapper">
+        <!-- Barra superior de instruções -->
+        <div id="infoBanner">
+            <div id="bannerText">🎮 Digite <span class="highlight">pacman</span> ou <span class="highlight">entrar</span> no chat para participar! Mova enviando <span class="highlight">m</span> ou <span class="highlight">move</span></div>
+        </div>
+
+        <div id="mainDashboard">
+            <!-- Centro: Tela de Jogo (Glow Arcade) ALINHADO À ESQUERDA -->
+            <div id="game-center">
+                <div class="arcade-cabinet">
+                    <canvas id="gameCanvas" width="1080" height="1920"></canvas>
+                </div>
+            </div>
+
+            <!-- Painel Direito: Abas de Placar & Controle (TODOS OS CONTROLES NA DIREITA) -->
+            <div id="sidebar-right" class="glass-panel">
+                <!-- Tab Buttons -->
+                <div class="tab-buttons">
+                    <button id="btn-tab-leaderboard" class="tab-btn active" onclick="switchTab('tab-leaderboard')">🏆 Placar</button>
+                    <button id="btn-tab-setup" class="tab-btn" onclick="switchTab('tab-setup')">⚙️ Controle</button>
+                </div>
+                
+                <!-- Tab 1: Leaderboard -->
+                <div id="tab-leaderboard" class="tab-content active">
+                    <div class="leaderboard-header">
+                        <h3>🏆 PLACAR GERAL</h3>
+                        <p>Fase: <span id="lblLevel">1</span> | Score: <span id="lblTotalScore">0</span></p>
+                    </div>
+                    <div id="pacmanLeaderboard" class="scrollable-leaderboard">
+                        <div style="color:#666; font-size:11px; padding:10px; text-align:center;">Nenhum jogador ativo</div>
+                    </div>
+                </div>
+                
+                <!-- Tab 2: Control Setup -->
+                <div id="tab-setup" class="tab-content">
+                    <div class="brand-logo">
+                        <span class="logo-emoji">👾</span>
+                        <h2>PAC-MAN SETUP</h2>
+                    </div>
+                    
+                    <!-- TikTok Connection -->
+                    <div class="setup-section tiktok-border">
+                        <div class="platform-title"><span class="icon">🎵</span> TikTok Live</div>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <div class="input-group">
+                                <input id="pacmanTiktokInput" type="text" placeholder="@seu_usuario">
+                            </div>
+                            <button onclick="connectPacmanTiktok()" style="width: 100%; padding: 10px; font-weight: bold; border-radius: 6px;">CONECTAR</button>
+                        </div>
+                    </div>
+
+                    <!-- YouTube Connection -->
+                    <div class="setup-section youtube-border">
+                        <div class="platform-title"><span class="icon">▶️</span> YouTube Live</div>
+                        <div class="input-group">
+                            <input id="pacmanYoutubeInput" type="text" placeholder="ID do Canal/Vídeo">
+                            <button onclick="connectPacmanYoutube()">CONECTAR</button>
+                        </div>
+                    </div>
+
+                    <!-- Painel de Testes & Simulação -->
+                    <div class="setup-section test-border">
+                        <div class="platform-title"><span class="icon">🤖</span> Simulador de Eventos</div>
+                        <div class="sim-grid">
+                            <button class="btn-sim action-btn" onclick="spawnTestPlayer()">Spawn Player</button>
+                            <button class="btn-sim action-btn" onclick="window.regenerateMap()">Novo Mapa</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('rose')">Rosa (Poder)</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('tiktok')">TikTok (Vida)</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('gg')">GG (Turbo)</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('amo voce')">Amo Você (Clones)</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('rosquinha')">Rosquinha (Gigante)</button>
+                            <button class="btn-sim action-btn" onclick="simulateSocial('follow')">👤 Seguir</button>
+                            <button class="btn-sim action-btn" onclick="simulateSocial('share')">🔗 Compartilhar</button>
+                            <button class="btn-sim action-btn" onclick="simulateSocial('subscribe')">⭐ Inscrição</button>
+                            <button class="btn-sim action-btn" style="grid-column: span 2; margin-top: 4px; background: linear-gradient(135deg, #00f2ea 0%, #0055ff 100%);" onclick="simulateLike()">👍 Simular +5 Likes (TikTok)</button>
+                        </div>
+                        
+                        <div style="margin-top:10px;">
+                            <input id="simChatInput" type="text" placeholder="Simular Msg... Ex: 'move' ou 'm'" style="width:100%; font-size:11px; padding:6px;" onkeypress="handleSimChatEnter(event)">
+                        </div>
+                    </div>
+
+                    <!-- Opções Globais -->
+                    <div class="setup-section">
+                        <div class="platform-title"><span class="icon">⚙️</span> Opções da Stream</div>
+                        <button class="btn-control" id="btnMute" onclick="toggleMuteAudio()">🔊 MUTAR SOM</button>
+                        <button class="btn-control toggle-hud-btn" onclick="toggleHUDVisibility()">📺 OCULTAR AJUDA (H)</button>
+                    </div>
+
+                    <!-- Status de Conexão -->
+                    <div class="status-footer">
+                        <div id="statusDot"></div>
+                        <span id="statusText">Status: Desconectado</span>
+                    </div>
+                </div>
+
+                <!-- Rodapé: Ticker de Eventos da Stream -->
+                <div id="stream-feed">
+                    <div class="ticker-header">🎮 EVENTOS DA ARENA</div>
+                    <div id="tickerContainer">
+                        <div class="ticker-item">Aguardando início do jogo...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botão flutuante para reexibir painel se estiver invisível -->
+        <div id="floatingHUDToggler" onclick="toggleHUDVisibility()">
+            <span>⚙️ Configurações</span>
+        </div>
+    </div>
+
+    <!-- Script Principal de Jogo -->
+    <script src="js/pacman.js?v=5"></script>
+    <script>
+        // Funções de suporte adicionais para interação e simulação
+        function toggleHUDVisibility() {
+            document.body.classList.toggle('hud-hidden');
+            // If hidden, switch back to leaderboard tab automatically
+            if (document.body.classList.contains('hud-hidden')) {
+                switchTab('tab-leaderboard');
+            }
+        }
+
+        function switchTab(tabId) {
+            // Remove active classes
+            document.querySelectorAll('.tab-content').forEach(function(content) {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-btn').forEach(function(btn) {
+                btn.classList.remove('active');
+            });
+            
+            // Set active
+            document.getElementById(tabId).classList.add('active');
+            if (tabId === 'tab-leaderboard') {
+                document.getElementById('btn-tab-leaderboard').classList.add('active');
+            } else {
+                document.getElementById('btn-tab-setup').classList.add('active');
+            }
+        }
+
+        function toggleMuteAudio() {
+            var isMuted = AudioSynth.toggleMute();
+            var btn = document.getElementById('btnMute');
+            if (btn) {
+                btn.textContent = isMuted ? '🔇 DESMUTAR SOM' : '🔊 MUTAR SOM';
+                btn.classList.toggle('muted-active', isMuted);
+            }
+        }
+
+        function simulateGift(giftName) {
+            var users = Object.keys(pacmanPlayers);
+            if (users.length === 0) {
+                // If no players, just spawn a dummy player first or alert
+                alert("Nenhum jogador na arena para receber o poder!");
+                return;
+            }
+            
+            // Apply to the main Pac-Man (first player in the list)
+            var mainUser = users[0];
+            var pl = pacmanPlayers[mainUser];
+            
+            var fakeGiftDrop = {
+                gift: giftName,
+                sender: 'Admin (Simulador)',
+                diamondCount: 1,
+                repeatCount: 1
+            };
+            
+            if (typeof activateGiftPower === 'function') {
+                activateGiftPower(pl, mainUser, fakeGiftDrop);
+            }
+        }
+
+        function simulateLike() {
+            var offlineName = new URLSearchParams(window.location.search).get('player') || 'testplayer';
+            offlineName = offlineName.toLowerCase();
+            
+            var likeData = {
+                type: 'like',
+                user: '@' + offlineName,
+                avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&fit=crop&q=60',
+                likeCount: 5
+            };
+            
+            if (typeof processTikTokLike === 'function') {
+                processTikTokLike(likeData);
+            }
+        }
+
+        function simulateSocial(action) {
+            var users = Object.keys(pacmanPlayers);
+            var activeUser = users.length > 0 ? users[Math.floor(Math.random() * users.length)] : 'TestViewer';
+            
+            var socialData = {
+                type: 'social',
+                action: action,
+                platform: 'tiktok',
+                user: '@' + activeUser,
+                avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&fit=crop&q=60'
+            };
+            
+            if (typeof processTikTokSocial === 'function') {
+                processTikTokSocial(socialData);
+            }
+        }
+
+        function handleSimChatEnter(event) {
+            if (event.key === 'Enter') {
+                var input = document.getElementById('simChatInput');
+                var text = input.value.trim();
+                if (!text) return;
+                
+                var users = Object.keys(pacmanPlayers);
+                var activeUser = users.length > 0 ? users[0] : 'testplayer';
+                
+                window.processPacmanComment({
+                    type: 'chat',
+                    user: activeUser,
+                    comment: text,
+                    avatar: ''
+                });
+                
+                input.value = '';
+            }
+        }
+
+        // Live stats sync hook
+        setInterval(function() {
+            var lblLevel = document.getElementById('lblLevel');
+            var lblTotalScore = document.getElementById('lblTotalScore');
+            if (lblLevel) lblLevel.textContent = pacmanLevel;
+            if (lblTotalScore) lblTotalScore.textContent = pacmanScore;
+        }, 300);
+    </script>
+</body>
+</html>

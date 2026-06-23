@@ -1,0 +1,539 @@
+/* ==========================================
+   Pac-Man Live Arena - Cyberpunk Style Sheet
+   ========================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@300;400;600;800&display=swap');
+
+:root {
+    --bg-color: #030308;
+    --neon-blue: #0055ff;
+    --neon-cyan: #00ffcc;
+    --neon-pink: #ff0055;
+    --neon-yellow: #ffff00;
+    --glass-bg: rgba(10, 10, 25, 0.75);
+    --border-color: rgba(255, 255, 255, 0.08);
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-color);
+    background-image: radial-gradient(circle at 50% 50%, #0a0a20 0%, #030308 100%);
+    color: #e2e8f0;
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* Base Wrapper Grid */
+#gameWrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    box-sizing: border-box;
+    padding: 10px;
+    gap: 10px;
+}
+
+/* Banner de Ajuda */
+#infoBanner {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 0, 0.2);
+    border-radius: 8px;
+    box-sizing: border-box;
+    padding: 8px 15px;
+    text-align: center;
+    backdrop-filter: blur(5px);
+}
+
+#bannerText {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    color: var(--neon-yellow);
+    text-shadow: 0 0 5px rgba(255, 255, 0, 0.3);
+    line-height: 1.5;
+}
+
+#bannerText .highlight {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Main Dashboard Grid */
+#mainDashboard {
+    display: grid;
+    grid-template-columns: auto 340px;
+    flex-grow: 1;
+    gap: 15px;
+    height: 0; /* allows flex growth to dictate height */
+    min-height: 0;
+}
+
+/* Glassmorphism Panels */
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
+}
+
+#sidebar-right {
+    overflow: hidden !important; /* Keep tabs fixed at top */
+}
+
+/* Tab Navigation */
+.tab-buttons {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 8px;
+}
+
+.tab-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    color: #94a3b8;
+    padding: 10px;
+    font-size: 11px;
+    font-weight: bold;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+}
+
+.tab-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.tab-btn.active {
+    background: linear-gradient(135deg, rgba(0, 85, 255, 0.15) 0%, rgba(0, 255, 204, 0.05) 100%);
+    border-color: var(--neon-blue);
+    color: var(--neon-cyan);
+    box-shadow: 0 0 10px rgba(0, 85, 255, 0.25);
+    text-shadow: 0 0 5px rgba(0, 255, 204, 0.5);
+}
+
+/* Tab Content Visibility */
+.tab-content {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    flex-grow: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.tab-content.active {
+    display: flex;
+}
+
+/* Custom Scrollbar for tab content */
+.tab-content::-webkit-scrollbar {
+    width: 6px;
+}
+.tab-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+.tab-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+.tab-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Custom Scrollbar for sidebars */
+.glass-panel::-webkit-scrollbar,
+.scrollable-leaderboard::-webkit-scrollbar {
+    width: 6px;
+}
+.glass-panel::-webkit-scrollbar-track,
+.scrollable-leaderboard::-webkit-scrollbar-track {
+    background: transparent;
+}
+.glass-panel::-webkit-scrollbar-thumb,
+.scrollable-leaderboard::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+.glass-panel::-webkit-scrollbar-thumb:hover,
+.scrollable-leaderboard::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Branding Logo */
+.brand-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.logo-emoji {
+    font-size: 26px;
+    filter: drop-shadow(0 0 8px var(--neon-blue));
+}
+
+.brand-logo h2 {
+    margin: 0;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 15px;
+    color: #fff;
+    background: linear-gradient(45deg, #00f2ea, #0055ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Setup Sections */
+.setup-section {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.platform-title {
+    font-weight: 800;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tiktok-border { border-left: 3px solid #00f2ea; }
+.tiktok-border .platform-title { color: #00f2ea; }
+
+.youtube-border { border-left: 3px solid #ff0050; }
+.youtube-border .platform-title { color: #ff0050; }
+
+.test-border { border-left: 3px solid var(--neon-yellow); }
+.test-border .platform-title { color: var(--neon-yellow); }
+
+/* Input group styling */
+.input-group {
+    display: flex;
+    gap: 6px;
+}
+
+.input-group input,
+#simChatInput {
+    flex-grow: 1;
+    background: #080812;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 8px;
+    color: #fff;
+    outline: none;
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.input-group input:focus,
+#simChatInput:focus {
+    border-color: var(--neon-blue);
+    box-shadow: 0 0 8px rgba(0, 85, 255, 0.4);
+}
+
+/* Buttons */
+button {
+    background: linear-gradient(135deg, var(--neon-blue) 0%, #0022aa 100%);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-weight: bold;
+    font-family: 'Outfit', sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 85, 255, 0.4);
+}
+
+button:active {
+    transform: translateY(1px);
+}
+
+.btn-control {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    font-size: 11px;
+}
+
+.btn-control:hover {
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
+}
+
+.muted-active {
+    background: linear-gradient(135deg, var(--neon-pink) 0%, #aa0033 100%) !important;
+}
+
+/* Simulator Grid */
+.sim-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.btn-sim {
+    padding: 6px 4px;
+    font-size: 9px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.action-btn:hover { background: var(--neon-blue) !important; }
+.gift-btn:hover { background: var(--neon-pink) !important; }
+
+/* Status Footer */
+.status-footer {
+    margin-top: auto;
+    border-top: 1px solid var(--border-color);
+    padding-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#statusDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--neon-pink);
+    box-shadow: 0 0 6px var(--neon-pink);
+    transition: all 0.3s;
+}
+
+#statusText {
+    font-size: 11px;
+    color: #aaa;
+    font-weight: 600;
+}
+
+/* Game Center View */
+#game-center {
+    display: flex;
+    justify-content: flex-start; /* Align game cabinet to the left */
+    align-items: center;
+    flex-grow: 1;
+    min-height: 0;
+}
+
+.arcade-cabinet {
+    position: relative;
+    border: 3px solid var(--neon-blue);
+    border-radius: 10px;
+    box-shadow: 0 0 25px rgba(0, 85, 255, 0.5);
+    background: #000;
+    max-height: 100%;
+    aspect-ratio: 1080/1920; /* Perfect mobile vertical aspect ratio */
+    overflow: hidden;
+}
+
+#gameCanvas {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+}
+
+/* Leaderboard Sidebar */
+.leaderboard-header {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 5px;
+}
+
+.leaderboard-header h3 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 12px;
+    color: var(--neon-yellow);
+    margin: 0 0 6px 0;
+    text-shadow: 0 0 4px rgba(255, 255, 0, 0.2);
+}
+
+.leaderboard-header p {
+    font-size: 11px;
+    color: #94a3b8;
+    margin: 0;
+    font-weight: 600;
+}
+
+.scrollable-leaderboard {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+/* Leaderboard Player Entries */
+.player-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    box-sizing: border-box;
+    transition: all 0.2s;
+}
+
+.player-entry:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.player-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.player-score {
+    margin-left: auto;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+/* Stream Ticker Event Feed */
+#stream-feed {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    padding: 12px 0 0 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: auto; /* Push stream feed to the bottom of the sidebar */
+}
+
+.ticker-header {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: var(--neon-pink);
+    border-bottom: 1px solid rgba(255, 0, 85, 0.15);
+    padding-bottom: 6px;
+}
+
+#tickerContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 75px;
+    overflow-y: auto;
+}
+
+.ticker-item {
+    font-size: 11px;
+    color: #94a3b8;
+    padding: 4px 0;
+}
+
+/* Floating HUD Toggler (Streamer Mode Recovery) */
+#floatingHUDToggler {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(10, 10, 25, 0.9);
+    border: 1px solid var(--neon-blue);
+    border-radius: 20px;
+    padding: 8px 15px;
+    font-size: 11px;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    box-shadow: 0 0 10px rgba(0, 85, 255, 0.3);
+    display: none;
+    z-index: 1000;
+    transition: all 0.2s;
+}
+
+#floatingHUDToggler:hover {
+    background: var(--neon-blue);
+    box-shadow: 0 0 15px var(--neon-blue);
+}
+
+/* ==========================================
+   STREAMER CAPTURE MODE (HUD HIDDEN) CSS
+   ========================================== */
+body.hud-hidden #infoBanner {
+    display: none !important;
+}
+
+body.hud-hidden #mainDashboard {
+    grid-template-columns: 1080px 1fr !important; /* Fixed 1080px game screen column */
+}
+
+body.hud-hidden #game-center {
+    justify-content: flex-start !important; /* Align game cabinet to the left */
+}
+
+body.hud-hidden .arcade-cabinet {
+    width: 1080px !important;
+    height: 1920px !important;
+    max-width: none !important;
+    max-height: none !important;
+}
+
+body.hud-hidden #floatingHUDToggler {
+    display: flex !important;
+    opacity: 0.15;
+}
+
+body.hud-hidden #floatingHUDToggler:hover {
+    opacity: 1.0;
+}
+
+body.hud-hidden .tab-buttons {
+    display: none !important; /* Hide tabs header in streamer mode */
+}
+
+/* Offline Mode Controls */
+body.offline-mode #mainDashboard {
+    grid-template-columns: auto 340px !important;
+}
+
+body.offline-mode #game-center {
+    justify-content: flex-start !important; /* Align game cabinet to the left */
+}

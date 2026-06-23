@@ -498,7 +498,9 @@
                 <button onclick="chromaKey = !chromaKey; document.title = chromaKey ? '[CHROMA] Chat Live Game' : 'Chat Live Game';" 
                     style="background:rgba(0,255,0,0.2); color:#00ff88; border:1px solid #00ff88; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold;">Chroma</button>
                 <button onclick="document.getElementById('apiSetupBox').style.display='block';" 
-                    style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">🔌 Exibir Conexões</button>
+                    style="background:rgba(255,255,255,0.2); color:#fff; border:1px solid #fff; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold;">Setup</button>
+                <button id="btnAutoLikeBot" onclick="toggleAutoLikeBot()" 
+                    style="background:rgba(255,105,180,0.2); color:#ff69b4; border:1px solid #ff69b4; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold;">Bot Like (OFF)</button>
                 <button onclick="if(pick){ pick.active = !pick.active; spawnText(pick.x, pick.y-100, pick.active?'VOLTEI!':'SAÍ!', pick.active?'#00ff88':'#ff4444'); }" 
                     style="background:rgba(0,221,255,0.2); color:#00ddff; border:1px solid #00ddff; border-radius:6px; padding:6px; font-size:11px; cursor:pointer; font-weight:bold; grid-column: span 2;">Toggle Ativo</button>
                 <button id="btnToggleGifts" onclick="var p1=document.getElementById('ttPresentsPanel'); var p2=document.getElementById('simGiftsPanel'); var state=(p1 && p1.style.display==='none')?'block':'none'; if(p1) p1.style.display=state; if(p2) p2.style.display=state; this.innerText=(state==='none')?'Mostrar Presentes':'Ocultar Presentes';" 
