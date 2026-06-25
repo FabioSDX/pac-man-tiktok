@@ -2264,7 +2264,7 @@ var persistentScores = {};
                         persistentScores[userName].coins = (persistentScores[userName].coins || 0) + 1;
                         if (_audioStarted) coinSound.play().catch(function (e) { });
                         showCoinBanner(userName, 1);
-                        updateLeaderboard();
+                        // updateLeaderboard(); // Movido para o final da partida
                     }
                 }
                 if (type === 'pig') {
@@ -2274,7 +2274,7 @@ var persistentScores = {};
                         persistentScores[userName].coins = (persistentScores[userName].coins || 0) + 1;
                         if (_audioStarted) coinSound.play().catch(function (e) { });
                         showCoinBanner(userName, 1);
-                        updateLeaderboard();
+                        // updateLeaderboard(); // Movido para o final da partida
                     }
                 }
                 if (type === 'ball') _cycleScores[userName].balls = (_cycleScores[userName].balls || 0) + 1;
@@ -2505,6 +2505,9 @@ var persistentScores = {};
 
             // Gera a imagem do ranking automaticamente e salva no desktop
             generateCommemorativeImage();
+
+            // Atualiza o placar geral no final da partida (conforme solicitado para evitar travamentos)
+            updateLeaderboard();
 
             // Limpa o estado do ciclo atual
             _cycleScores = {};
@@ -12416,7 +12419,7 @@ var persistentScores = {};
                 console.error("Leaderboard Premium Error:", e);
             }
         }
-        setInterval(updateLeaderboard, 1000);
+        // setInterval(updateLeaderboard, 1000); // Removido para atualizar apenas no final da partida
 
         // Remove inactive players every 30s
         setInterval(function () {

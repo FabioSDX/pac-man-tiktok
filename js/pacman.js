@@ -13,7 +13,10 @@ var pacmanGhosts = []; // list of ghosts
 var pacmanMaze = []; // 2D grid of walls
  var MAZE_LAYOUT = []; // Reference to maze used by movement code
  var pacmanScore = 0;
-var pacmanTileSize = 40;
+ var pacmanThemeBgColor = '#050510';
+ var pacmanThemeDotColor = '#ffaa00';
+ var pacmanThemeWallColor = '#00aaff';
+ var pacmanTileSize = 40;
 var pacmanPowerMode = false;
 var pacmanPowerTimer = 0;
 var pacmanCtx = null;
@@ -305,26 +308,65 @@ const AudioSynth = {
             osc.stop(t + delay + 0.09);
         }
     },
-    playGhostEat() {
+    playGhostEat(comboIndex) {
         if (this.muted) return;
         this.init();
         if (this.ctx.state === 'suspended') this.ctx.resume();
         const t = this.ctx.currentTime;
         
-        // Upward sweep whoop sound
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(280, t);
-        osc.frequency.exponentialRampToValueAtTime(1400, t + 0.22);
+        // Garante que o combo seja no mínimo 1 e define um limite (ex: 8) para não estourar
+        const combo = Math.min(comboIndex || 1, 8);
         
-        gain.gain.setValueAtTime(0.12, t);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+        // Progressão baseada no combo: som mais longo, alto e intenso
+        const baseFreq = 800 + (combo * 150); 
+        const baseGain = 0.1 + (combo * 0.025); 
         
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start(t);
-        osc.stop(t + 0.22);
+        // Toca "pams" repetidos dependendo do número do combo (1 = pam, 2 = pam-pam, etc.)
+        for (let i = 0; i < combo; i++) {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            
+            // Mistura ondas para gerar um som polifônico e rico
+            osc.type = i % 2 === 0 ? 'sawtooth' : 'square';
+            
+            // Cada "pam" toca em sequência, com 0.12s de diferença
+            const delay = i * 0.12;
+            
+            // O tom sobe ligeiramente a cada pulso da sequência do combo atual
+            const startFreq = baseFreq + (i * 100);
+            
+            osc.frequency.setValueAtTime(startFreq, t + delay);
+            // Queda intensa de pitch simulando o som de engolir do clássico
+            osc.frequency.exponentialRampToValueAtTime(100, t + delay + 0.18);
+            
+            gain.gain.setValueAtTime(baseGain, t + delay);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.18);
+            
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            
+            osc.start(t + delay);
+            osc.stop(t + delay + 0.2);
+        }
+        
+        // Adiciona um baixo sub-frequência (polifonia) que preenche todo o efeito no fundo
+        if (combo > 1) {
+            const oscSub = this.ctx.createOscillator();
+            const gainSub = this.ctx.createGain();
+            oscSub.type = 'triangle';
+            oscSub.frequency.setValueAtTime(400 + combo * 50, t);
+            oscSub.frequency.linearRampToValueAtTime(50, t + (combo * 0.12) + 0.1);
+            
+            // Volume suave para o sub-grave
+            gainSub.gain.setValueAtTime(baseGain * 0.7, t);
+            gainSub.gain.linearRampToValueAtTime(0.0001, t + (combo * 0.12) + 0.1);
+            
+            oscSub.connect(gainSub);
+            gainSub.connect(this.ctx.destination);
+            
+            oscSub.start(t);
+            oscSub.stop(t + (combo * 0.12) + 0.15);
+        }
     },
     playRespawn() {
         if (this.muted) return;
@@ -413,6 +455,41 @@ const AudioSynth = {
             }
             tOffset += note.d;
         });
+    },
+    playVictoryFanfare() {
+        if (this.muted) return;
+        this.init();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        
+        // Fast, triumphant, uplifting arpeggio
+        const s = 0.12; // 120ms per step
+        const notes = [
+            { f: 523.25, d: s }, // C5
+            { f: 659.25, d: s }, // E5
+            { f: 783.99, d: s }, // G5
+            { f: 1046.50, d: s },// C6
+            { f: 783.99, d: s }, // G5
+            { f: 1046.50, d: s * 3 } // C6 (held)
+        ];
+        
+        let tOffset = 0;
+        notes.forEach(note => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(note.f, this.ctx.currentTime + tOffset);
+            
+            gain.gain.setValueAtTime(0.0, this.ctx.currentTime + tOffset);
+            gain.gain.linearRampToValueAtTime(0.08, this.ctx.currentTime + tOffset + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + tOffset + note.d);
+            
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            
+            osc.start(this.ctx.currentTime + tOffset);
+            osc.stop(this.ctx.currentTime + tOffset + note.d);
+            tOffset += note.d;
+        });
     }
 };
 
@@ -454,6 +531,17 @@ function getAvatarImage(userName, url) {
 // Procedural Maze Generator
 // ==========================================
 function generateProceduralMaze() {
+    var bgHue = Math.floor(Math.random() * 360);
+    var bgSat = Math.floor(Math.random() * 40) + 50; // 50% to 90% (Vivid)
+    var bgLight = Math.floor(Math.random() * 30) + 60; // 60% to 90% (Claras/Light colors)
+    pacmanThemeBgColor = 'hsl(' + bgHue + ', ' + bgSat + '%, ' + bgLight + '%)';
+    
+    var dotHue = (bgHue + 120 + Math.floor(Math.random() * 120)) % 360;
+    pacmanThemeDotColor = 'hsl(' + dotHue + ', 100%, 30%)'; // Darker for contrast
+    
+    var wallHue = (bgHue + 180 + Math.floor(Math.random() * 90)) % 360;
+    pacmanThemeWallColor = 'hsl(' + wallHue + ', 100%, 35%)'; // Darker for contrast
+
     var cols = 27;
     var rows = 48; // Updated to 48 for 1080x1920 mobile aspect ratio
     
@@ -587,6 +675,16 @@ function generateProceduralMaze() {
         }
     }
     
+    // Aproveitar a "faixa morta" na base do labirinto (linha 46)
+    // O algoritmo de Prim para na linha 45, deixando 46 e 47 como paredes.
+    for (var c = 1; c <= 13; c++) {
+        grid[46][c] = 0; // Cria um longo corredor horizontal na base
+    }
+    // Conecta o corredor inferior ao resto do labirinto nas pontas e no centro
+    grid[45][1] = 0;
+    grid[45][13] = 0;
+    grid[45][7] = 0; // Mais uma conexão no meio para fluxo
+
     // Remove dead ends to create loops (Pac-Man mazes need loops)
     var deadEndPasses = 5; // Agresivelly remove dead ends
     for (var pass = 0; pass < deadEndPasses; pass++) {
@@ -665,7 +763,7 @@ function getGhostBodySprite(color) {
     var c = document.createElement('canvas');
     c.width = size; c.height = size;
     var ctx = c.getContext('2d');
-    var radius = size * 0.35;
+    var radius = size * 0.42;
     ctx.translate(size/2, size/2);
     ctx.shadowBlur = 12;
     ctx.shadowColor = color;
@@ -690,7 +788,7 @@ function getPacmanSprite(color, frameIndex) {
     var c = document.createElement('canvas');
     c.width = size; c.height = size;
     var ctx = c.getContext('2d');
-    var radius = size * 0.4;
+    var radius = size * 0.48;
     var mouthAngles = [Math.PI / 4.5, Math.PI / 8, 0.05];
     var mouthOpen = mouthAngles[frameIndex % 3];
     ctx.translate(size/2, size/2);
@@ -711,8 +809,62 @@ function getPacmanSprite(color, frameIndex) {
 
 // Maze Initialization & Rendering
 var dotFlowField = [];
+var cloneFlowField = [];
+
+function updateCloneFlowField() {
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    cloneFlowField = new Array(rows);
+    for (var r = 0; r < rows; r++) {
+        cloneFlowField[r] = new Array(cols).fill(999999999);
+    }
+    
+    var dotGrid = new Array(rows);
+    for (var r = 0; r < rows; r++) {
+        dotGrid[r] = new Array(cols).fill(false);
+    }
+    
+    var queue = [];
+    
+    for (var i = 0; i < pacmanDots.length; i++) {
+        var dot = pacmanDots[i];
+        if (dot.active) {
+            dotGrid[dot.y][dot.x] = true;
+            cloneFlowField[dot.y][dot.x] = 0;
+            queue.push({x: dot.x, y: dot.y, dist: 0});
+        }
+    }
+    
+    var head = 0;
+    while(head < queue.length) {
+        var curr = queue[head++];
+        
+        if (curr.dist > cloneFlowField[curr.y][curr.x]) continue;
+        
+        var dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+        for (var d = 0; d < 4; d++) {
+            var nx = curr.x + dirs[d][0];
+            var ny = curr.y + dirs[d][1];
+            
+            if (nx < 0) nx = cols - 1;
+            else if (nx >= cols) nx = 0;
+            
+            if (ny >= 0 && ny < rows && pacmanMaze[ny] && pacmanMaze[ny][nx] !== 1) {
+                var stepCost = dotGrid[ny][nx] ? 1 : 1000;
+                var ndist = curr.dist + stepCost;
+                
+                if (ndist < cloneFlowField[ny][nx]) {
+                    cloneFlowField[ny][nx] = ndist;
+                    queue.push({x: nx, y: ny, dist: ndist});
+                }
+            }
+        }
+    }
+}
 
 function updateDotFlowField() {
+    updateCloneFlowField();
     var rows = pacmanMaze.length;
     var cols = pacmanMaze[0].length;
     
@@ -769,23 +921,7 @@ function updateDotFlowField() {
         }
     }
     
-    // NOVO: Adiciona os fantasmas vulneráveis ao fluxo BFS para perseguição perfeita (ignora paredes de forma inteligente)
-    if (pacmanPowerMode) {
-        for (var i = 0; i < pacmanGhosts.length; i++) {
-            var gh = pacmanGhosts[i];
-            if (gh.homeTime === 0) { // Somente fantasmas que podem ser comidos
-                var gx = Math.round(gh.x);
-                var gy = Math.round(gh.y);
-                if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
-                    // Atratividade suprema: -100000
-                    if (dotFlowField[gy][gx] > -100000) {
-                        dotFlowField[gy][gx] = -100000;
-                        queue.push({x: gx, y: gy, dist: -100000});
-                    }
-                }
-            }
-        }
-    }
+    // (Fantasmas vulneráveis removidos do BFS global para não atrair todos os jogadores ao mesmo tempo)
     
     var head = 0;
     while(head < queue.length) {
@@ -872,15 +1008,22 @@ function initPacmanMaze() {
      
      pacmanGiftDrops = []; // Reset gift drops
      
-     // Distribuir 4 Rosas no labirinto no início da partida em vez de pastilhas de poder clássicas
+     var initialGifts = [
+         { gift: 'rose', url: 'images tiktok/Rose.png' },
+         { gift: 'gg', url: 'images tiktok/GG.png' },
+         { gift: 'amo voce', url: 'images tiktok/Hand_Hearts.png' },
+         { gift: 'rosquinha', url: 'images tiktok/Doughnut.png' }
+     ];
+     // Distribuir 4 presentes iniciais aleatórios no labirinto
      for (var i = 0; i < 4; i++) {
          var pos = getAvailableGiftSpawnPosition();
+         var pick = initialGifts[Math.floor(Math.random() * initialGifts.length)];
          pacmanGiftDrops.push({
              x: pos.x,
              y: pos.y,
              active: true,
-             gift: 'rose',
-             giftPictureUrl: 'images tiktok/Rose.png',
+             gift: pick.gift,
+             giftPictureUrl: pick.url,
              sender: 'Sistema',
              diamondCount: 1,
              repeatCount: 1
@@ -893,38 +1036,61 @@ function initPacmanMaze() {
 function renderMazeStatic() {
      if (!mazeCtx) return;
      
-     mazeCtx.fillStyle = '#050510';
+     mazeCtx.fillStyle = pacmanThemeBgColor;
      mazeCtx.fillRect(0, 0, 1080, 1920);
      
      function drawNeonMaze(ctx, color) {
          ctx.shadowBlur = 15;
          ctx.shadowColor = color;
          ctx.strokeStyle = color;
-         ctx.lineWidth = 3.5;
+         ctx.lineWidth = 14;
          ctx.lineJoin = 'round';
          ctx.lineCap = 'round';
+         
+         ctx.beginPath();
          for (var r = 0; r < pacmanMaze.length; r++) {
              for (var c = 0; c < pacmanMaze[0].length; c++) {
                  if (pacmanMaze[r][c] === 1) {
-                     ctx.strokeRect(c * pacmanTileSize + 2, r * pacmanTileSize + 2, pacmanTileSize - 4, pacmanTileSize - 4);
+                     var cx = c * pacmanTileSize + pacmanTileSize / 2;
+                     var cy = r * pacmanTileSize + pacmanTileSize / 2;
+                     
+                     var hasRight = (c + 1 < pacmanMaze[0].length && pacmanMaze[r][c+1] === 1);
+                     var hasDown = (r + 1 < pacmanMaze.length && pacmanMaze[r+1][c] === 1);
+                     var hasLeft = (c - 1 >= 0 && pacmanMaze[r][c-1] === 1);
+                     var hasUp = (r - 1 >= 0 && pacmanMaze[r-1][c] === 1);
+                     
+                     if (hasRight) {
+                         ctx.moveTo(cx, cy);
+                         ctx.lineTo(cx + pacmanTileSize, cy);
+                     }
+                     if (hasDown) {
+                         ctx.moveTo(cx, cy);
+                         ctx.lineTo(cx, cy + pacmanTileSize);
+                     }
+                     
+                     if (!hasRight && !hasDown && !hasLeft && !hasUp) {
+                         ctx.moveTo(cx, cy);
+                         ctx.lineTo(cx + 0.1, cy);
+                     }
                  }
              }
          }
+         ctx.stroke();
          ctx.shadowBlur = 0;
      }
      
      // Draw walls with neon glow
-     drawNeonMaze(mazeCtx, '#00aaff');
+     drawNeonMaze(mazeCtx, pacmanThemeWallColor);
      
      // Draw frightened maze variants (red/blue flashing)
      if (mazeCtxFrightened1) {
-         mazeCtxFrightened1.fillStyle = '#050510';
+         mazeCtxFrightened1.fillStyle = pacmanThemeBgColor;
          mazeCtxFrightened1.fillRect(0, 0, 1080, 1920);
          drawNeonMaze(mazeCtxFrightened1, '#ff0055');
      }
      
      if (mazeCtxFrightened2) {
-         mazeCtxFrightened2.fillStyle = '#050510';
+         mazeCtxFrightened2.fillStyle = pacmanThemeBgColor;
          mazeCtxFrightened2.fillRect(0, 0, 1080, 1920);
          drawNeonMaze(mazeCtxFrightened2, '#0055ff');
      }
@@ -938,19 +1104,19 @@ function renderMazeStatic() {
          var py = r * pacmanTileSize;
          // Erase wall visually
          if (mazeCtx) {
-             mazeCtx.fillStyle = '#050510';
+             mazeCtx.fillStyle = pacmanThemeBgColor;
              mazeCtx.fillRect(px, py, pacmanTileSize, pacmanTileSize);
          }
          if (mazeCtxFrightened1) {
-             mazeCtxFrightened1.fillStyle = '#050510';
+             mazeCtxFrightened1.fillStyle = pacmanThemeBgColor;
              mazeCtxFrightened1.fillRect(px, py, pacmanTileSize, pacmanTileSize);
          }
          if (mazeCtxFrightened2) {
-             mazeCtxFrightened2.fillStyle = '#050510';
+             mazeCtxFrightened2.fillStyle = pacmanThemeBgColor;
              mazeCtxFrightened2.fillRect(px, py, pacmanTileSize, pacmanTileSize);
          }
          AudioSynth.playBreakWall();
-         spawnTextParticle(c, r, 'POW!', '#ffaa00');
+         spawnTextParticle(c, r, 'POW!', pacmanThemeDotColor);
      }
  }
 
@@ -960,11 +1126,12 @@ function initGhosts() {
      var ghostCorners = [
          {x: 1, y: 1},      // Top-Left
          {x: 25, y: 1},     // Top-Right
-         {x: 1, y: 45},     // Bottom-Left
-         {x: 25, y: 45}     // Bottom-Right
+         {x: 1, y: 46},     // Bottom-Left
+         {x: 25, y: 46}     // Bottom-Right
      ];
      for (var i = 0; i < 4; i++) {
          pacmanGhosts.push({
+             id: i,
              x: ghostCorners[i].x,
              y: ghostCorners[i].y,
              targetX: ghostCorners[i].x,
@@ -975,10 +1142,55 @@ function initGhosts() {
              dir: 'up',
              color: ghostColors[i],
              speed: 0.006,
-             homeTime: 0
+             homeTime: 0,
+             isDead: false
          });
      }
+     initGhostReturnFields(ghostCorners);
  }
+
+var ghostReturnFields = [];
+function initGhostReturnFields(corners) {
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    ghostReturnFields = [];
+    
+    for (var i = 0; i < corners.length; i++) {
+        var field = new Array(rows);
+        for (var r = 0; r < rows; r++) {
+            field[r] = new Array(cols).fill(999999999);
+        }
+        var queue = [];
+        var spawnX = corners[i].x;
+        var spawnY = corners[i].y;
+        
+        field[spawnY][spawnX] = 0;
+        queue.push({x: spawnX, y: spawnY, dist: 0});
+        
+        var head = 0;
+        while(head < queue.length) {
+            var curr = queue[head++];
+            if (curr.dist > field[curr.y][curr.x]) continue;
+            
+            var dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+            for (var d = 0; d < 4; d++) {
+                var nx = curr.x + dirs[d][0];
+                var ny = curr.y + dirs[d][1];
+                if (nx < 0) nx = cols - 1;
+                else if (nx >= cols) nx = 0;
+                
+                if (ny >= 0 && ny < rows && pacmanMaze[ny] && pacmanMaze[ny][nx] !== 1) {
+                    var ndist = curr.dist + 1;
+                    if (ndist < field[ny][nx]) {
+                        field[ny][nx] = ndist;
+                        queue.push({x: nx, y: ny, dist: ndist});
+                    }
+                }
+            }
+        }
+        ghostReturnFields.push(field);
+    }
+}
 
 function checkDotCollision(pl, userName) {
      // Check Gift Drops First (only for main players)
@@ -993,7 +1205,9 @@ function checkDotCollision(pl, userName) {
              if (typeof activateGiftPower === 'function') {
                  activateGiftPower(pl, userName, g);
              }
-             if (pacmanPlayers[userName]) pacmanPlayers[userName].score += 500;
+             if (pacmanPlayers[userName]) {
+                 pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + 500;
+             }
              pacmanScore += 500;
              updateDotFlowField(); // Atualizar rotas para evitar que fiquem presos no local do presente vazio
          }
@@ -1011,8 +1225,11 @@ function checkDotCollision(pl, userName) {
              // Clone passes over the power pill without doing anything
          } else {
              dot.active = false;
-             if (pacmanPlayers[userName]) pacmanPlayers[userName].score += dot.power ? 50 : 10;
-             pacmanScore += dot.power ? 50 : 10;
+             var pts = dot.power ? 50 : 10;
+             if (pacmanPlayers[userName]) {
+                 pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + pts;
+             }
+             pacmanScore += pts;
              
              // Trigger zoom and individual power mode on power pill consumption
              if (dot.power) {
@@ -1032,7 +1249,7 @@ function checkDotCollision(pl, userName) {
                  pushAlertEvent(`💪 @${userName} comeu uma Pílula de Poder! Apenas ele pode comer fantasmas!`);
              }
              
-             spawnDotParticles(pl.targetX, pl.targetY, dot.power ? '#00ffcc' : '#ffaa00', dot.power ? 20 : 5);
+             spawnDotParticles(pl.targetX, pl.targetY, dot.power ? '#00ffcc' : pacmanThemeDotColor, dot.power ? 20 : 5);
              updatePacmanLeaderboard();
              
              // Check if all dots collected
@@ -1056,11 +1273,11 @@ function checkDotCollision(pl, userName) {
         
         var pts = fr.value || 500;
         if (pacmanPlayers[userName]) {
-            pacmanPlayers[userName].score += pts;
+            pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + pts;
         }
         pacmanScore += pts;
         
-        spawnTextParticle(pl.targetX, pl.targetY, "+" + pts, '#ffaa00');
+        spawnTextParticle(pl.targetX, pl.targetY, "+" + pts, pacmanThemeDotColor);
         pushAlertEvent(`${fr.type} @${userName} devorou a fruta bônus de ${pts} pontos!`);
         AudioSynth.playTone(770, 'square', 0.3, 0.1);
         AudioSynth.playTone(880, 'square', 0.3, 0.15); // Little happy tune
@@ -1076,6 +1293,9 @@ function spawnPacmanPlayer(userName, avatar) {
          return;
      }
      
+     var existingGlobal = Array.isArray(pacmanGlobalLeaderboard) ? pacmanGlobalLeaderboard.find(function(g) { return g.user.toLowerCase() === userName.toLowerCase(); }) : null;
+     var startScore = (existingGlobal && !isNaN(existingGlobal.score)) ? Number(existingGlobal.score) : 0;
+     
      var pos = getAvailableSpawnPosition();
      var colorIdx = Object.keys(pacmanPlayers).length % PACMAN_COLORS.length;
      pacmanPlayers[userName] = {
@@ -1085,7 +1305,8 @@ function spawnPacmanPlayer(userName, avatar) {
          targetY: pos.y,
          progress: 0,
          dir: 'right',
-         score: 0,
+         score: startScore,
+         roundScore: 0,
          lives: 3,
          fuel: 0,
          avatar: avatar,
@@ -1101,7 +1322,7 @@ function spawnPacmanPlayer(userName, avatar) {
      };
  }
 
-function findNextMoveAI(pl) {
+function findNextMoveAI(pl, isClone) {
      var bestDir = pl.dir || 'right';
      var bestScore = 999999999; // Aumentado para suportar labirintos vazios gigantes
      
@@ -1117,7 +1338,7 @@ function findNextMoveAI(pl) {
      }
      
      var hasPower = pl.powerTimer > 0 || pl.giantTimer > 0;
-     var isFleeing = !hasPower && nearestGhostDist < 7;
+     var isFleeing = !hasPower && nearestGhostDist < 4;
      
      var dirs = ['right', 'down', 'left', 'up'];
      for (var i = 0; i < dirs.length; i++) {
@@ -1133,7 +1354,8 @@ function findNextMoveAI(pl) {
          if (pacmanMaze[ty] && pacmanMaze[ty][tx] !== 1) {
              // FALLBACK CORRIGIDO PARA 999999. Antes era 9999, o que fazia ele preferir 
              // o vazio do que um ponto que estivesse a 10.000 de custo de distância!
-             var score = (dotFlowField[ty] && dotFlowField[ty][tx] !== undefined) ? dotFlowField[ty][tx] : 999999999;
+             var targetField = isClone ? cloneFlowField : dotFlowField;
+             var score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
              
              // Penalidade de meia-volta dinâmica!
              var revPenalty = 1000;
@@ -1147,14 +1369,14 @@ function findNextMoveAI(pl) {
                  revPenalty = 8000;
              }
              
-             // Se um fantasma estiver por perto (raio de 12), usamos repulsão forte para evitar o 
-             // "jittering" (ir e voltar) na borda do raio de medo (7).
-             if (!hasPower && nearestGhostDist < 12) {
+             // Se um fantasma estiver por perto (raio de 6), usamos repulsão forte para evitar o 
+             // "jittering" (ir e voltar) na borda do raio de medo (4).
+             if (!hasPower && nearestGhostDist < 6) {
                  revPenalty = 4000;
              }
              
              // Se um fantasma estiver MUITO perto (emergência), permitimos a meia-volta instantânea
-             if (isFleeing && nearestGhostDist < 5) revPenalty = 10;
+             if (isFleeing && nearestGhostDist < 3) revPenalty = 10;
              
              if (d !== pl.dir) score += 0.1;
              if (d === oppositeDir) score += revPenalty;
@@ -1168,22 +1390,22 @@ function findNextMoveAI(pl) {
              }
              
              // Lógica Dinâmica de Fantasmas
-             var gDist = 999;
+             var gDist = 99999;
              for (var j = 0; j < pacmanGhosts.length; j++) {
-                 if (pacmanGhosts[j].homeTime > 0) continue;
+                 if (pacmanGhosts[j].homeTime > 0 || pacmanGhosts[j].isDead) continue;
                  var dG = Math.abs(tx - pacmanGhosts[j].x) + Math.abs(ty - pacmanGhosts[j].y);
                  if (dG < gDist) gDist = dG;
              }
              
              if (hasPower) {
-                 if (gDist < 40) {
-                     // CAÇAR FANTASMAS! Forte peso negativo para sugar o Pac-Man na direção deles.
-                     score -= (40 - gDist) * 2000;
+                 if (gDist !== 99999) {
+                     // CAÇAR FANTASMAS! Sempre focar no fantasma vivo mais próximo, sem limite de distância.
+                     score -= (1000 - gDist) * 2000;
                  }
              } else {
-                 if (gDist < 7) {
+                 if (gDist < 4) {
                      // Forte repulsão. O peso 5000 esmaga qualquer custo de espaço vazio (1000)
-                     score += (7 - gDist) * 5000; 
+                     score += (4 - gDist) * 5000; 
                  }
              }
              
@@ -1282,7 +1504,8 @@ function resetGhostCombos() {
 function triggerRoundEnd() {
     pacmanGameState = 'round_end';
     pacmanRoundEndMode = 'match';
-    AudioSynth.playLevelUp();
+    window.pacmanRoundEndStart = Date.now(); // Marca o início para animação de count-up
+    AudioSynth.playVictoryFanfare();
     AudioSynth.stopSiren(); // Stop the ambient siren during the transition
     
     pushAlertEvent(`🎉 FASE COMPLETADA! Exibindo classificação da rodada...`);
@@ -1302,6 +1525,8 @@ function triggerRoundEnd() {
     
     // Atualiza o Placar Geral localmente (High Scores de todos os tempos)
     var playerList = Object.keys(pacmanPlayers).map(function(p) {
+        // Consolidate the round score into the global score NOW, at the end of the round.
+        pacmanPlayers[p].score += (pacmanPlayers[p].roundScore || 0);
         return {
             user: p,
             score: pacmanPlayers[p].score,
@@ -1323,6 +1548,9 @@ function triggerRoundEnd() {
     try {
         localStorage.setItem('pacmanGlobalLeaderboard', JSON.stringify(pacmanGlobalLeaderboard));
     } catch(e) {}
+    
+    // Atualiza a UI do placar geral apenas no final da partida (para evitar stuttering)
+    commitLeaderboardUpdate();
     
     // After 5 seconds, switch to overall leaderboard
     setTimeout(function() {
@@ -1360,8 +1588,15 @@ function triggerLevelUp() {
         // Give all living players extra points and reset their positions to safety
         for (var p in pacmanPlayers) {
             var pl = pacmanPlayers[p];
+            pl.roundScore = 0; // Reset score of the round
+            pl.powerTimer = 0; // Zerar skills da rodada anterior
+            pl.giantTimer = 0;
+            pl.giftSpeedTimer = 0;
+            pl.giftSpeedMultiplier = 1;
+            pl.ghostComboCount = 0;
             if (pl.lives > 0) {
                 pl.score += 500;
+                pl.roundScore += 500;
                 var pos = getAvailableSpawnPosition();
                 pl.x = pos.x;
                 pl.y = pos.y;
@@ -1410,29 +1645,10 @@ function drawRoundEndOverlay() {
     var h = 1920;
     
     // 1. Semi-transparent black backdrop
-    pacmanCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    pacmanCtx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     pacmanCtx.fillRect(0, 0, w, h);
     
-    // 2. Draw glassmorphic ranking card container
-    var cardW = 800;
-    var cardH = 1100;
-    var cardX = (w - cardW) / 2;
-    var cardY = (h - cardH) / 2;
-    
-    // Glow effect
-    pacmanCtx.save();
-    pacmanCtx.shadowBlur = 30;
-    pacmanCtx.shadowColor = '#00ffff';
-    pacmanCtx.fillStyle = 'rgba(11, 11, 30, 0.95)';
-    pacmanCtx.strokeStyle = '#00ffff';
-    pacmanCtx.lineWidth = 6;
-    
-    roundRect(pacmanCtx, cardX, cardY, cardW, cardH, 20);
-    pacmanCtx.fill();
-    pacmanCtx.stroke();
-    pacmanCtx.restore();
-    
-    // 3. Setup Title, Subtitle, Footer and data source depending on mode
+    // 2. Setup Title, Subtitle, Footer and data source depending on mode
     var titleText = '';
     var subtitleText = '';
     var footerText = '';
@@ -1446,7 +1662,7 @@ function drawRoundEndOverlay() {
         displayPlayers = Object.keys(pacmanPlayers).map(function(p) {
             return {
                 name: p,
-                score: pacmanPlayers[p].score,
+                score: pacmanPlayers[p].roundScore || 0, // Mostra apenas os pontos dessa fase
                 color: pacmanPlayers[p].color,
                 avatar: pacmanPlayers[p].avatar
             };
@@ -1455,7 +1671,7 @@ function drawRoundEndOverlay() {
         });
     } else {
         titleText = '🏆 PLACAR GERAL 🏆';
-        subtitleText = 'Melhores Pontuações de Sempre';
+        subtitleText = 'Melhores Pontuações de Sempre (Top 20)';
         footerText = 'Preparando o próximo labirinto...';
         
         var rawLeaderboard = Array.isArray(pacmanGlobalLeaderboard) ? pacmanGlobalLeaderboard : [];
@@ -1474,105 +1690,251 @@ function drawRoundEndOverlay() {
         });
     }
     
-    // Draw Title
-    pacmanCtx.textAlign = 'center';
-    pacmanCtx.textBaseline = 'middle';
-    
-    // Glow for Title
-    pacmanCtx.save();
-    pacmanCtx.shadowBlur = 15;
-    pacmanCtx.shadowColor = pacmanRoundEndMode === 'match' ? '#ffff00' : '#00ffff';
-    pacmanCtx.fillStyle = pacmanRoundEndMode === 'match' ? '#ffff00' : '#00ffff';
-    pacmanCtx.font = 'bold 50px Outfit, Inter, sans-serif';
-    pacmanCtx.fillText(titleText, w / 2, cardY + 100);
-    pacmanCtx.restore();
-    
-    pacmanCtx.fillStyle = '#ffffff';
-    pacmanCtx.font = '28px Inter, sans-serif';
-    pacmanCtx.fillText(subtitleText, w / 2, cardY + 170);
-    
-    // Draw thin separator line
-    pacmanCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    pacmanCtx.lineWidth = 2;
-    pacmanCtx.beginPath();
-    pacmanCtx.moveTo(cardX + 80, cardY + 220);
-    pacmanCtx.lineTo(cardX + cardW - 80, cardY + 220);
-    pacmanCtx.stroke();
-    
-    var startY = cardY + 300;
-    var rowHeight = 110;
-    var maxDisplay = 6;
-    
-    for (var i = 0; i < Math.min(displayPlayers.length, maxDisplay); i++) {
-        var pl = displayPlayers[i];
-        var py = startY + i * rowHeight;
+    // Animation Progress (0.0 to 1.0)
+    // Starts exactly at 0 and takes 3.5 seconds to reach 1.0
+    var elapsed = Date.now() - (window.pacmanRoundEndStart || Date.now());
+    var animProgress = Math.min(1.0, elapsed / 3500); 
+    // Smooth ease out for score scaling
+    var easeOut = 1 - Math.pow(1 - animProgress, 4);
+
+    if (pacmanRoundEndMode === 'match') {
+        // --- DRAW MATCH PODIUM CARD ---
+        var cardW = 800;
+        var cardH = 1100;
+        var cardX = (w - cardW) / 2;
+        var cardY = (h - cardH) / 2;
         
-        // Rank indicator
-        var medal = '';
-        if (i === 0) medal = '🥇 ';
-        else if (i === 1) medal = '🥈 ';
-        else if (i === 2) medal = '🥉 ';
-        else medal = `  #${i + 1}  `;
-        
-        // Draw player row background highlights for top 3
-        if (i === 0) pacmanCtx.fillStyle = 'rgba(255, 215, 0, 0.1)';
-        else if (i === 1) pacmanCtx.fillStyle = 'rgba(192, 192, 192, 0.08)';
-        else if (i === 2) pacmanCtx.fillStyle = 'rgba(205, 127, 50, 0.06)';
-        else pacmanCtx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-        
-        roundRect(pacmanCtx, cardX + 50, py - 45, cardW - 100, 90, 10);
-        pacmanCtx.fill();
-        
-        // Draw medal/rank
-        pacmanCtx.textAlign = 'left';
-        pacmanCtx.fillStyle = i < 3 ? '#ffffff' : '#aaaaaa';
-        pacmanCtx.font = 'bold 32px Inter, sans-serif';
-        pacmanCtx.fillText(medal, cardX + 80, py);
-        
-        // Draw avatar if loaded
-        var avatarX = cardX + 180;
-        var avatarY = py;
-        var avatarSize = 60;
-        var img = getAvatarImage(pl.name, pl.avatar);
-        
+        // Glow effect
         pacmanCtx.save();
-        // Circular clip for avatar
-        pacmanCtx.beginPath();
-        pacmanCtx.arc(avatarX, avatarY, avatarSize / 2, 0, Math.PI * 2);
-        pacmanCtx.clip();
-        if (img && img.complete) {
-            pacmanCtx.drawImage(img, avatarX - avatarSize / 2, avatarY - avatarSize / 2, avatarSize, avatarSize);
-        } else {
-            // Draw colored placeholder
-            pacmanCtx.fillStyle = pl.color;
-            pacmanCtx.fillRect(avatarX - avatarSize / 2, avatarY - avatarSize / 2, avatarSize, avatarSize);
-        }
+        pacmanCtx.shadowBlur = 30;
+        pacmanCtx.shadowColor = '#00ffff';
+        pacmanCtx.fillStyle = 'rgba(11, 11, 30, 0.95)';
+        pacmanCtx.strokeStyle = '#00ffff';
+        pacmanCtx.lineWidth = 6;
+        
+        roundRect(pacmanCtx, cardX, cardY, cardW, cardH, 20);
+        pacmanCtx.fill();
+        pacmanCtx.stroke();
         pacmanCtx.restore();
         
-        // Draw thin colored border around avatar
-        pacmanCtx.strokeStyle = pl.color;
-        pacmanCtx.lineWidth = 3;
+        // Draw Title
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        
+        pacmanCtx.save();
+        pacmanCtx.shadowBlur = 15;
+        pacmanCtx.shadowColor = '#ffff00';
+        pacmanCtx.fillStyle = '#ffff00';
+        pacmanCtx.font = 'bold 50px Outfit, Inter, sans-serif';
+        pacmanCtx.fillText(titleText, w / 2, cardY + 100);
+        pacmanCtx.restore();
+        
+        pacmanCtx.fillStyle = '#ffffff';
+        pacmanCtx.font = '28px Inter, sans-serif';
+        pacmanCtx.fillText(subtitleText, w / 2, cardY + 170);
+        
+        // Separator line
+        pacmanCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        pacmanCtx.lineWidth = 2;
         pacmanCtx.beginPath();
-        pacmanCtx.arc(avatarX, avatarY, avatarSize / 2 + 1, 0, Math.PI * 2);
+        pacmanCtx.moveTo(cardX + 80, cardY + 220);
+        pacmanCtx.lineTo(cardX + cardW - 80, cardY + 220);
         pacmanCtx.stroke();
         
-        // Draw Name
-        pacmanCtx.fillStyle = '#ffffff';
-        pacmanCtx.font = 'bold 32px Inter, sans-serif';
-        pacmanCtx.fillText('@' + pl.name, cardX + 260, py);
+        // Podium Layout for Top 3
+        var podiumCenterY = cardY + 450;
+        var podiumCenterX = w / 2;
         
-        // Draw Score
-        pacmanCtx.textAlign = 'right';
-        pacmanCtx.fillStyle = pl.color;
-        pacmanCtx.font = 'bold 36px Outfit, Inter, sans-serif';
-        pacmanCtx.fillText((Number(pl.score) || 0).toLocaleString() + ' pts', cardX + cardW - 90, py);
+        var pPositions = [
+            { x: podiumCenterX, y: podiumCenterY - 60, scale: 1.4, medal: '🥇', color: '#FFD700', boxH: 180 }, // 1st
+            { x: podiumCenterX - 230, y: podiumCenterY + 10, scale: 1.1, medal: '🥈', color: '#C0C0C0', boxH: 110 }, // 2nd
+            { x: podiumCenterX + 230, y: podiumCenterY + 40, scale: 0.95, medal: '🥉', color: '#CD7F32', boxH: 80 }  // 3rd
+        ];
+        
+        // Draw Podium Pillars First (background)
+        for (var i = 0; i < Math.min(displayPlayers.length, 3); i++) {
+            var pos = pPositions[i];
+            var pillarW = 200 * pos.scale;
+            
+            pacmanCtx.fillStyle = `rgba(30, 30, 50, 0.8)`;
+            pacmanCtx.strokeStyle = pos.color;
+            pacmanCtx.lineWidth = 3;
+            
+            var pillarX = pos.x - pillarW/2;
+            var pillarY = pos.y + 110 * pos.scale;
+            
+            pacmanCtx.beginPath();
+            pacmanCtx.roundRect(pillarX, pillarY, pillarW, pos.boxH, [10, 10, 0, 0]);
+            pacmanCtx.fill();
+            pacmanCtx.stroke();
+            
+            pacmanCtx.fillStyle = pos.color;
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.font = 'bold ' + (50 * pos.scale) + 'px Outfit, sans-serif';
+            pacmanCtx.fillText(i + 1, pos.x, pillarY + pos.boxH/2 + 15 * pos.scale);
+        }
+        
+        // Draw Top 3 Players on Podium
+        for (var i = 0; i < Math.min(displayPlayers.length, 3); i++) {
+            var pl = displayPlayers[i];
+            var pos = pPositions[i];
+            
+            var avatarSize = 100 * pos.scale;
+            var img = getAvatarImage(pl.name, pl.avatar);
+            
+            pacmanCtx.save();
+            
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(pos.x, pos.y, avatarSize / 2, 0, Math.PI * 2);
+            pacmanCtx.clip();
+            
+            if (img && img.complete) {
+                pacmanCtx.drawImage(img, pos.x - avatarSize / 2, pos.y - avatarSize / 2, avatarSize, avatarSize);
+            } else {
+                pacmanCtx.fillStyle = pl.color;
+                pacmanCtx.fillRect(pos.x - avatarSize / 2, pos.y - avatarSize / 2, avatarSize, avatarSize);
+            }
+            pacmanCtx.restore();
+            
+            pacmanCtx.strokeStyle = pos.color;
+            pacmanCtx.lineWidth = 5 * pos.scale;
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(pos.x, pos.y, avatarSize / 2, 0, Math.PI * 2);
+            pacmanCtx.stroke();
+            
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.font = (40 * pos.scale) + 'px Arial';
+            pacmanCtx.fillText(pos.medal, pos.x, pos.y - avatarSize/2 - 10);
+            
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.font = 'bold ' + (22 * pos.scale) + 'px Inter, sans-serif';
+            pacmanCtx.fillText('@' + pl.name.substring(0, 10), pos.x, pos.y + avatarSize/2 + 30 * pos.scale);
+            
+            var displayScore = Math.floor((Number(pl.score) || 0) * easeOut);
+            pacmanCtx.fillStyle = pl.color;
+            pacmanCtx.font = 'bold ' + (28 * pos.scale) + 'px "Press Start 2P", monospace';
+            pacmanCtx.fillText(displayScore.toLocaleString(), pos.x, pos.y + avatarSize/2 + 70 * pos.scale);
+        }
+        
+        // Draw Remaining Players (4th to 6th) in a compact list below the podium
+        var listStartY = podiumCenterY + 280;
+        var rowHeight = 70;
+        
+        for (var i = 3; i < Math.min(displayPlayers.length, 6); i++) {
+            var pl = displayPlayers[i];
+            var py = listStartY + (i - 3) * rowHeight;
+            
+            pacmanCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            roundRect(pacmanCtx, cardX + 100, py - 30, cardW - 200, 60, 10);
+            pacmanCtx.fill();
+            
+            pacmanCtx.textAlign = 'left';
+            pacmanCtx.fillStyle = '#aaaaaa';
+            pacmanCtx.font = 'bold 24px Inter, sans-serif';
+            pacmanCtx.fillText(`#${i + 1}  @${pl.name}`, cardX + 130, py + 8);
+            
+            var displayScore = Math.floor((Number(pl.score) || 0) * easeOut);
+            pacmanCtx.textAlign = 'right';
+            pacmanCtx.fillStyle = pl.color;
+            pacmanCtx.font = 'bold 24px "Press Start 2P", monospace';
+            pacmanCtx.fillText(displayScore.toLocaleString() + ' pts', cardX + cardW - 130, py + 8);
+        }
+        
+        // Draw Footer (Next stage timer)
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.fillStyle = '#8888ff';
+        pacmanCtx.font = 'italic 24px Inter, sans-serif';
+        pacmanCtx.fillText(footerText, w / 2, cardY + cardH - 60);
+
+    } else {
+        // --- DRAW OVERALL RANKING FULL SCREEN ---
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        
+        // Glow for Title
+        pacmanCtx.save();
+        pacmanCtx.shadowBlur = 25;
+        pacmanCtx.shadowColor = '#00ffff';
+        pacmanCtx.fillStyle = '#00ffff';
+        pacmanCtx.font = 'bold 60px Outfit, Inter, sans-serif';
+        pacmanCtx.fillText(titleText, w / 2, 130);
+        pacmanCtx.restore();
+        
+        pacmanCtx.fillStyle = '#ffffff';
+        pacmanCtx.font = '32px Inter, sans-serif';
+        pacmanCtx.fillText(subtitleText, w / 2, 210);
+        
+        // Separator
+        pacmanCtx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+        pacmanCtx.lineWidth = 3;
+        pacmanCtx.beginPath();
+        pacmanCtx.moveTo(w/2 - 300, 260);
+        pacmanCtx.lineTo(w/2 + 300, 260);
+        pacmanCtx.stroke();
+        
+        // Top 20 List
+        var maxPlayers = Math.min(displayPlayers.length, 20);
+        var listStartY = 310;
+        var rowHeight = 75; // Fits up to 20 easily
+        
+        for (var i = 0; i < maxPlayers; i++) {
+            var pl = displayPlayers[i];
+            var py = listStartY + i * rowHeight;
+            
+            // Highlight background for top 3
+            if (i === 0) pacmanCtx.fillStyle = 'rgba(255, 215, 0, 0.15)';
+            else if (i === 1) pacmanCtx.fillStyle = 'rgba(192, 192, 192, 0.12)';
+            else if (i === 2) pacmanCtx.fillStyle = 'rgba(205, 127, 50, 0.1)';
+            else pacmanCtx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+            
+            roundRect(pacmanCtx, 80, py, w - 160, 65, 12);
+            pacmanCtx.fill();
+            
+            // Rank medal or number
+            pacmanCtx.textAlign = 'left';
+            pacmanCtx.fillStyle = pl.color || '#ffffff';
+            pacmanCtx.font = 'bold 28px Inter, sans-serif';
+            var rankLabel = `#${i + 1}`;
+            if (i === 0) rankLabel = '🥇 1';
+            else if (i === 1) rankLabel = '🥈 2';
+            else if (i === 2) rankLabel = '🥉 3';
+            
+            pacmanCtx.fillText(rankLabel, 110, py + 33);
+            
+            // Avatar
+            var avatarSize = 46;
+            var img = getAvatarImage(pl.name, pl.avatar);
+            pacmanCtx.save();
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(230, py + 32, avatarSize / 2, 0, Math.PI * 2);
+            pacmanCtx.clip();
+            if (img && img.complete) {
+                pacmanCtx.drawImage(img, 230 - avatarSize/2, py + 32 - avatarSize/2, avatarSize, avatarSize);
+            } else {
+                pacmanCtx.fillStyle = pl.color || '#00ffcc';
+                pacmanCtx.fillRect(230 - avatarSize/2, py + 32 - avatarSize/2, avatarSize, avatarSize);
+            }
+            pacmanCtx.restore();
+            
+            // Name
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.font = 'bold 26px Inter, sans-serif';
+            pacmanCtx.fillText(`@${pl.name.substring(0, 16)}`, 270, py + 34);
+            
+            // Score
+            var displayScore = Math.floor((Number(pl.score) || 0) * easeOut);
+            pacmanCtx.textAlign = 'right';
+            pacmanCtx.fillStyle = pl.color || '#00ffcc';
+            pacmanCtx.font = 'bold 26px "Press Start 2P", monospace';
+            pacmanCtx.fillText(displayScore.toLocaleString() + ' PTS', w - 110, py + 34);
+        }
+        
+        // Footer
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.fillStyle = '#8888ff';
+        pacmanCtx.font = 'italic 26px Inter, sans-serif';
+        pacmanCtx.fillText(footerText, w / 2, h - 40);
     }
-    
-    // 5. Draw Footer (Next stage timer)
-    pacmanCtx.textAlign = 'center';
-    pacmanCtx.fillStyle = '#8888ff';
-    pacmanCtx.font = 'italic 24px Inter, sans-serif';
-    pacmanCtx.fillText(footerText, w / 2, cardY + cardH - 60);
 }
 
 function spawnFruit() {
@@ -1597,7 +1959,7 @@ function checkGhostCollisions() {
         var plDrawY = pl.y + (pl.targetY - pl.y) * pl.progress;
         
         pacmanGhosts.forEach(function(gh) {
-            if (gh.homeTime > 0) return;
+            if (gh.homeTime > 0 || gh.isDead) return;
             
             var ghDrawX = gh.x + (gh.targetX - gh.x) * gh.progress;
             var ghDrawY = gh.y + (gh.targetY - gh.y) * gh.progress;
@@ -1611,16 +1973,17 @@ function checkGhostCollisions() {
                     pl.ghostComboCount = (pl.ghostComboCount || 0) + 1;
                     var comboIndex = pl.ghostComboCount;
                     // Exponential score: 200, 400, 800, 1600. Cap combo at x4
-                    var pointsAwarded = 200 * Math.min(8, Math.pow(2, comboIndex - 1));
+                    var pointsAwarded = 100 * Math.pow(2, comboIndex);
                     
-                    pl.score += pointsAwarded;
+                    pl.roundScore = (pl.roundScore || 0) + pointsAwarded;
                     pacmanScore += pointsAwarded;
-                    gh.x = gh.spawnX;
-                    gh.y = gh.spawnY;
-                    gh.targetX = gh.spawnX;
-                    gh.targetY = gh.spawnY;
+                    gh.isDead = true;
+                    gh.x = Math.round(gh.x + (gh.targetX - gh.x) * gh.progress);
+                    gh.y = Math.round(gh.y + (gh.targetY - gh.y) * gh.progress);
+                    gh.targetX = gh.x;
+                    gh.targetY = gh.y;
                     gh.progress = 0;
-                    gh.homeTime = 300; // ~5s in home box
+                    gh.homeTime = 0;
                     
                     // Trigger camera zoom on ghost combo
                     pacmanZoomTarget = {
@@ -1633,21 +1996,30 @@ function checkGhostCollisions() {
                     };
                     pacmanZoomCooldown = 600;
                     
-                    AudioSynth.playGhostEat();
+                    AudioSynth.playGhostEat(comboIndex);
+                    window.pacmanHitStopTimer = 8 + (comboIndex * 2); // Congelamento progressivo!
                     spawnTextParticle(pl.x, pl.y, `+${pointsAwarded}`, pl.color);
                     // spawnScoreText(pl.x, pl.y, `COMBO x${comboIndex}! +${pointsAwarded}`, pl.color);
                     spawnDotParticles(pl.x, pl.y, '#ffffff', 12);
                     pushAlertEvent(`👻 @${p} COMEU o fantasma! Combo x${comboIndex} (+${pointsAwarded} pts)`);
                     
-                    // Activate Combo Popup
-                    pacmanComboPopup = {
-                        user: p,
-                        avatar: pl.avatar || '',
-                        color: pl.color,
-                        combo: comboIndex,
-                        points: pointsAwarded,
-                        timer: 120 // 2 seconds
-                    };
+                    // Activate Combo Popup - Accumulate if active
+                    if (pacmanComboPopup && pacmanComboPopup.user === p && pacmanComboPopup.timer > 0) {
+                        pacmanComboPopup.combo = comboIndex;
+                        pacmanComboPopup.points += pointsAwarded;
+                        pacmanComboPopup.ghostColor = gh.color;
+                        pacmanComboPopup.timer = 160; // Mantém ativo sem reativar a animação de pop-in inicial
+                    } else {
+                        pacmanComboPopup = {
+                            user: p,
+                            avatar: pl.avatar || '',
+                            color: pl.color,
+                            combo: comboIndex,
+                            points: pointsAwarded,
+                            ghostColor: gh.color,
+                            timer: 180 // 3 seconds
+                        };
+                    }
                     
                     updatePacmanLeaderboard();
                     updateDotFlowField(); // Atualiza a IA para não perseguirem o fantasma "morto"
@@ -1656,6 +2028,14 @@ function checkGhostCollisions() {
                     pl.lives--;
                     AudioSynth.playDeath();
                     spawnDeathParticles(pl.x, pl.y, pl.color);
+                    
+                    // Destroy all clones owned by this player instantly
+                    for (var i = pacmanClones.length - 1; i >= 0; i--) {
+                        if (pacmanClones[i].owner === p) {
+                            spawnDeathParticles(pacmanClones[i].x, pacmanClones[i].y, '#ff66ff');
+                            pacmanClones.splice(i, 1);
+                        }
+                    }
                     
                     if (pl.lives <= 0) {
                         spawnTextParticle(pl.x, pl.y, 'GAME OVER', '#ff0000');
@@ -1727,29 +2107,24 @@ function updateEntities() {
             }
         }
         
-        // --- Tap-Tap frequency tracking (likes) ---
-        var nowMs = Date.now();
-        if (!pl._tapHead) pl._tapHead = 0;
-        
-        // Find oldest tap still in window (1500ms)
-        while (pl.tapTimestamps && pl._tapHead < pl.tapTimestamps.length && nowMs - pl.tapTimestamps[pl._tapHead] >= 1500) {
-            pl._tapHead++;
-        }
-        
-        var recentTaps = pl.tapTimestamps ? pl.tapTimestamps.length - pl._tapHead : 0;
-        
-        if (recentTaps >= 1) {
-            pl.tapSpeedMultiplier = Math.min(1.75, 1.30 + (recentTaps - 1) * 0.05);
-            pl._tapGrace = 90;
-        } else if (pl._tapGrace && pl._tapGrace > 0) {
-            pl._tapGrace--;
+        // --- Continuous Energy Tank Tracking (Likes) ---
+        if (pl.autoEnergyTimer && pl.autoEnergyTimer > 0) {
+            pl.autoEnergyTimer--;
+            pl.likeEnergy = 100;
+            pl.tapSpeedMultiplier = 2.0; // max multiplier at 100 energy
+        } else if (pl.likeEnergy > 0) {
+            pl.likeEnergy -= 0.083; // Base drain rate (~5 energy per second at 60fps)
+            if (pl.likeEnergy < 0) pl.likeEnergy = 0;
+            
+            // Calculate multiplier directly from energy (max 2.0x speed at 100 energy)
+            pl.tapSpeedMultiplier = 1.0 + (pl.likeEnergy / 100) * 1.0;
         } else {
             pl.tapSpeedMultiplier = 1.0;
         }
         
         if (pl.progress === 0) {
             // Calculate next smart direction automatically!
-            var aiDir = findNextMoveAI(pl);
+            var aiDir = findNextMoveAI(pl, false);
             pl.dir = aiDir;
             
             var dx = pl.dir === 'left' ? -1 : pl.dir === 'right' ? 1 : 0;
@@ -1792,12 +2167,13 @@ function updateEntities() {
             // tap-tap active: use fast speed directly as base, without fuel overhead
             var tapActive = pl.tapSpeedMultiplier && pl.tapSpeedMultiplier > 1.0;
             var currentSpeed;
+            var hasPower = pl.powerTimer > 0 || pl.giantTimer > 0;
             if (pl.speedBoostTimer > 0) {
                 currentSpeed = 0.08; // Super turbo! (was 0.0325)
             } else if (tapActive) {
                 currentSpeed = 0.01625 * pl.tapSpeedMultiplier; // halved from 0.0325
-                if (pacmanPowerMode) currentSpeed *= 1.3;
-            } else if (pacmanPowerMode) {
+                if (hasPower) currentSpeed *= 1.3;
+            } else if (hasPower) {
                 currentSpeed = pl.isFast ? 0.0225 : 0.006; // halved from 0.045 / 0.012
             } else {
                 currentSpeed = pl.isFast ? 0.01625 : 0.004; // halved from 0.0325 / 0.008
@@ -1869,6 +2245,16 @@ function updateEntities() {
     // 1.5 Update Clones
     for (var i = pacmanClones.length - 1; i >= 0; i--) {
         var cl = pacmanClones[i];
+        
+        if (cl.spawnDelay > 0) {
+            cl.spawnDelay--;
+            var pl = pacmanPlayers[cl.owner];
+            if (pl) {
+                cl.x = pl.x; cl.y = pl.y; cl.targetX = pl.targetX; cl.targetY = pl.targetY;
+            }
+            continue;
+        }
+        
         cl.timer--;
         if (cl.timer <= 0) {
             pacmanClones.splice(i, 1);
@@ -1876,7 +2262,7 @@ function updateEntities() {
         }
         
         if (cl.progress === 0) {
-            var aiDir = findNextMoveAI(cl);
+            var aiDir = findNextMoveAI(cl, true);
             cl.dir = aiDir;
             
             var dx = cl.dir === 'left' ? -1 : cl.dir === 'right' ? 1 : 0;
@@ -1905,8 +2291,8 @@ function updateEntities() {
         }
         
         if (cl.progress > 0 || (cl.progress === 0 && (cl.x !== cl.targetX || cl.y !== cl.targetY))) {
-            var currentSpeed = 0.01625 * 1.5; // Clones are slightly faster naturally!
-            if (pacmanPowerMode) currentSpeed *= 1.3;
+            var currentSpeed = 0.01625 * 0.75; // Clones speed reduced by half (fixed and independent of parent)
+            // Clones do not get power pill speed boost as they cannot eat ghosts
             cl.progress += currentSpeed;
             
             if (Math.random() < 0.05) {
@@ -1936,6 +2322,7 @@ function updateEntities() {
     }
     
     // 2. Update Ghost Positions
+    // 2. Update Ghost Positions
     pacmanGhosts.forEach(function(gh) {
         if (gh.homeTime > 0) {
             gh.homeTime--;
@@ -1959,36 +2346,62 @@ function updateEntities() {
             });
             
             // Try not to immediately backtrack unless there are no other paths
-            if (validDirs.length > 1 && gh.dir) {
+            // If the ghost is dead, it is allowed to immediately U-turn to follow the shortest return path!
+            if (validDirs.length > 1 && gh.dir && !gh.isDead) {
                 var opp = opposite[gh.dir];
                 validDirs = validDirs.filter(function(d) { return d !== opp; });
             }
             
             var targetDir = null;
             if (validDirs.length > 0) {
-                var targetPlayer = getClosestPlayer(gh.x, gh.y);
-                if (targetPlayer && Math.random() < 0.8) { // 80% smart tracking
-                    var tx = targetPlayer.x;
-                    var ty = targetPlayer.y;
-                    var _mazeW = MAZE_LAYOUT[0].length;
-                    var _mazeH = MAZE_LAYOUT.length;
+                if (gh.isDead) {
+                    // Use perfect BFS gradient to return home
                     validDirs.sort(function(a, b) {
                         var ax = gh.x + (a === 'left' ? -1 : a === 'right' ? 1 : 0);
                         var ay = gh.y + (a === 'up' ? -1 : a === 'down' ? 1 : 0);
                         var bx = gh.x + (b === 'left' ? -1 : b === 'right' ? 1 : 0);
                         var by = gh.y + (b === 'up' ? -1 : b === 'down' ? 1 : 0);
-                        // Use wrapped Manhattan for more accurate chasing
-                        var daxr = Math.abs(ax - tx); if (daxr > _mazeW / 2) daxr = _mazeW - daxr;
-                        var dayr = Math.abs(ay - ty); if (dayr > _mazeH / 2) dayr = _mazeH - dayr;
-                        var dbxr = Math.abs(bx - tx); if (dbxr > _mazeW / 2) dbxr = _mazeW - dbxr;
-                        var dbyr = Math.abs(by - ty); if (dbyr > _mazeH / 2) dbyr = _mazeH - dbyr;
-                        var distA = daxr + dayr;
-                        var distB = dbxr + dbyr;
-                        return pacmanPowerMode ? (distB - distA) : (distA - distB);
+                        
+                        var _mazeW = MAZE_LAYOUT[0].length;
+                        if (ax < 0) ax = _mazeW - 1; else if (ax >= _mazeW) ax = 0;
+                        if (bx < 0) bx = _mazeW - 1; else if (bx >= _mazeW) bx = 0;
+                        
+                        var scoreA = ghostReturnFields[gh.id][ay][ax];
+                        var scoreB = ghostReturnFields[gh.id][by][bx];
+                        return scoreA - scoreB;
                     });
                     targetDir = validDirs[0];
                 } else {
-                    targetDir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                    var tx, ty, useTarget = false, reverse = false;
+                    var targetPlayer = getClosestPlayer(gh.x, gh.y);
+                    if (targetPlayer && Math.random() < 0.8) { // 80% smart tracking
+                        tx = targetPlayer.x;
+                        ty = targetPlayer.y;
+                        useTarget = true;
+                        reverse = pacmanPowerMode;
+                    }
+                    
+                    if (useTarget) {
+                        var _mazeW = MAZE_LAYOUT[0].length;
+                        var _mazeH = MAZE_LAYOUT.length;
+                        validDirs.sort(function(a, b) {
+                            var ax = gh.x + (a === 'left' ? -1 : a === 'right' ? 1 : 0);
+                            var ay = gh.y + (a === 'up' ? -1 : a === 'down' ? 1 : 0);
+                            var bx = gh.x + (b === 'left' ? -1 : b === 'right' ? 1 : 0);
+                            var by = gh.y + (b === 'up' ? -1 : b === 'down' ? 1 : 0);
+                            
+                            var daxr = Math.abs(ax - tx); if (daxr > _mazeW / 2) daxr = _mazeW - daxr;
+                            var dayr = Math.abs(ay - ty); if (dayr > _mazeH / 2) dayr = _mazeH - dayr;
+                            var dbxr = Math.abs(bx - tx); if (dbxr > _mazeW / 2) dbxr = _mazeW - dbxr;
+                            var dbyr = Math.abs(by - ty); if (dbyr > _mazeH / 2) dbyr = _mazeH - dbyr;
+                            var distA = daxr + dayr;
+                            var distB = dbxr + dbyr;
+                            return reverse ? (distB - distA) : (distA - distB);
+                        });
+                        targetDir = validDirs[0];
+                    } else {
+                        targetDir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                    }
                 }
             }
 
@@ -2022,13 +2435,29 @@ function updateEntities() {
         
         // Progress movement linearly
         if (gh.progress > 0 || (gh.progress === 0 && (gh.x !== gh.targetX || gh.y !== gh.targetY))) {
-            var activeSpeed = pacmanPowerMode ? 0.00625 : gh.speed; // slow down in frightened mode (halved)
+            var activeSpeed = gh.speed;
+            if (gh.isDead) {
+                activeSpeed = gh.speed * 4.0; // Very fast when returning
+            } else if (pacmanPowerMode) {
+                activeSpeed = 0.00625; // slow down in frightened mode (halved)
+            }
+            
             gh.progress += activeSpeed;
             if (gh.progress >= 1.0) {
                 gh.x = gh.targetX;
                 gh.y = gh.targetY;
                 gh.progress = 0.0;
+                
+                // Resurrect if reached home
+                if (gh.isDead && gh.x === gh.spawnX && gh.y === gh.spawnY) {
+                    gh.isDead = false;
+                    gh.homeTime = 300; // 5 segundos de invulnerabilidade/espera na base
+                }
             }
+        } else if (gh.isDead && gh.x === gh.spawnX && gh.y === gh.spawnY) {
+            // Já está na base e não vai se mover, ressuscita imediatamente
+            gh.isDead = false;
+            gh.homeTime = 300; // Evita loop infinito de combos (spawn kill)
         }
     });
     
@@ -2151,7 +2580,7 @@ function checkCameraZoomTrigger() {
     var sortedPlayers = Object.keys(pacmanPlayers).map(function(p) {
         return {
             name: p,
-            score: pacmanPlayers[p].score,
+            score: pacmanPlayers[p].roundScore || 0,
             x: pacmanPlayers[p].x,
             y: pacmanPlayers[p].y,
             color: pacmanPlayers[p].color,
@@ -2186,7 +2615,9 @@ function checkCameraZoomTrigger() {
         if (pacmanZoomTarget.timer <= 0) {
             pacmanZoomTarget = null;
             for (var p in pacmanPlayers) {
-                pacmanPlayers[p].ghostComboCount = 0;
+                if (pacmanPlayers[p].powerTimer <= 0 && pacmanPlayers[p].giantTimer <= 0) {
+                    pacmanPlayers[p].ghostComboCount = 0;
+                }
             }
         } else if (pacmanPlayers[pacmanZoomTarget.user]) {
             var pl = pacmanPlayers[pacmanZoomTarget.user];
@@ -2204,7 +2635,7 @@ function drawPacman() {
     checkCameraZoomTrigger();
     
     // Clear Board
-    pacmanCtx.fillStyle = '#050510';
+    pacmanCtx.fillStyle = pacmanThemeBgColor;
     pacmanCtx.fillRect(0, 0, canvas.width, canvas.height);
     
     // Save context for zoom transformations
@@ -2234,20 +2665,8 @@ function drawPacman() {
     
     // Draw static walls cache (pre-rendered with glow shadow)
     if (mazeCanvas) {
-        var pulseSpeed = pacmanPowerMode ? 150 : 450;
-        var baseAlpha = pacmanPowerMode ? 0.7 : 0.85;
-        var dynamicAlpha = baseAlpha + Math.sin(Date.now() / pulseSpeed) * 0.15;
-        
-        pacmanCtx.globalAlpha = Math.min(1.0, Math.max(0.4, dynamicAlpha));
-        
-        if (pacmanPowerMode) {
-            var isRed = Math.floor(Date.now() / 250) % 2 === 0;
-            var activeCanvas = isRed ? mazeCanvasFrightened1 : mazeCanvasFrightened2;
-            pacmanCtx.drawImage(activeCanvas, 0, 0);
-        } else {
-            pacmanCtx.drawImage(mazeCanvas, 0, 0);
-        }
-        pacmanCtx.globalAlpha = 1.0;
+        pacmanCtx.globalAlpha = 1.0; // SEM TRANSPARÊNCIA
+        pacmanCtx.drawImage(mazeCanvas, 0, 0);
     }
     
     // Draw Pheromone Trails (Glowing paths)
@@ -2267,8 +2686,6 @@ function drawPacman() {
             
             pacmanCtx.globalAlpha = isTurbo ? alpha * 0.7 : alpha * 0.2;
             pacmanCtx.fillStyle = color;
-            pacmanCtx.shadowBlur = isTurbo ? 20 : 5;
-            pacmanCtx.shadowColor = color;
             
             // Draw slightly rounded rectangle or just plain rect for trail
             var pad = isTurbo ? 0 : 2; // thicker trail when turbo
@@ -2279,7 +2696,7 @@ function drawPacman() {
     pacmanCtx.shadowBlur = 0;
     
     // Draw Dots (Standard dots batched into a single path for high canvas performance)
-    pacmanCtx.fillStyle = '#ffaa00';
+    pacmanCtx.fillStyle = pacmanThemeDotColor;
     pacmanCtx.beginPath();
     var dotRadius = pacmanTileSize * 0.15;
     for (var i = 0; i < pacmanDots.length; i++) {
@@ -2322,14 +2739,10 @@ function drawPacman() {
             pacmanCtx.translate(fx, fy);
             
             // Draw the actual Emoji LARGE and without background circle
-            pacmanCtx.shadowBlur = 15;
-            pacmanCtx.shadowColor = fruitColor;
             pacmanCtx.font = "36px 'Segoe UI Emoji', Arial, sans-serif";
             pacmanCtx.textAlign = "center";
             pacmanCtx.textBaseline = "middle";
             pacmanCtx.fillText(fr.type, 0, 0);
-            
-            pacmanCtx.shadowBlur = 0; // Turn off shadow
             
             pacmanCtx.restore();
         }
@@ -2342,26 +2755,30 @@ function drawPacman() {
         var gx = (gh.x + (gh.targetX - gh.x) * gh.progress) * pacmanTileSize + pacmanTileSize / 2;
         var gy = (gh.y + (gh.targetY - gh.y) * gh.progress) * pacmanTileSize + pacmanTileSize / 2;
         
-        var colorToUse = pacmanPowerMode ? (Math.floor(Date.now() / 200) % 2 === 0 ? '#0000ff' : '#ffffff') : gh.color;
-        var bodySprite = getGhostBodySprite(colorToUse);
+        if (!gh.isDead) {
+            var colorToUse = pacmanPowerMode ? (Math.floor(Date.now() / 200) % 2 === 0 ? '#0000ff' : '#ffffff') : gh.color;
+            var bodySprite = getGhostBodySprite(colorToUse);
+            
+            // Draw cached glowing body
+            pacmanCtx.drawImage(bodySprite, gx - bodySprite.width/2, gy - bodySprite.height/2);
+        }
         
-        // Draw cached glowing body
-        pacmanCtx.drawImage(bodySprite, gx - bodySprite.width/2, gy - bodySprite.height/2);
+        // Draw eyes dynamically (same size alive or dead)
+        var eyeScale = 1.5;
         
-        // Draw eyes dynamically
         var eyeOffsetX = 0, eyeOffsetY = 0;
-        if (gh.dir === 'left') eyeOffsetX = -2;
-        else if (gh.dir === 'right') eyeOffsetX = 2;
-        else if (gh.dir === 'up') eyeOffsetY = -2;
-        else if (gh.dir === 'down') eyeOffsetY = 2;
+        if (gh.dir === 'left') eyeOffsetX = -2 * eyeScale;
+        else if (gh.dir === 'right') eyeOffsetX = 2 * eyeScale;
+        else if (gh.dir === 'up') eyeOffsetY = -2 * eyeScale;
+        else if (gh.dir === 'down') eyeOffsetY = 2 * eyeScale;
         
         pacmanCtx.fillStyle = '#ffffff';
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 + eyeOffsetX, gy - 6 + eyeOffsetY, 4, 0, Math.PI*2); pacmanCtx.fill();
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 + eyeOffsetX, gy - 6 + eyeOffsetY, 4, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 * eyeScale + eyeOffsetX, gy - 6 * eyeScale + eyeOffsetY, 4 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 * eyeScale + eyeOffsetX, gy - 6 * eyeScale + eyeOffsetY, 4 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
         
-        pacmanCtx.fillStyle = pacmanPowerMode ? '#ff0000' : '#0000ff';
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 + eyeOffsetX*2, gy - 6 + eyeOffsetY*2, 2, 0, Math.PI*2); pacmanCtx.fill();
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 + eyeOffsetX*2, gy - 6 + eyeOffsetY*2, 2, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.fillStyle = pacmanPowerMode && !gh.isDead ? '#ff0000' : '#0000ff';
+        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 * eyeScale + eyeOffsetX*2, gy - 6 * eyeScale + eyeOffsetY*2, 2 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 * eyeScale + eyeOffsetX*2, gy - 6 * eyeScale + eyeOffsetY*2, 2 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
     });
     
     // Render Gift Drops
@@ -2379,9 +2796,7 @@ function drawPacman() {
                 var img = getGiftImage(g.giftPictureUrl);
                 if (img && img.complete) {
                     pacmanCtx.save();
-                    // Glowing effect
-                    pacmanCtx.shadowColor = '#ffffff';
-                    pacmanCtx.shadowBlur = 15;
+                    // Simplified drawing without shadowBlur
                     pacmanCtx.drawImage(img, px - size / 2, py - size / 2, size, size);
                     pacmanCtx.restore();
                 } else {
@@ -2405,7 +2820,7 @@ function drawPacman() {
         
         var px = (pl.x + (pl.targetX - pl.x) * pl.progress) * pacmanTileSize + pacmanTileSize / 2;
         var py = (pl.y + (pl.targetY - pl.y) * pl.progress) * pacmanTileSize + pacmanTileSize / 2;
-        var radius = pacmanTileSize * 0.58;
+        var radius = pacmanTileSize * 0.75;
         var giantScale = pl.giantTimer > 0 ? 2.5 : 1.0;
         radius *= giantScale;
         
@@ -2463,8 +2878,6 @@ function drawPacman() {
             
             // Draw glowing outline of Pac-Man shape over avatar
             pacmanCtx.rotate(rotAngle); // rotate back for the stroke
-            pacmanCtx.shadowBlur = 12 * giantScale;
-            pacmanCtx.shadowColor = pl.color;
             pacmanCtx.strokeStyle = pl.color;
             pacmanCtx.lineWidth = 4 * giantScale;
             pacmanCtx.stroke();
@@ -2487,10 +2900,33 @@ function drawPacman() {
             pacmanCtx.arc(px - (pl.lives - 1) * 3 + (l * 6), livesIndicatorY, 2, 0, Math.PI * 2);
             pacmanCtx.fill();
         }
+        
+        // Draw Energy Tank Bar
+        if (pl.likeEnergy && pl.likeEnergy > 0) {
+            var barW = 30 * giantScale;
+            var barH = 4 * giantScale;
+            var barY = livesIndicatorY + 6;
+            
+            // Background
+            pacmanCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            pacmanCtx.fillRect(px - barW / 2, barY, barW, barH);
+            
+            // Foreground Fill
+            var fillPct = Math.min(1.0, pl.likeEnergy / 100);
+            pacmanCtx.fillStyle = '#00ffcc'; // neon cyan
+            pacmanCtx.fillRect(px - barW / 2, barY, barW * fillPct, barH);
+            
+            // Draw border
+            pacmanCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            pacmanCtx.lineWidth = 1;
+            pacmanCtx.strokeRect(px - barW / 2, barY, barW, barH);
+        }
     }
     
     // Draw Clones
     pacmanClones.forEach(function(cl) {
+        if (cl.spawnDelay > 0) return;
+        
         var px = (cl.x + (cl.targetX - cl.x) * cl.progress + 0.5) * pacmanTileSize;
         var py = (cl.y + (cl.targetY - cl.y) * cl.progress + 0.5) * pacmanTileSize;
         
@@ -2504,7 +2940,7 @@ function drawPacman() {
         else if (cl.dir === 'up') rotAngle = -Math.PI / 2;
         
         var avatarImg = getAvatarImage(cl.owner, cl.avatar);
-        var radius = pacmanTileSize * 0.52;
+        var radius = pacmanTileSize * 0.65;
         
         if (avatarImg && avatarImg.complete && avatarImg.naturalWidth !== 0) {
             var mOpen = [Math.PI / 4.5, Math.PI / 8, 0.05][frameIndex];
@@ -2529,8 +2965,6 @@ function drawPacman() {
             pacmanCtx.restore();
             
             pacmanCtx.globalAlpha = 0.6;
-            pacmanCtx.shadowBlur = 10;
-            pacmanCtx.shadowColor = cl.color;
             pacmanCtx.strokeStyle = cl.color;
             pacmanCtx.lineWidth = 3.5;
             pacmanCtx.stroke();
@@ -2756,21 +3190,17 @@ function processTikTokGift(data) {
     // Spawn sender if not spawned so they get credit for playing
     spawnPacmanPlayer(user, data.avatar || '');
     
-    // In vez de ativar instantaneamente, cria o DROP no mapa!
-    var pos = getAvailableGiftSpawnPosition();
-    pacmanGiftDrops.push({
-        x: pos.x,
-        y: pos.y,
-        active: true,
-        gift: gift,
-        giftPictureUrl: data.giftPictureUrl,
-        sender: user,
-        diamondCount: diamondCount,
-        repeatCount: repeatCount
-    });
-    
-    pushAlertEvent(`🎁 @${user} enviou um Presente Mágico! Ele caiu no mapa!`);
-    AudioSynth.playTone(600, 'sine', 0.2, 0.1);
+    // Aplica o presente diretamente ao dono (quem enviou na live)
+    var pl = pacmanPlayers[user];
+    if (pl) {
+        var dummyDrop = {
+            gift: gift,
+            sender: user,
+            diamondCount: diamondCount,
+            repeatCount: repeatCount
+        };
+        activateGiftPower(pl, user, dummyDrop);
+    }
 }
 
 function activateGiftPower(pl, userName, giftDrop) {
@@ -2794,13 +3224,14 @@ function activateGiftPower(pl, userName, giftDrop) {
     spawnTextParticle(pl.x, pl.y, `TURBO +${Math.round((multiplier - 1.0)*100)}%`, '#ffff00');
     
     // Map of TikTok gifts to in-game actions
-    if (gift === 'rose' || gift === 'rosa' || gift === 'love') {
+    if (gift.includes('rose') || gift.includes('rosa') || gift.includes('love')) {
         pl.powerTimer = (pl.powerTimer || 0) + 1800; // 30 seconds
+        pl.autoEnergyTimer = (pl.autoEnergyTimer || 0) + 1800;
         pl.ghostComboCount = 0;
         AudioSynth.playTone(880, 'sine', 0.4, 0.1);
         spawnTextParticle(pl.x, pl.y, 'PÍLULA DE PODER!', '#ff0055');
         pushAlertEvent(`💪 @${consumerName} pegou a Rosa! Apenas ele pode comer fantasmas!`);
-    } else if (gift === 'tiktok' || gift === 'coracao' || gift === 'heart') {
+    } else if (gift.includes('tiktok') || gift.includes('coracao') || gift.includes('heart')) {
         for (var p in pacmanPlayers) {
             if (pacmanPlayers[p].lives > 0 && pacmanPlayers[p].lives < 5) {
                 pacmanPlayers[p].lives++;
@@ -2809,14 +3240,14 @@ function activateGiftPower(pl, userName, giftDrop) {
         }
         AudioSynth.playTone(523, 'sine', 0.25, 0.1);
         pushAlertEvent(`💪 @${consumerName} pegou o TikTok de @${user}! Vida extra para todos!`);
-    } else if (gift === 'finger heart' || gift === 'cherry' || gift === 'cereja') {
+    } else if (gift.includes('cherry') || gift.includes('cereja')) {
         spawnFruit();
         pushAlertEvent(`💪 @${consumerName} comeu a Cereja! Fruta Bônus gerada!`);
-    } else if (gift === 'gg') {
+    } else if (gift.includes('gg')) {
         pl.speedBoostTimer = (pl.speedBoostTimer || 0) + 1200; // Acumula +20 segundos
         spawnTextParticle(pl.x, pl.y, 'HIPER VELOCIDADE!', '#ffff00');
         pushAlertEvent(`🚀 @${consumerName} pegou o GG de @${user}! Aceleração Máxima!`);
-    } else if (gift === 'amo voce' || gift === 'love you') {
+    } else if (gift.includes('amo voce') || gift.includes('love you') || gift.includes('finger heart') || gift.includes('hand heart') || gift.includes('heart me') || gift.includes('maos fazendo') || gift.includes('mãos fazendo')) {
         var existingClones = pacmanClones.filter(function(c) { return c.owner === consumerName; });
         if (existingClones.length > 0) {
             existingClones.forEach(function(c) { c.timer += 3600; }); // +60 segundos
@@ -2827,16 +3258,18 @@ function activateGiftPower(pl, userName, giftDrop) {
             for (var i = 0; i < 5; i++) {
                 pacmanClones.push({
                     owner: consumerName, x: pl.x, y: pl.y, targetX: pl.x, targetY: pl.y, progress: 0,
-                    dir: cloneDirs[i], timer: 3600, color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0
+                    dir: cloneDirs[i], timer: 3600, color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
+                    spawnDelay: i * 90 // 1.5 seconds delay between each clone
                 });
             }
             spawnTextParticle(pl.x, pl.y, 'CLONES ATIVADOS!', '#ff66ff');
             pushAlertEvent(`💕 @${consumerName} acionou os Clones com o presente de @${user}!`);
         }
-    } else if (gift === 'rosquinha' || gift === 'donut') {
-        pl.giantTimer = 1800; // 30 seconds
+    } else if (gift.includes('rosquinha') || gift.includes('donut') || gift.includes('doughnut')) {
+        pl.giantTimer = 600; // ~10 seconds (60 frames * 10)
+        pl.autoEnergyTimer = (pl.autoEnergyTimer || 0) + 600;
         AudioSynth.playTone(400, 'sine', 0.5, 0.2); // Special sound
-        spawnTextParticle(pl.x, pl.y, 'MODO GIGANTE!', '#ffaa00');
+        spawnTextParticle(pl.x, pl.y, 'MODO GIGANTE!', pacmanThemeDotColor);
         pushAlertEvent(`🍩 @${consumerName} pegou a Rosquinha e virou GIGANTE destruidor!`);
         
         pacmanZoomTarget = {
@@ -2850,6 +3283,7 @@ function activateGiftPower(pl, userName, giftDrop) {
         pacmanZoomCooldown = 900;
     } else {
         // Fallback
+        pushAlertEvent(`🎁 PRESENTE DESCONHECIDO: '${gift}' - Fruta bônus gerada!`);
         spawnFruit();
     }
 }
@@ -2869,11 +3303,8 @@ function processTikTokLike(data) {
     pl.lastActivityTime = Date.now();
     
     // Record likes/taps timestamps
-    if (!pl.tapTimestamps) pl.tapTimestamps = [];
-    var now = Date.now();
-    for (var i = 0; i < likes; i++) {
-        pl.tapTimestamps.push(now);
-    }
+    pl.likeEnergy = (pl.likeEnergy || 0) + (likes * 10);
+    if (pl.likeEnergy > 100) pl.likeEnergy = 100; // Cap max energy at 100
     
     pl.likesBuffer += likes;
     var fuelToAdd = Math.floor(pl.likesBuffer / 5);
@@ -2933,7 +3364,7 @@ function spawnConfetti(count, initial) {
 }
 
 function spawnFirework(x, y) {
-    var sparkCount = 40 + Math.floor(Math.random() * 20);
+    var sparkCount = 12 + Math.floor(Math.random() * 8); // Reduced from 40-60 to 12-20
     var baseHue = Math.floor(Math.random() * 360);
     for (var i = 0; i < sparkCount; i++) {
         var angle = Math.random() * Math.PI * 2;
@@ -3005,7 +3436,7 @@ function queueSubscriberCelebration(userName, avatarUrl, titleText) {
         user: userName,
         avatar: avatarUrl || '',
         title: titleText || 'NOVO INSCRITO!',
-        timer: 300 // 5 seconds
+        timer: 120 // 2 seconds (mais rápido)
     });
     
     if (avatarUrl) {
@@ -3017,8 +3448,7 @@ function updateActiveCelebration() {
     if (!pacmanActiveCelebration) {
         if (pacmanCelebrationQueue.length > 0) {
             pacmanActiveCelebration = pacmanCelebrationQueue.shift();
-            spawnConfetti(100, true);
-            spawnFirework(200 + Math.random() * 680, 400 + Math.random() * 400);
+            spawnConfetti(20, true); // Reduced from 100 to 20
             spawnFirework(200 + Math.random() * 680, 400 + Math.random() * 400);
             AudioSynth.playTone(600, 'sine', 0.3, 0.1);
             setTimeout(function() { AudioSynth.playTone(800, 'sine', 0.3, 0.1); }, 150);
@@ -3028,11 +3458,11 @@ function updateActiveCelebration() {
     if (pacmanActiveCelebration) {
         pacmanActiveCelebration.timer--;
         
-        if (Math.random() < 0.35) {
-            spawnConfetti(3, false);
+        if (Math.random() < 0.1) { // Reduced chance from 35% to 10%
+            spawnConfetti(1, false); // Reduced from 3 to 1
         }
         
-        if (pacmanActiveCelebration.timer % 40 === 0) {
+        if (pacmanActiveCelebration.timer === 60) { // Only spawn 1 extra firework exactly in the middle of the timer
             spawnFirework(200 + Math.random() * 680, 300 + Math.random() * 600);
             AudioSynth.playTone(150 + Math.random() * 200, 'sine', 0.1, 0.05);
         }
@@ -3058,36 +3488,11 @@ function drawSubscriberCelebrationBanner() {
     
     pacmanCtx.save();
     
-    // 1. Glowing Neon Background
-    pacmanCtx.shadowBlur = 40;
-    pacmanCtx.shadowColor = '#00ffff';
-    
-    // Draw rounded rect
-    var radius = 30;
-    pacmanCtx.beginPath();
-    pacmanCtx.moveTo(cardX + radius, cardY);
-    pacmanCtx.lineTo(cardX + cardW - radius, cardY);
-    pacmanCtx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + radius);
-    pacmanCtx.lineTo(cardX + cardW, cardY + cardH - radius);
-    pacmanCtx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - radius, cardY + cardH);
-    pacmanCtx.lineTo(cardX + radius, cardY + cardH);
-    pacmanCtx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - radius);
-    pacmanCtx.lineTo(cardX, cardY + radius);
-    pacmanCtx.quadraticCurveTo(cardX, cardY, cardX + radius, cardY);
-    pacmanCtx.closePath();
-    
-    var grd = pacmanCtx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-    grd.addColorStop(0, "rgba(5, 10, 30, 0.95)");
-    grd.addColorStop(1, "rgba(20, 30, 60, 0.95)");
-    pacmanCtx.fillStyle = grd;
-    pacmanCtx.fill();
-    
-    // Glowing border
-    pacmanCtx.lineWidth = 5;
-    pacmanCtx.strokeStyle = '#00ffff';
-    pacmanCtx.stroke();
-    
-    pacmanCtx.shadowBlur = 0; // reset shadow for text
+    // Efeito Pulsante
+    var pulse = 1.0 + Math.sin(Date.now() / 80) * 0.08;
+    pacmanCtx.translate(cardX + cardW/2, cardY + cardH/2);
+    pacmanCtx.scale(pulse, pulse);
+    pacmanCtx.translate(-(cardX + cardW/2), -(cardY + cardH/2));
     
     // 2. Avatar
     var avatarX = cardX + 150;
@@ -3106,7 +3511,7 @@ function drawSubscriberCelebrationBanner() {
         pacmanCtx.drawImage(avatarImg, avatarX - avatarRadius, avatarY - avatarRadius, avatarRadius * 2, avatarRadius * 2);
         pacmanCtx.restore();
     } else {
-        pacmanCtx.fillStyle = '#ffaa00';
+        pacmanCtx.fillStyle = pacmanThemeDotColor;
         pacmanCtx.beginPath();
         pacmanCtx.arc(avatarX, avatarY, avatarRadius, 0, Math.PI * 2);
         pacmanCtx.fill();
@@ -3482,7 +3887,8 @@ function gameLoop() {
                 var totalDots = pacmanDots.length;
                 var activeDots = pacmanDots.filter(function(d) { return d.active; }).length;
                 var eatenRatio = (totalDots - activeDots) / (totalDots || 1);
-                AudioSynth.updateSiren(true, pacmanPowerMode, eatenRatio);
+                // Sirene ambiente (sem barulho alto/alarme para powerMode para ficar sutil)
+                AudioSynth.updateSiren(true, false, eatenRatio);
             } else {
                 AudioSynth.updateSiren(false);
             }
@@ -3495,13 +3901,17 @@ function gameLoop() {
             }
  
             // Throttle leaderboard DOM updates (at most once every 60 frames / 1 second)
-            leaderboardUpdateCounter++;
-            if (leaderboardUpdateCounter >= 60) {
-                leaderboardUpdateCounter = 0;
-                commitLeaderboardUpdate();
-            }
+            // leaderboardUpdateCounter++;
+            // if (leaderboardUpdateCounter >= 60) {
+            //     leaderboardUpdateCounter = 0;
+            //     commitLeaderboardUpdate(); // Atualizacao continua removida para evitar travamento
+            // }
             
-            updateEntities();
+            if (window.pacmanHitStopTimer > 0) {
+                window.pacmanHitStopTimer--;
+            } else {
+                updateEntities();
+            }
             updateParticles();
             
             // --- Dynamic Fruit Spawning & Despawning ---
@@ -3592,7 +4002,7 @@ function gameLoop() {
         drawSubscriberCelebrationBanner();
         
         // Draw combo popup
-        // drawComboPopup(); // Cancelado a pedido do usuario
+        drawComboPopup();
         
 
 
@@ -3610,22 +4020,106 @@ function drawComboPopup() {
     pacmanCtx.save();
     
     var cx = w / 2;
-    var cy = 700;
-    var avatarSize = 120;
+    var cy = 180; // Top of the screen
     
-    pacmanCtx.fillStyle = pacmanComboPopup.color;
+    var maxTimer = 180;
+    var life = pacmanComboPopup.timer / maxTimer; // 1.0 to 0.0
+    var scale = 1.0;
+    if (life > 0.9) {
+        scale = 1.0 + (1.0 - life) * 10; // Pop-in effect
+    } else if (life < 0.1) {
+        scale = life * 10; // Pop-out effect
+    }
+    
+    // Progression effect
+    var combo = pacmanComboPopup.combo;
+    var effectScale = 1.0 + (combo * 0.1); 
+    var glowSize = combo * 10;
+    var shadowColor = pacmanComboPopup.color;
+    
+    // Pulsação de acordo com o tamanho do combo
+    var pulse = 1.0 + Math.sin(Date.now() / (150 - combo * 15)) * (0.05 + combo * 0.02);
+    
+    pacmanCtx.translate(cx, cy);
+    pacmanCtx.scale(scale * effectScale * pulse, scale * effectScale * pulse);
+    
+    // Add screen shake for high combos
+    if (combo >= 3) {
+        var intensity = (combo - 2) * 2;
+        pacmanCtx.translate((Math.random() - 0.5) * intensity, (Math.random() - 0.5) * intensity);
+    }
+    
+    var bannerW = 600;
+    var bannerH = 120;
+    
+    // Efeito de sombra removido para garantir mais fluidez (performance)
+    pacmanCtx.shadowBlur = 0;
+    pacmanCtx.shadowColor = 'transparent';
+    
+    // Draw Avatar (Left)
+    var avatarSize = 80;
+    var leftX = -bannerW/2 + 80;
+    pacmanCtx.save();
     pacmanCtx.beginPath();
-    pacmanCtx.arc(cx, cy, avatarSize / 2, 0, Math.PI * 2);
-    pacmanCtx.fill();
+    pacmanCtx.arc(leftX, 0, avatarSize/2, 0, Math.PI * 2);
+    pacmanCtx.clip();
+    var avatarImg = getAvatarImage(pacmanComboPopup.user, pacmanComboPopup.avatar);
+    if (avatarImg && avatarImg.complete) {
+        pacmanCtx.drawImage(avatarImg, leftX - avatarSize/2, -avatarSize/2, avatarSize, avatarSize);
+    } else {
+        pacmanCtx.fillStyle = pacmanComboPopup.color;
+        pacmanCtx.fill();
+    }
+    pacmanCtx.restore();
     
+    // Avatar border
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(leftX, 0, avatarSize/2, 0, Math.PI * 2);
+    pacmanCtx.lineWidth = 4;
+    pacmanCtx.strokeStyle = pacmanComboPopup.color;
+    pacmanCtx.stroke();
+    
+    // Draw Ghost (Right)
+    var rightX = bannerW/2 - 80;
+    var ghostColor = pacmanComboPopup.ghostColor || '#0000ff';
+    var ghostSprite = getGhostBodySprite(ghostColor);
+    var gScale = 1.6;
+    
+    pacmanCtx.drawImage(ghostSprite, rightX - (ghostSprite.width*gScale)/2, - (ghostSprite.height*gScale)/2 + 5, ghostSprite.width*gScale, ghostSprite.height*gScale);
+    
+    // Ghost Dead Eyes
+    var eyeScale = gScale;
+    pacmanCtx.fillStyle = '#ffffff';
+    pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5*eyeScale, - 6*eyeScale, 4*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+    pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5*eyeScale, - 6*eyeScale, 4*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+    pacmanCtx.fillStyle = pacmanComboPopup.color; // The eater's color in the eyes!
+    pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5*eyeScale, - 6*eyeScale, 2*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+    pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5*eyeScale, - 6*eyeScale, 2*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+    
+    // Texts
     pacmanCtx.fillStyle = '#ffff00';
-    pacmanCtx.font = "bold 28px monospace";
+    if (combo >= 4) {
+        pacmanCtx.fillStyle = '#ff00ff'; // Legendary combo
+    } else if (combo >= 3) {
+        pacmanCtx.fillStyle = '#00ffff'; // Epic combo
+    } else if (combo >= 2) {
+        pacmanCtx.fillStyle = pacmanThemeDotColor; // Great combo
+    } else {   
+        pacmanCtx.fillStyle = pacmanThemeDotColor; 
+    }
+    
+    pacmanCtx.font = "bold 32px 'Press Start 2P', monospace";
     pacmanCtx.textAlign = 'center';
-    pacmanCtx.fillText('COMBO X' + pacmanComboPopup.combo + '!', cx, cy + avatarSize / 2 + 40);
-    pacmanCtx.font = "bold 20px monospace";
-    pacmanCtx.fillText('@' + pacmanComboPopup.user, cx, cy + avatarSize / 2 + 70);
-    pacmanCtx.font = "bold 24px monospace";
-    pacmanCtx.fillText('+' + pacmanComboPopup.points + ' pts', cx, cy + avatarSize / 2 + 100);
+    pacmanCtx.textBaseline = 'middle';
+    pacmanCtx.fillText('COMBO X' + combo, 0, -20);
+    
+    pacmanCtx.fillStyle = '#ffffff';
+    pacmanCtx.font = "bold 20px 'Press Start 2P', monospace";
+    pacmanCtx.fillText('+' + pacmanComboPopup.points + ' PTS', 0, 20);
+    
+    pacmanCtx.font = "bold 14px 'Outfit', sans-serif";
+    pacmanCtx.fillStyle = pacmanComboPopup.color;
+    pacmanCtx.fillText('@' + pacmanComboPopup.user, 0, bannerH/2 + 25);
     
     pacmanCtx.restore();
 }
