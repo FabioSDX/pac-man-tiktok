@@ -48,6 +48,20 @@
                         <span class="logo-emoji">👾</span>
                         <h2>PAC-MAN SETUP</h2>
                     </div>
+
+                    <!-- Faturamento Diário -->
+                    <div class="setup-section finance-border" style="border-left-color: #00ffcc; text-align: center; background: rgba(0,255,204,0.05);">
+                        <div class="platform-title"><span class="icon">💰</span> Faturamento Diário</div>
+                        <div style="margin-top: 10px;">
+                            <div id="revenueDiamonds" style="font-size: 14px; font-weight: 600; color: #ff00ff; margin-bottom: 5px;">💎 0 Diamantes</div>
+                            <div id="revenueUsd" style="font-size: 24px; font-weight: 800; color: #00ffcc;">US$ 0.00</div>
+                            <div id="revenueBrl" style="font-size: 16px; font-weight: 600; color: #ffff00; margin-top: 4px;">R$ 0.00</div>
+                        </div>
+                        <div style="margin-top: 8px; font-size: 11px; color: #aaa;">
+                            Cotação USD/BRL: <span id="usdQuote">Buscando...</span>
+                        </div>
+                        <button class="btn-control" onclick="if(confirm('Tem certeza que deseja zerar a contagem de faturamento de hoje?')) resetDailyRevenue()" style="margin-top: 10px; font-size: 10px; padding: 6px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">Resetar Contagem de Hoje</button>
+                    </div>
                     
                     <!-- TikTok Connection -->
                     <div class="setup-section tiktok-border">

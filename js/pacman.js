@@ -55,6 +55,92 @@ var pacmanInitialLeaderSet = false;
 var pacmanParticles = [];
 var pacmanTextParticles = [];
 
+// ==========================================
+// Daily Revenue & Quotes Logic
+// ==========================================
+var pacmanDailyRevenueDiamonds = 0;
+var pacmanUsdQuote = 5.0; // Fallback
+
+function initDailyRevenue() {
+    var today = new Date().toISOString().slice(0, 10);
+    var storedDate = localStorage.getItem('pacmanRevenueDate');
+    
+    if (storedDate !== today) {
+        localStorage.setItem('pacmanRevenueDate', today);
+        localStorage.setItem('pacmanDailyRevenueDiamonds', '0');
+        pacmanDailyRevenueDiamonds = 0;
+        fetchDailyQuote();
+    } else {
+        pacmanDailyRevenueDiamonds = parseInt(localStorage.getItem('pacmanDailyRevenueDiamonds') || '0', 10);
+        pacmanUsdQuote = parseFloat(localStorage.getItem('pacmanUsdQuote') || '5.0');
+        renderFinancePanel();
+        
+        var lastQuoteDate = localStorage.getItem('pacmanUsdQuoteDate');
+        if (lastQuoteDate !== today) {
+            fetchDailyQuote();
+        }
+    }
+}
+
+function fetchDailyQuote() {
+    var today = new Date().toISOString().slice(0, 10);
+    var lblQuote = document.getElementById('usdQuote');
+    if (lblQuote) lblQuote.textContent = 'Buscando API...';
+    
+    fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL')
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            if (data && data.USDBRL && data.USDBRL.bid) {
+                pacmanUsdQuote = parseFloat(data.USDBRL.bid);
+                localStorage.setItem('pacmanUsdQuote', pacmanUsdQuote);
+                localStorage.setItem('pacmanUsdQuoteDate', today);
+                renderFinancePanel();
+            }
+        })
+        .catch(function(err) {
+            console.error('Erro ao buscar cotação USD-BRL:', err);
+            if (lblQuote) lblQuote.textContent = 'R$ ' + pacmanUsdQuote.toFixed(2) + ' (Cache)';
+        });
+}
+
+function updateDailyRevenue(diamonds) {
+    if (!diamonds || diamonds <= 0) return;
+    pacmanDailyRevenueDiamonds += diamonds;
+    localStorage.setItem('pacmanDailyRevenueDiamonds', pacmanDailyRevenueDiamonds);
+    renderFinancePanel();
+}
+
+function resetDailyRevenue() {
+    pacmanDailyRevenueDiamonds = 0;
+    localStorage.setItem('pacmanDailyRevenueDiamonds', '0');
+    renderFinancePanel();
+}
+
+function renderFinancePanel() {
+    var lblUsd = document.getElementById('revenueUsd');
+    var lblBrl = document.getElementById('revenueBrl');
+    var lblQuote = document.getElementById('usdQuote');
+    var lblDiam = document.getElementById('revenueDiamonds');
+    
+    if (!lblUsd || !lblBrl) return;
+    
+    // 1 Diamond = US$ 0.005 approx
+    var revenueUsd = pacmanDailyRevenueDiamonds * 0.005;
+    var revenueBrl = revenueUsd * pacmanUsdQuote;
+    
+    if (lblDiam) {
+        lblDiam.textContent = '💎 ' + pacmanDailyRevenueDiamonds + (pacmanDailyRevenueDiamonds === 1 ? ' Diamante' : ' Diamantes');
+    }
+    lblUsd.textContent = 'US$ ' + revenueUsd.toFixed(2);
+    lblBrl.textContent = 'R$ ' + revenueBrl.toFixed(2);
+    
+    if (lblQuote) {
+        lblQuote.textContent = 'R$ ' + pacmanUsdQuote.toFixed(2);
+    }
+}
+// Initialize on load
+setTimeout(initDailyRevenue, 1500);
+
 // Pre-render heart emoji to an offscreen canvas to massively improve performance
 var cachedHeartCanvas = document.createElement('canvas');
 cachedHeartCanvas.width = 32;
@@ -1976,6 +2062,7 @@ function checkGhostCollisions() {
                     var pointsAwarded = 100 * Math.pow(2, comboIndex);
                     
                     pl.roundScore = (pl.roundScore || 0) + pointsAwarded;
+                    pl.score = (pl.score || 0) + pointsAwarded;
                     pacmanScore += pointsAwarded;
                     gh.isDead = true;
                     gh.x = Math.round(gh.x + (gh.targetX - gh.x) * gh.progress);
@@ -3186,6 +3273,9 @@ function processTikTokGift(data) {
     var gift = (data.giftName || '').toLowerCase().trim();
     var diamondCount = data.diamondCount || 1;
     var repeatCount = data.repeatCount || 1;
+    
+    // Atualiza o painel financeiro (Contabilidade de faturamento)
+    updateDailyRevenue(diamondCount * repeatCount);
     
     // Spawn sender if not spawned so they get credit for playing
     spawnPacmanPlayer(user, data.avatar || '');
