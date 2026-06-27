@@ -31,6 +31,12 @@
     <input id="pickInterval" type="number" value="10" min="1" max="120">
     <div class="info">How often the pickaxe type changes randomly.</div>
 
+    <label style="margin-top:20px; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="useGiftImages" style="width:auto; margin:0;">
+      Use Original Gift Images (Risky)
+    </label>
+    <div class="info">If unchecked, safe text badges will be used instead of real gift images to prevent blocks.</div>
+
     <button class="btn" onclick="saveConfig()">Save & Play</button>
     <button class="btn btn-secondary" onclick="clearData()">Clear All Saved Data</button>
     <div class="msg" id="msg">Settings saved!</div>
@@ -40,6 +46,8 @@
     var cfg = JSON.parse(localStorage.getItem('pd_config') || '{}');
     if (cfg.owner_name) document.getElementById('ownerName').value = cfg.owner_name;
     if (cfg.pickaxe_change_interval) document.getElementById('pickInterval').value = cfg.pickaxe_change_interval;
+    document.getElementById('useGiftImages').checked = cfg.use_gift_images === true;
+
     if (cfg.channel_title) {
       document.getElementById('ownerInfo').innerHTML = 'Auto-detected from channel: <span style="color:#00ff88">' + cfg.channel_title + '</span>. You can override it manually.';
     }
@@ -48,6 +56,7 @@
       var existing = JSON.parse(localStorage.getItem('pd_config') || '{}');
       existing.owner_name = document.getElementById('ownerName').value.trim();
       existing.pickaxe_change_interval = parseInt(document.getElementById('pickInterval').value) || 10;
+      existing.use_gift_images = document.getElementById('useGiftImages').checked;
       localStorage.setItem('pd_config', JSON.stringify(existing));
       var msg = document.getElementById('msg');
       msg.textContent = 'Settings saved!';

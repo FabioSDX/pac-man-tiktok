@@ -192,7 +192,9 @@ function attachTikTokEvents(ws, tiktok, username, session) {
       type: 'gift', platform: 'tiktok', user: uid, nickname: nick, avatar: av,
       giftName: (data.giftName || data.describe || '').toLowerCase(), diamondCount: data.diamondCount || 1,
       repeatCount: data.repeatCount || 1, giftId: data.giftId || 0, msgId: data.msgId,
-      giftPictureUrl: data.giftPictureUrl || (data.extendedGiftInfo && data.extendedGiftInfo.icon && data.extendedGiftInfo.icon.url_list ? data.extendedGiftInfo.icon.url_list[0] : '')
+      giftPictureUrl: data.giftPictureUrl || (data.extendedGiftInfo && data.extendedGiftInfo.icon && data.extendedGiftInfo.icon.url_list ? data.extendedGiftInfo.icon.url_list[0] : ''),
+      giftAnimationUrl: data.extendedGiftInfo && data.extendedGiftInfo.image && data.extendedGiftInfo.image.url_list ? data.extendedGiftInfo.image.url_list[0] : '',
+      giftType: data.giftType || 0
     });
   });
   tiktok.on('like', function (data) {

@@ -12490,19 +12490,50 @@ var persistentScores = {};
             else if (giftLabel.includes('CORAÇÃO') || giftLabel.includes('CORACAO')) giftLabel = 'HEART';
             textWrap.innerHTML = '<span style="color:#ffdd44;">' + userName + '</span> sent <span style="color:#00ffff;">' + giftLabel + '</span>!';
 
-            var giftImg = document.createElement('img');
-            if (giftImgUrl && !giftImgUrl.endsWith('/')) {
-                giftImg.src = getProxyUrl(giftImgUrl);
+            var pdConfig = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            var useGiftImages = pdConfig.use_gift_images === true;
+
+            var giftVisual;
+            if (useGiftImages) {
+                giftVisual = document.createElement('img');
+                if (giftImgUrl && !giftImgUrl.endsWith('/')) {
+                    giftVisual.src = getProxyUrl(giftImgUrl);
+                } else {
+                    giftVisual.src = defGift;
+                }
+                giftVisual.style.width = '40px';
+                giftVisual.style.height = '40px';
+                giftVisual.style.objectFit = 'contain';
             } else {
-                giftImg.src = defGift;
+                giftVisual = document.createElement('div');
+                giftVisual.style.background = 'linear-gradient(135deg, #ff0050, #00f2fe)';
+                giftVisual.style.borderRadius = '12px';
+                giftVisual.style.padding = '4px 12px';
+                giftVisual.style.color = '#fff';
+                giftVisual.style.fontWeight = 'bold';
+                giftVisual.style.fontSize = '14px';
+                giftVisual.style.display = 'flex';
+                giftVisual.style.alignItems = 'center';
+                giftVisual.style.justifyContent = 'center';
+                giftVisual.style.border = '2px solid rgba(255,255,255,0.5)';
+                giftVisual.style.boxShadow = '0 0 10px rgba(255,0,80,0.5)';
+                giftVisual.innerText = '⚡ POWER';
+
+                if (giftLabel.includes('ROSE')) { giftVisual.innerText = '🌹 ROSE'; giftVisual.style.background = '#e91e63'; }
+                else if (giftLabel.includes('HEART')) { giftVisual.innerText = '💖 HEART'; giftVisual.style.background = '#f44336'; }
+                else if (giftLabel.includes('GG')) { giftVisual.innerText = '🎮 GG'; giftVisual.style.background = '#9c27b0'; }
+                else if (giftLabel.includes('CAKE')) { giftVisual.innerText = '🍰 CAKE'; giftVisual.style.background = '#ff9800'; }
+                else if (giftLabel.includes('DONUT')) { giftVisual.innerText = '🍩 DONUT'; giftVisual.style.background = '#ff9800'; }
+                else if (giftLabel.includes('PERFUME')) { giftVisual.innerText = '✨ PERFUME'; giftVisual.style.background = '#00bcd4'; }
+                else if (giftLabel.includes('POPULAR')) { giftVisual.innerText = '🎁 POPULAR'; giftVisual.style.background = '#3f51b5'; }
+                else if (giftLabel.includes('HAT') || giftLabel.includes('MUSTACHE')) { giftVisual.innerText = '🎩 HAT'; giftVisual.style.background = '#212121'; }
+                else if (giftLabel.includes('MISHA') || giftLabel.includes('BEAR')) { giftVisual.innerText = '🧸 BEAR'; giftVisual.style.background = '#795548'; }
+                else if (giftLabel.includes('HOMER')) { giftVisual.innerText = '🍩 HOMER'; giftVisual.style.background = '#ffeb3b'; giftVisual.style.color = '#000'; }
             }
-            giftImg.style.width = '40px';
-            giftImg.style.height = '40px';
-            giftImg.style.objectFit = 'contain';
 
             alertEl.appendChild(av);
             alertEl.appendChild(textWrap);
-            alertEl.appendChild(giftImg);
+            alertEl.appendChild(giftVisual);
 
             if (rewardInfo) {
                 var separator = document.createElement('span');
@@ -13729,7 +13760,7 @@ var persistentScores = {};
             document.getElementById('ttsVoice').style.display = (_ttsMode === 'tiktok' ? 'block' : 'none');
         }
 
-        function speakTTS(text, customVoice) {
+        window.speakTTS = function speakTTS(text, customVoice) {
             if (!_ttsEnabled) return;
             // Se for modo nativo, verifica suporte
             if (_ttsMode === 'browser' && !window.speechSynthesis) return;
@@ -13909,6 +13940,8 @@ var persistentScores = {};
 
         // ── Load Cached Gifts ──────────────────────────────────────────────────────
         function applyGiftImages(gifts) {
+            var pdConfig = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            if (pdConfig.use_gift_images !== true) return;
             if (!gifts || !gifts.length) return;
             gifts.forEach(function (g) {
                 if (g.name.includes('rose') || g.name.includes('rosa')) {
@@ -13959,11 +13992,39 @@ var persistentScores = {};
             });
         }
         (function () {
-            var cachedGiftsStr = localStorage.getItem('pd_cached_gifts');
-            if (cachedGiftsStr) {
-                try {
-                    applyGiftImages(JSON.parse(cachedGiftsStr));
-                } catch (e) { console.error('Failed to load cached gifts', e); }
+            var pdConfig = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            var useGiftImages = pdConfig.use_gift_images === true;
+
+            var giftIds = [
+                { img: 'imgGiftRose', txt: 'txtGiftRose' },
+                { img: 'imgGiftGG', txt: 'txtGiftGG' },
+                { img: 'imgGiftDonut', txt: 'txtGiftDonut' },
+                { img: 'imgGiftHeart', txt: 'txtGiftHeart' },
+                { img: 'imgGiftMisha', txt: 'txtGiftMisha' },
+                { img: 'imgGiftPerfume', txt: 'txtGiftPerfume' },
+                { img: 'imgGiftHatMustache', txt: 'txtGiftHatMustache' },
+                { img: 'imgGiftHeartHands', txt: 'txtGiftHeartHands' },
+                { img: 'imgGiftCake', txt: 'txtGiftCake' },
+                { img: 'imgGiftSteve', txt: 'txtGiftSteve' },
+                { img: 'imgGiftHomer', txt: 'txtGiftHomer' }
+            ];
+
+            if (!useGiftImages) {
+                giftIds.forEach(function (g) {
+                    var imgEl = document.getElementById(g.img);
+                    var txtEl = document.getElementById(g.txt);
+                    if (imgEl && txtEl) {
+                        imgEl.style.display = 'none';
+                        txtEl.style.display = 'inline-block';
+                    }
+                });
+            } else {
+                var cachedGiftsStr = localStorage.getItem('pd_cached_gifts');
+                if (cachedGiftsStr) {
+                    try {
+                        applyGiftImages(JSON.parse(cachedGiftsStr));
+                    } catch (e) { console.error('Failed to load cached gifts', e); }
+                }
             }
         })();
 

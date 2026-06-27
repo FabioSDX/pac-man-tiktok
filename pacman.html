@@ -110,6 +110,50 @@
                         <div class="platform-title"><span class="icon">⚙️</span> Opções da Stream</div>
                         <button class="btn-control" id="btnMute" onclick="toggleMuteAudio()">🔊 MUTAR SOM</button>
                         <button class="btn-control toggle-hud-btn" onclick="toggleHUDVisibility()">📺 OCULTAR AJUDA (H)</button>
+                        <label style="margin-top:15px; display:flex; align-items:center; gap:8px; font-size: 12px; color: #fff;">
+                            <input type="checkbox" id="useGiftImages" onchange="toggleGiftImages(this.checked)" style="width:16px; height:16px;">
+                            Usar Imagens Originais de Presentes
+                        </label>
+                        <div style="font-size: 10px; color: #aaa; margin-top: 4px; margin-left: 24px;">Desmarque para usar pastilhas seguras (evita bloqueio)</div>
+                        
+                        <!-- Volume Controls -->
+                        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="font-size: 12px; font-weight: bold; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🔊 CONTROLES DE VOLUME</div>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                                    <span>🎮 Sons do Jogo</span>
+                                    <span id="lblVolGame">50%</span>
+                                </div>
+                                <input type="range" id="volGame" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changePacmanVolume('game', this.value)">
+                            </div>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                                    <span>🎵 Música</span>
+                                    <span id="lblVolMusic">50%</span>
+                                </div>
+                                <input type="range" id="volMusic" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changePacmanVolume('music', this.value)">
+                            </div>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa;">
+                                    <span>💬 Falas / Voz</span>
+                                    <span id="lblVolSpeech">50%</span>
+                                </div>
+                                <input type="range" id="volSpeech" min="0" max="100" value="50" style="width: 100%; cursor: pointer;" oninput="changePacmanVolume('speech', this.value)">
+                            </div>
+                        </div>
+
+                        <!-- Music Style Selector -->
+                        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="font-size: 12px; font-weight: bold; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🎶 ESTILO DE MÚSICA</div>
+                            <select id="musicStyle" onchange="changeMusicStyle(this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;">
+                                <option value="techno">Synthwave / Techno (Atual)</option>
+                                <option value="arcade">Arcade Clássico</option>
+                                <option value="bossa">Bossa Nova</option>
+                            </select>
+                        </div>
                     </div>
 
                     <!-- Status de Conexão -->
@@ -258,6 +302,90 @@
             if (lblLevel) lblLevel.textContent = pacmanLevel;
             if (lblTotalScore) lblTotalScore.textContent = pacmanScore;
         }, 300);
+
+        function toggleGiftImages(checked) {
+            window.pacmanUseGiftImages = checked;
+            var pdConfig = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            pdConfig.use_gift_images = checked;
+            localStorage.setItem('pd_config', JSON.stringify(pdConfig));
+        }
+
+        window.pacmanGameVolume = 0.5;
+        window.pacmanMusicVolume = 0.5;
+        window.pacmanSpeechVolume = 0.5;
+
+        function changePacmanVolume(type, val) {
+            var floatVal = parseFloat(val) / 100;
+            if (type === 'game') {
+                window.pacmanGameVolume = floatVal;
+                localStorage.setItem('pacman_game_volume', floatVal);
+                var lbl = document.getElementById('lblVolGame');
+                if (lbl) lbl.textContent = val + '%';
+            } else if (type === 'music') {
+                window.pacmanMusicVolume = floatVal;
+                localStorage.setItem('pacman_music_volume', floatVal);
+                var lbl = document.getElementById('lblVolMusic');
+                if (lbl) lbl.textContent = val + '%';
+            } else if (type === 'speech') {
+                window.pacmanSpeechVolume = floatVal;
+                localStorage.setItem('pacman_speech_volume', floatVal);
+                var lbl = document.getElementById('lblVolSpeech');
+                if (lbl) lbl.textContent = val + '%';
+            }
+            if (typeof AudioSynth !== 'undefined' && AudioSynth.updateVolumes) {
+                AudioSynth.updateVolumes();
+            }
+        }
+
+        window.pacmanMusicStyle = 'techno';
+        function changeMusicStyle(style) {
+            window.pacmanMusicStyle = style;
+            localStorage.setItem('pacman_music_style', style);
+        }
+
+        // Initialize setting
+        setTimeout(function() {
+            var pdConfig = JSON.parse(localStorage.getItem('pd_config') || '{}');
+            var useImg = pdConfig.use_gift_images !== false; // default true in pacman unless explicitly false? 
+            // Wait, previous default I made for app.js was if missing it is false. Let's make it consistent:
+            useImg = pdConfig.use_gift_images === true;
+            window.pacmanUseGiftImages = useImg;
+            var chk = document.getElementById('useGiftImages');
+            if (chk) chk.checked = useImg;
+
+            // Load Volumes
+            var storedGame = localStorage.getItem('pacman_game_volume');
+            if (storedGame !== null) {
+                var val = Math.round(parseFloat(storedGame) * 100);
+                var el = document.getElementById('volGame');
+                if (el) el.value = val;
+                changePacmanVolume('game', val);
+            }
+            var storedMusic = localStorage.getItem('pacman_music_volume');
+            if (storedMusic !== null) {
+                var val = Math.round(parseFloat(storedMusic) * 100);
+                var el = document.getElementById('volMusic');
+                if (el) el.value = val;
+                changePacmanVolume('music', val);
+            }
+            var storedSpeech = localStorage.getItem('pacman_speech_volume');
+            if (storedSpeech !== null) {
+                var val = Math.round(parseFloat(storedSpeech) * 100);
+                var el = document.getElementById('volSpeech');
+                if (el) el.value = val;
+                changePacmanVolume('speech', val);
+            }
+
+            // Load Music Style
+            var storedStyle = localStorage.getItem('pacman_music_style');
+            if (storedStyle !== null) {
+                var elStyle = document.getElementById('musicStyle');
+                if (elStyle) elStyle.value = storedStyle;
+                changeMusicStyle(storedStyle);
+            } else {
+                changeMusicStyle('techno');
+            }
+        }, 500);
     </script>
 </body>
 </html>

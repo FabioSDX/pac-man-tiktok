@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Preview: Mapa Copa do Mundo 1080x1920 Avançado</title>
+    <style>
+        body { background: #050510; color: white; font-family: sans-serif; text-align: center; margin: 0; padding: 10px; display: flex; justify-content: center; gap: 20px;}
+        .game-container { position: relative; }
+        canvas { 
+            border: 2px solid #333; 
+            background: #000; 
+            box-shadow: 0 0 30px rgba(0,255,0,0.3);
+            height: 90vh;
+            width: auto;
+            aspect-ratio: 1080 / 1920;
+        }
+        .controls {
+            background: #111;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            width: 300px;
+            text-align: left;
+        }
+        h3 { margin-top: 0; color: #00ffff; }
+        select, button { width: 100%; padding: 10px; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 5px; font-size: 16px; }
+        button { background: #009b3a; font-weight: bold; cursor: pointer; }
+        button.disabled { background: #555; }
+        .loading { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="mapCanvas" width="1080" height="1920"></canvas>
+    </div>
+    
+    <div class="controls">
+        <h3>Modo Copa do Mundo</h3>
+        <button id="toggleCopa">Desativar Modo Copa</button>
+        
+        <label>Time de Cima:</label>
+        <select id="team1Select"></select>
+        <div class="loading" id="loadStatus1"></div>
+        
+        <label>Time de Baixo:</label>
+        <select id="team2Select"></select>
+        <div class="loading" id="loadStatus2"></div>
+    </div>
+
+    <script>
+        var canvas = document.getElementById('mapCanvas');
+        var ctx = canvas.getContext('2d');
+        var w = canvas.width;
+        var h = canvas.height;
+        
+        var isCopaMode = true;
+        
+        // ==========================================
+        // Geração Dinâmica de Labirinto (Real Pac-Man)
+        // ==========================================
+        var pacmanMaze = [];
+        var pacmanTileSize = 40; // 1080 / 27 cols = 40
+        var cols = 27;
+        var rows = 48; // 1920 / 40 = 48
+        
+        function generateProceduralMaze() {
+            var grid = [];
+            for (var r = 0; r < rows; r++) { grid[r] = []; for (var c = 0; c < cols; c++) { grid[r][c] = 1; } }
+            
+            function inBounds(c, r) { return r > 0 && r < rows - 1 && c > 0 && c <= 13; }
+            function isGhostHouseWall(c, r) {
+                if (r >= 18 && r <= 20 && c >= 11 && c <= 13) {
+                    if (r === 18 && c === 13) return false;
+                    if (r === 19 && c === 12) return false;
+                    if (r === 19 && c === 13) return false;
+                    return true;
+                }
+                return false;
+            }
+            for (var c = 0; c <= 13; c++) grid[24][c] = 0;
+            grid[19][12] = 0; grid[19][13] = 0; grid[18][13] = 0;
+            grid[17][13] = 0; grid[16][13] = 0; grid[15][13] = 0; grid[14][13] = 0;
+            grid[20][13] = 0; grid[21][13] = 0; grid[22][13] = 0; grid[23][13] = 0; grid[25][13] = 0;
+            
+            var pathCells = [], inMaze = {}, frontier = [], inFrontier = {};
+            for (var r = 1; r < rows - 1; r += 2) {
+                for (var c = 1; c <= 13; c += 2) {
+                    if (isGhostHouseWall(c, r)) continue;
+                    pathCells.push({ x: c, y: r });
+                }
+            }
+            pathCells.forEach(function(cell) { if (grid[cell.y][cell.x] === 0) inMaze[cell.x + ',' + cell.y] = true; });
+            
+            function addToFrontier(c, r) {
+                if (!inBounds(c, r) || isGhostHouseWall(c, r) || inMaze[c + ',' + r]) return;
+                var key = c + ',' + r;
+                if (!inFrontier[key]) { inFrontier[key] = true; frontier.push({ x: c, y: r }); }
+            }
+            
+            pathCells.forEach(function(cell) {
+                if (inMaze[cell.x + ',' + cell.y]) {
+                    addToFrontier(cell.x - 2, cell.y); addToFrontier(cell.x + 2, cell.y);
+                    addToFrontier(cell.x, cell.y - 2); addToFrontier(cell.x, cell.y + 2);
+                }
+            });
+            
+            while (frontier.length > 0) {
+                var idx = Math.floor(Math.random() * frontier.length);
+                var cell = frontier[idx]; frontier.splice(idx, 1);
+                delete inFrontier[cell.x + ',' + cell.y];
+                
+                var mazeNeighbors = [];
+                var dirs = [{ x: -2, y: 0 }, { x: 2, y: 0 }, { x: 0, y: -2 }, { x: 0, y: 2 }];
+                dirs.forEach(function(d) {
+                    var nc = cell.x + d.x, nr = cell.y + d.y;
+                    if (inBounds(nc, nr) && inMaze[nc + ',' + nr]) mazeNeighbors.push({ x: nc, y: nr });
+                });
+                
+                if (mazeNeighbors.length > 0) {
+                    var neighbor = mazeNeighbors[Math.floor(Math.random() * mazeNeighbors.length)];
+                    grid[cell.y][cell.x] = 0;
+                    grid[(cell.y + neighbor.y) / 2][(cell.x + neighbor.x) / 2] = 0;
+                    inMaze[cell.x + ',' + cell.y] = true;
+                    dirs.forEach(function(d) { addToFrontier(cell.x + d.x, cell.y + d.y); });
+                }
+            }
+            
+            for (var c = 1; c <= 13; c++) grid[46][c] = 0;
+            grid[45][1] = 0; grid[45][13] = 0; grid[45][7] = 0;
+            
+            for (var pass = 0; pass < 5; pass++) {
+                var deadEnds = [];
+                for (var r = 1; r < rows - 1; r++) {
+                    for (var c = 1; c <= 13; c++) {
+                        if (grid[r][c] === 0 && !isGhostHouseWall(c, r)) {
+                            var walls = 0;
+                            if (grid[r-1][c] === 1) walls++; if (grid[r+1][c] === 1) walls++;
+                            if (grid[r][c-1] === 1) walls++; if (grid[r][c+1] === 1) walls++;
+                            if (walls >= 3) deadEnds.push({r: r, c: c});
+                        }
+                    }
+                }
+                deadEnds.forEach(function(de) {
+                    var candidates = [];
+                    var dirs = [{r: -1, c: 0}, {r: 1, c: 0}, {r: 0, c: -1}, {r: 0, c: 1}];
+                    dirs.forEach(function(d) {
+                        var nr = de.r + d.r, nc = de.c + d.c;
+                        if (nr > 1 && nr < rows - 2 && nc > 1 && nc < 13 && grid[nr][nc] === 1 && !isGhostHouseWall(nc, nr)) {
+                            var nnr = nr + d.r, nnc = nc + d.c;
+                            if (nnr > 0 && nnr < rows - 1 && nnc > 0 && nnc <= 13 && grid[nnr][nnc] === 0) candidates.push({r: nr, c: nc});
+                        }
+                    });
+                    if (candidates.length > 0) {
+                        var breakWall = candidates[Math.floor(Math.random() * candidates.length)];
+                        grid[breakWall.r][breakWall.c] = 0;
+                    }
+                });
+            }
+            
+            for (var r = 0; r < rows; r++) { for (var c = 0; c < 14; c++) { grid[r][26 - c] = grid[r][c]; } }
+            pacmanMaze = grid;
+        }
+        
+        generateProceduralMaze();
+
+        // ==========================================
+        // Times da Copa (2026 format 48 teams)
+        // ==========================================
+        var teams = [
+            { id: 'ar', name: 'Argentina' }, { id: 'br', name: 'Brasil' }, { id: 'fr', name: 'França' }, { id: 'gb-eng', name: 'Inglaterra' },
+            { id: 'es', name: 'Espanha' }, { id: 'de', name: 'Alemanha' }, { id: 'pt', name: 'Portugal' }, { id: 'nl', name: 'Holanda' },
+            { id: 'it', name: 'Itália' }, { id: 'be', name: 'Bélgica' }, { id: 'hr', name: 'Croácia' }, { id: 'us', name: 'EUA' },
+            { id: 'mx', name: 'México' }, { id: 'ca', name: 'Canadá' }, { id: 'uy', name: 'Uruguai' }, { id: 'co', name: 'Colômbia' },
+            { id: 'sn', name: 'Senegal' }, { id: 'ma', name: 'Marrocos' }, { id: 'jp', name: 'Japão' }, { id: 'kr', name: 'Coreia do Sul' },
+            { id: 'ch', name: 'Suíça' }, { id: 'dk', name: 'Dinamarca' }, { id: 'rs', name: 'Sérvia' }, { id: 'pl', name: 'Polônia' },
+            { id: 'se', name: 'Suécia' }, { id: 'ua', name: 'Ucrânia' }, { id: 'gb-wls', name: 'País de Gales' }, { id: 'cr', name: 'Costa Rica' },
+            { id: 'pa', name: 'Panamá' }, { id: 'jm', name: 'Jamaica' }, { id: 'ec', name: 'Equador' }, { id: 'pe', name: 'Peru' },
+            { id: 'ir', name: 'Irã' }, { id: 'sa', name: 'Arábia Saudita' }, { id: 'au', name: 'Austrália' }, { id: 'qa', name: 'Catar' },
+            { id: 'ae', name: 'Emirados Árabes' }, { id: 'uz', name: 'Uzbequistão' }, { id: 'eg', name: 'Egito' }, { id: 'dz', name: 'Argélia' },
+            { id: 'ng', name: 'Nigéria' }, { id: 'cm', name: 'Camarões' }, { id: 'ci', name: 'Costa do Marfim' }, { id: 'gh', name: 'Gana' },
+            { id: 'ml', name: 'Mali' }, { id: 'nz', name: 'Nova Zelândia' }, { id: 'cn', name: 'China' }, { id: 'tr', name: 'Turquia' }
+        ];
+        
+        var select1 = document.getElementById('team1Select');
+        var select2 = document.getElementById('team2Select');
+        teams.sort((a,b) => a.name.localeCompare(b.name)).forEach(t => {
+            select1.add(new Option(t.name, t.id));
+            select2.add(new Option(t.name, t.id));
+        });
+        select1.value = 'br'; // Default Brasil
+        select2.value = 'ar'; // Default Argentina
+        
+        // Offscreen Canvases para as bandeiras
+        var flagW = 600; // Resolução maior pro zoom
+        var flagH = 400;
+        var cvsFlag1 = document.createElement('canvas'); cvsFlag1.width = flagW; cvsFlag1.height = flagH;
+        var cvsFlag2 = document.createElement('canvas'); cvsFlag2.width = flagW; cvsFlag2.height = flagH;
+        
+        function loadFlag(iso, targetCvs, statusElemId) {
+            var ctxOff = targetCvs.getContext('2d');
+            document.getElementById(statusElemId).innerText = "Carregando...";
+            var img = new Image();
+            img.crossOrigin = "Anonymous";
+            img.src = `https://flagcdn.com/w640/${iso}.png`;
+            img.onload = function() {
+                ctxOff.clearRect(0,0,flagW,flagH);
+                ctxOff.drawImage(img, 0, 0, flagW, flagH);
+                document.getElementById(statusElemId).innerText = "Carregado!";
+                setTimeout(() => document.getElementById(statusElemId).innerText = "", 1000);
+            };
+            img.onerror = function() {
+                document.getElementById(statusElemId).innerText = "Erro ao carregar!";
+            };
+        }
+        
+        select1.addEventListener('change', () => loadFlag(select1.value, cvsFlag1, 'loadStatus1'));
+        select2.addEventListener('change', () => loadFlag(select2.value, cvsFlag2, 'loadStatus2'));
+        
+        loadFlag('br', cvsFlag1, 'loadStatus1');
+        loadFlag('ar', cvsFlag2, 'loadStatus2');
+        
+        var btnToggle = document.getElementById('toggleCopa');
+        btnToggle.addEventListener('click', function() {
+            isCopaMode = !isCopaMode;
+            if(isCopaMode) {
+                btnToggle.innerText = "Desativar Modo Copa";
+                btnToggle.className = "";
+            } else {
+                btnToggle.innerText = "Ativar Modo Copa";
+                btnToggle.className = "disabled";
+            }
+        });
+
+        // ==========================================
+        // Rendering
+        // ==========================================
+        function drawWavedFlag(ctx, offscreen, x, y, width, height, time) {
+            ctx.save();
+            ctx.translate(x - width/2, y - height/2);
+            var slices = 60; 
+            var sliceW = offscreen.width / slices;
+            var drawSliceW = width / slices;
+            for (var i = 0; i < slices; i++) {
+                var waveY = Math.sin(time * 0.005 + i * 0.15) * (height * 0.06);
+                var waveX = Math.cos(time * 0.003 + i * 0.1) * (width * 0.02);
+                ctx.globalAlpha = 0.55; 
+                ctx.drawImage(offscreen, i * sliceW, 0, sliceW, offscreen.height, i * drawSliceW + waveX, waveY, drawSliceW + 1.5, height);
+            }
+            ctx.restore();
+        }
+
+        function drawSoccerField(ctx, w, h, time) {
+            var numStripes = 12;
+            var stripeWidth = h / numStripes; 
+            for (var i = 0; i < numStripes; i++) {
+                ctx.fillStyle = (i % 2 === 0) ? '#1f5a1f' : '#267326'; // Grama ligeiramente mais escura
+                ctx.fillRect(0, i * stripeWidth, w, stripeWidth + 1);
+            }
+            
+            drawWavedFlag(ctx, cvsFlag1, w/2, h/4, 500, 333, time);
+            drawWavedFlag(ctx, cvsFlag2, w/2, h - h/4, 500, 333, time + 1000); 
+            
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 6;
+            var pad = 40;
+            ctx.strokeRect(pad, pad, w - pad*2, h - pad*2);
+            ctx.beginPath(); ctx.moveTo(pad, h/2); ctx.lineTo(w - pad, h/2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(w/2, h/2, 120, 0, Math.PI*2); ctx.stroke();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.beginPath(); ctx.arc(w/2, h/2, 10, 0, Math.PI*2); ctx.fill();
+            var areaW = 400; var areaH = 200;
+            ctx.strokeRect(w/2 - areaW/2, pad, areaW, areaH); 
+            ctx.strokeRect(w/2 - areaW/2, h - pad - areaH, areaW, areaH); 
+            var smallAreaW = 200; var smallAreaH = 80;
+            ctx.strokeRect(w/2 - smallAreaW/2, pad, smallAreaW, smallAreaH); 
+            ctx.strokeRect(w/2 - smallAreaW/2, h - pad - smallAreaH, smallAreaW, smallAreaH); 
+            ctx.beginPath(); ctx.arc(w/2, pad + areaH, 80, 0, Math.PI); ctx.stroke();
+            ctx.beginPath(); ctx.arc(w/2, h - pad - areaH, 80, Math.PI, Math.PI*2); ctx.stroke();
+        }
+        
+        function makeRealMazePath(ctx) {
+            ctx.beginPath();
+            for (var r = 0; r < rows; r++) {
+                for (var c = 0; c < cols; c++) {
+                    if (pacmanMaze[r][c] === 1) {
+                        ctx.rect(c * pacmanTileSize, r * pacmanTileSize, pacmanTileSize, pacmanTileSize);
+                    }
+                }
+            }
+        }
+        
+        function drawRealMazeBorders(ctx) {
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00aaff';
+            ctx.strokeStyle = '#00aaff';
+            ctx.lineWidth = 8;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            
+            ctx.beginPath();
+            for (var r = 0; r < rows; r++) {
+                for (var c = 0; c < cols; c++) {
+                    if (pacmanMaze[r][c] === 1) {
+                        var cx = c * pacmanTileSize + pacmanTileSize / 2;
+                        var cy = r * pacmanTileSize + pacmanTileSize / 2;
+                        
+                        var hasRight = (c + 1 < cols && pacmanMaze[r][c+1] === 1);
+                        var hasDown = (r + 1 < rows && pacmanMaze[r+1][c] === 1);
+                        
+                        if (hasRight) { ctx.moveTo(cx, cy); ctx.lineTo(cx + pacmanTileSize, cy); }
+                        if (hasDown) { ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + pacmanTileSize); }
+                    }
+                }
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        var start = Date.now();
+        function render() {
+            var time = Date.now() - start;
+            ctx.clearRect(0, 0, w, h);
+            
+            if (isCopaMode) {
+                // 1. Desenha Fundo
+                drawSoccerField(ctx, w, h, time);
+                
+                // 2. Vidro (Lente Refração)
+                ctx.save();
+                makeRealMazePath(ctx);
+                ctx.clip(); 
+                
+                var zoom = 1.05;
+                ctx.translate(w/2, h/2);
+                ctx.scale(zoom, zoom);
+                ctx.translate(-w/2, -h/2);
+                
+                drawSoccerField(ctx, w, h, time); // Campo refratado
+                
+                ctx.fillStyle = 'rgba(0, 200, 255, 0.2)'; // Cor do vidro
+                ctx.fill(); 
+                
+                // Gloss
+                var grad = ctx.createLinearGradient(0, 0, w, h);
+                grad.addColorStop(0, 'rgba(255,255,255,0.4)');
+                grad.addColorStop(0.3, 'rgba(255,255,255,0.0)');
+                grad.addColorStop(0.7, 'rgba(255,255,255,0.0)');
+                grad.addColorStop(1, 'rgba(255,255,255,0.2)');
+                ctx.fillStyle = grad;
+                ctx.fill();
+                
+                ctx.restore();
+            } else {
+                ctx.fillStyle = '#050510';
+                ctx.fillRect(0, 0, w, h);
+                
+                // Fundo do labirinto normal (preto fosco) para dar solidez
+                ctx.save();
+                makeRealMazePath(ctx);
+                ctx.fillStyle = '#111';
+                ctx.fill();
+                ctx.restore();
+            }
+            
+            // Bordas
+            drawRealMazeBorders(ctx);
+            
+            // Desenhar os Pac-dots
+            ctx.fillStyle = '#ffaa00';
+            for (var r = 0; r < rows; r++) {
+                for (var c = 0; c < cols; c++) {
+                    if (pacmanMaze[r][c] === 0) {
+                        ctx.beginPath();
+                        ctx.arc(c * pacmanTileSize + pacmanTileSize/2, r * pacmanTileSize + pacmanTileSize/2, 4, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+            }
+            
+            requestAnimationFrame(render);
+        }
+        
+        render();
+    </script>
+</body>
+</html>

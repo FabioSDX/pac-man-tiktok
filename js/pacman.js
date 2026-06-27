@@ -18,6 +18,7 @@ var pacmanMaze = []; // 2D grid of walls
  var pacmanThemeWallColor = '#00aaff';
  var pacmanTileSize = 40;
 var pacmanPowerMode = false;
+var pacmanGiantMode = false;
 var pacmanPowerTimer = 0;
 var pacmanCtx = null;
 var mazeCanvas = null;
@@ -182,6 +183,19 @@ const AudioSynth = {
     init() {
         if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+            this.gameGain = this.ctx.createGain();
+            this.musicGain = this.ctx.createGain();
+            this.gameGain.connect(this.ctx.destination);
+            this.musicGain.connect(this.ctx.destination);
+            this.updateVolumes();
+        }
+    },
+    updateVolumes() {
+        if (this.gameGain) {
+            this.gameGain.gain.setTargetAtTime( (window.pacmanGameVolume !== undefined ? window.pacmanGameVolume * 2 : 1), this.ctx.currentTime, 0.1);
+        }
+        if (this.musicGain) {
+            this.musicGain.gain.setTargetAtTime( (window.pacmanMusicVolume !== undefined ? window.pacmanMusicVolume * 2 : 1), this.ctx.currentTime, 0.1);
         }
     },
     toggleMute() {
@@ -191,7 +205,7 @@ const AudioSynth = {
         }
         return this.muted;
     },
-    playTone(freq, type, duration, volume = 0.1, delay = 0) {
+    playTone(freq, type, duration, volume = 0.1, delay = 0, isMusic = false) {
         if (this.muted) return;
         this.init();
         if (this.ctx.state === 'suspended') {
@@ -207,7 +221,7 @@ const AudioSynth = {
         gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + delay + duration);
         
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(isMusic ? this.musicGain : this.gameGain);
         
         osc.start(this.ctx.currentTime + delay);
         osc.stop(this.ctx.currentTime + delay + duration);
@@ -227,7 +241,7 @@ const AudioSynth = {
         gain.gain.setValueAtTime(0.2, now);
         gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(this.gameGain);
         osc.start(now);
         osc.stop(now + 0.15);
     },
@@ -277,7 +291,7 @@ const AudioSynth = {
         
         osc.connect(filter);
         filter.connect(gainNode);
-        gainNode.connect(this.ctx.destination);
+        gainNode.connect(this.gameGain);
         
         osc.start(t);
         osc.stop(t + duration);
@@ -291,7 +305,139 @@ const AudioSynth = {
         this.init();
         if (this.ctx.state === 'suspended') this.ctx.resume();
         
+        const style = window.pacmanMusicStyle || 'techno';
         const now = this.ctx.currentTime;
+        
+        if (style === 'arcade') {
+            this.updateSirenArcade(now, powerMode, eatenRatio);
+        } else if (style === 'bossa') {
+            this.updateSirenBossa(now, powerMode, eatenRatio);
+        } else {
+            this.updateSirenTechno(now, powerMode, eatenRatio);
+        }
+    },
+    updateSirenArcade(now, powerMode, eatenRatio) {
+        if (!this.arcadeSirenOsc) {
+            this.arcadeSirenOsc = this.ctx.createOscillator();
+            this.arcadeSirenGain = this.ctx.createGain();
+            this.arcadeSirenOsc.type = 'triangle';
+            this.arcadeSirenGain.gain.value = 0.05;
+            this.arcadeSirenOsc.connect(this.arcadeSirenGain);
+            this.arcadeSirenGain.connect(this.musicGain);
+            this.arcadeSirenOsc.start(now);
+            
+            // LFO to sweep pitch
+            this.arcadeLfo = this.ctx.createOscillator();
+            this.arcadeLfoGain = this.ctx.createGain();
+            this.arcadeLfo.type = 'sawtooth';
+            this.arcadeLfo.frequency.value = 4; // 4 Hz sweep
+            this.arcadeLfoGain.gain.value = 80; // +/- 80 Hz
+            this.arcadeLfo.connect(this.arcadeLfoGain);
+            this.arcadeLfoGain.connect(this.arcadeSirenOsc.frequency);
+            this.arcadeLfo.start(now);
+        }
+        
+        // Base frequency speeds up and pitches up as level completes
+        const baseFreq = powerMode ? 600 : 350 + (eatenRatio * 150);
+        this.arcadeSirenOsc.frequency.setTargetAtTime(baseFreq, now, 0.1);
+        this.arcadeLfo.frequency.setTargetAtTime(powerMode ? 8 : 4 + (eatenRatio * 3), now, 0.1);
+    },
+    updateSirenBossa(now, powerMode, eatenRatio) {
+        if (this.arcadeSirenOsc) this.stopSiren(); // Limpar sons contínuos se trocou rápido
+
+        if (this.bgmNextNoteTime === 0) {
+            this.bgmNextNoteTime = now + 0.1;
+            this.bgmStep = 0;
+        }
+        
+        if (now > this.bgmNextNoteTime - 0.1) {
+            const t = this.bgmNextNoteTime;
+            const tempo = powerMode ? 160 : 120 + (eatenRatio * 20); // bpm
+            const stepDuration = (60 / tempo) / 4; // 16th note
+            
+            // Bossa Chords (Jazz flavor)
+            const chords = [
+                [293.66, 369.99, 440.00, 554.37], // Dmaj9
+                [329.63, 392.00, 493.88, 587.33], // Em7
+                [277.18, 329.63, 415.30, 493.88], // C#m7
+                [369.99, 466.16, 554.37, 659.25]  // F#7
+            ];
+            
+            if (this.bgmStep % 32 === 0) {
+                this.bgmChordIndex = (this.bgmChordIndex + 1) % chords.length;
+            }
+            
+            const chord = chords[this.bgmChordIndex];
+            
+            // Bossa clave rhythm (simplified)
+            // Plays chords on steps: 2, 5, 8, 11, 14
+            const playChord = [2, 5, 8, 11, 14].includes(this.bgmStep % 16);
+            
+            if (playChord) {
+                for (let freq of chord) {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine'; // Soft electric piano / guitar vibe
+                    osc.frequency.value = freq;
+                    
+                    gain.gain.setValueAtTime(0, t);
+                    gain.gain.linearRampToValueAtTime(0.015, t + 0.05);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+                    
+                    osc.connect(gain);
+                    gain.connect(this.musicGain);
+                    osc.start(t);
+                    osc.stop(t + 0.6);
+                }
+            }
+            
+            // Upright Bass
+            // Plays on 0 and 8 (1 and 3 of the bar) with syncopation on 6 and 14
+            const playBass = [0, 6, 8, 14].includes(this.bgmStep % 16);
+            if (playBass) {
+                const bassOsc = this.ctx.createOscillator();
+                const bassGain = this.ctx.createGain();
+                bassOsc.type = 'triangle';
+                
+                // Root note (index 0) down an octave, or 5th (index 2) down an octave
+                const isRoot = (this.bgmStep % 16 < 8);
+                const bassFreq = (isRoot ? chord[0] : chord[2]) / 2;
+                
+                bassOsc.frequency.value = bassFreq;
+                
+                bassGain.gain.setValueAtTime(0, t);
+                bassGain.gain.linearRampToValueAtTime(powerMode ? 0.12 : 0.08, t + 0.02);
+                bassGain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+                
+                bassOsc.connect(bassGain);
+                bassGain.connect(this.musicGain);
+                bassOsc.start(t);
+                bassOsc.stop(t + 1.0);
+            }
+            
+            // Soft Shaker (Noise)
+            if (this.bgmStep % 2 === 0) {
+                const shaker = this.ctx.createOscillator();
+                const shakerGain = this.ctx.createGain();
+                shaker.type = 'square';
+                shaker.frequency.value = 6000 + (Math.random() * 2000); // noisy
+                
+                shakerGain.gain.setValueAtTime(0.002, t);
+                shakerGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+                
+                shaker.connect(shakerGain);
+                shakerGain.connect(this.musicGain);
+                shaker.start(t);
+                shaker.stop(t + 0.1);
+            }
+            
+            this.bgmStep++;
+            this.bgmNextNoteTime = t + stepDuration;
+        }
+    },
+    updateSirenTechno(now, powerMode, eatenRatio) {
+        if (this.arcadeSirenOsc) this.stopSiren(); // Limpar sons contínuos se trocou rápido
+
         if (this.bgmNextNoteTime === 0) {
             this.bgmNextNoteTime = now + 0.1;
         }
@@ -322,50 +468,79 @@ const AudioSynth = {
             if (powerMode) {
                 // Power mode: intense and faster!
                 noteFreq = currentChord[Math.floor(Math.random() * currentChord.length)] * 2;
-                this.bgmNextNoteTime = t + 0.12;
+                this.bgmNextNoteTime = t + 0.11;
             } else {
                 // Soft arpeggio
                 const noteIdx = [0, 1, 2, 1, 0, 2, 1, 2][this.bgmStep % 8];
                 noteFreq = currentChord[noteIdx];
-                
-                // Add some variation (octave jump)
                 if (Math.random() < 0.15) noteFreq *= 2;
-                
-                // Speed gets slightly faster as the level gets empty
-                const speed = 0.3 - (eatenRatio * 0.15); 
+                // Speed gets slightly faster as the level gets empty (Mais rápido para ser vibrante)
+                const speed = 0.18 - (eatenRatio * 0.08); 
                 this.bgmNextNoteTime = t + speed;
+            }
+            
+            // --- KICK DRUM (Batida Pulsante) ---
+            if ((powerMode && this.bgmStep % 2 === 0) || (!powerMode && this.bgmStep % 4 === 0)) {
+                const kickOsc = this.ctx.createOscillator();
+                const kickGain = this.ctx.createGain();
+                kickOsc.type = 'sine';
+                
+                // Frequência despenca rápido gerando um soco grave (Punchy Kick)
+                kickOsc.frequency.setValueAtTime(150, t);
+                kickOsc.frequency.exponentialRampToValueAtTime(0.01, t + 0.5);
+                
+                kickGain.gain.setValueAtTime(0.8, t);
+                kickGain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+                
+                kickOsc.connect(kickGain);
+                kickGain.connect(this.musicGain);
+                kickOsc.start(t);
+                kickOsc.stop(t + 0.5);
             }
             
             this.bgmStep++;
             
-            // Synthesize the soft note
+            // --- SYNTH (Sintetizador Estalado estilo Techno/Synthwave) ---
             const osc = this.ctx.createOscillator();
             const gain = this.ctx.createGain();
             const filter = this.ctx.createBiquadFilter();
             
-            osc.type = powerMode ? 'triangle' : 'sine';
+            osc.type = powerMode ? 'square' : 'sawtooth';
             osc.frequency.setValueAtTime(noteFreq, t);
             
+            // Filtro Lowpass rápido para dar um estalo "plucky" 
             filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(powerMode ? 2000 : 800, t);
+            filter.frequency.setValueAtTime(powerMode ? 4000 : 1500, t);
+            filter.frequency.exponentialRampToValueAtTime(200, t + 0.2);
             
             gain.gain.setValueAtTime(0, t);
-            gain.gain.linearRampToValueAtTime(powerMode ? 0.06 : 0.03, t + 0.05); // smooth attack
-            gain.gain.exponentialRampToValueAtTime(0.001, t + (powerMode ? 0.3 : 0.8)); // smooth decay
+            gain.gain.linearRampToValueAtTime(powerMode ? 0.08 : 0.05, t + 0.02); // Ataque rápido
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3); // Decay rápido
             
             osc.connect(filter);
             filter.connect(gain);
-            gain.connect(this.ctx.destination);
+            gain.connect(this.musicGain);
             
             osc.start(t);
-            osc.stop(t + 1.0);
+            osc.stop(t + 0.4);
         }
     },
     startSirenNode() {
-        // Obsolete, replaced by arpeggiator
+        // Obsolete, replaced by arpeggiator/lfo
     },
     stopSiren() {
         this.bgmNextNoteTime = 0; // Reset bgm timer so it doesn't queue lots of notes when unpaused
+        
+        if (this.arcadeSirenOsc) {
+            try {
+                this.arcadeSirenOsc.stop();
+                this.arcadeLfo.stop();
+            } catch(e) {}
+            this.arcadeSirenOsc.disconnect();
+            this.arcadeLfo.disconnect();
+            this.arcadeSirenOsc = null;
+            this.arcadeLfo = null;
+        }
     },
     playDeath() {
         if (this.muted) return;
@@ -389,7 +564,7 @@ const AudioSynth = {
             gain.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.09);
             
             osc.connect(gain);
-            gain.connect(this.ctx.destination);
+            gain.connect(this.gameGain);
             osc.start(t + delay);
             osc.stop(t + delay + 0.09);
         }
@@ -429,7 +604,7 @@ const AudioSynth = {
             gain.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.18);
             
             osc.connect(gain);
-            gain.connect(this.ctx.destination);
+            gain.connect(this.gameGain);
             
             osc.start(t + delay);
             osc.stop(t + delay + 0.2);
@@ -448,7 +623,7 @@ const AudioSynth = {
             gainSub.gain.linearRampToValueAtTime(0.0001, t + (combo * 0.12) + 0.1);
             
             oscSub.connect(gainSub);
-            gainSub.connect(this.ctx.destination);
+            gainSub.connect(this.gameGain);
             
             oscSub.start(t);
             oscSub.stop(t + (combo * 0.12) + 0.15);
@@ -535,7 +710,7 @@ const AudioSynth = {
                 gain.gain.setValueAtTime(0.04, this.ctx.currentTime + tOffset);
                 gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + tOffset + note.d);
                 osc.connect(gain);
-                gain.connect(this.ctx.destination);
+                gain.connect(this.gameGain);
                 osc.start(this.ctx.currentTime + tOffset);
                 osc.stop(this.ctx.currentTime + tOffset + note.d);
             }
@@ -570,7 +745,61 @@ const AudioSynth = {
             gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + tOffset + note.d);
             
             osc.connect(gain);
-            gain.connect(this.ctx.destination);
+            gain.connect(this.gameGain);
+            
+            osc.start(this.ctx.currentTime + tOffset);
+            osc.stop(this.ctx.currentTime + tOffset + note.d);
+            tOffset += note.d;
+        });
+    },
+    playIntermissionMusic() {
+        if (this.muted) return;
+        this.init();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+
+        // Classic Pac-Man Intermission-like tune
+        const s = 0.15; 
+        const notes = [
+            { f: 349.23, d: s }, // F4
+            { f: 440.00, d: s }, // A4
+            { f: 523.25, d: s }, // C5
+            { f: 698.46, d: s }, // F5
+            { f: 523.25, d: s }, // C5
+            { f: 698.46, d: s }, // F5
+            
+            { f: 329.63, d: s }, // E4
+            { f: 415.30, d: s }, // G#4
+            { f: 493.88, d: s }, // B4
+            { f: 659.25, d: s }, // E5
+            { f: 493.88, d: s }, // B4
+            { f: 659.25, d: s }, // E5
+            
+            { f: 349.23, d: s }, // F4
+            { f: 440.00, d: s }, // A4
+            { f: 523.25, d: s }, // C5
+            { f: 698.46, d: s }, // F5
+            { f: 523.25, d: s }, // C5
+            { f: 698.46, d: s }, // F5
+            
+            { f: 392.00, d: s }, // G4
+            { f: 493.88, d: s }, // B4
+            { f: 587.33, d: s }, // D5
+            { f: 783.99, d: s * 3 } // G5 (held)
+        ];
+        
+        let tOffset = 0;
+        notes.forEach(note => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(note.f, this.ctx.currentTime + tOffset);
+            
+            gain.gain.setValueAtTime(0.0, this.ctx.currentTime + tOffset);
+            gain.gain.linearRampToValueAtTime(0.12, this.ctx.currentTime + tOffset + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + tOffset + note.d);
+            
+            osc.connect(gain);
+            gain.connect(this.gameGain);
             
             osc.start(this.ctx.currentTime + tOffset);
             osc.stop(this.ctx.currentTime + tOffset + note.d);
@@ -578,6 +807,7 @@ const AudioSynth = {
         });
     }
 };
+window.AudioSynth = AudioSynth;
 
 // ==========================================
 // Avatar Caching
@@ -851,8 +1081,8 @@ function getGhostBodySprite(color) {
     var ctx = c.getContext('2d');
     var radius = size * 0.42;
     ctx.translate(size/2, size/2);
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = color;
+    // ctx.shadowBlur = 12; // Efeito removido a pedido
+    // ctx.shadowColor = color;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(0, -5, radius, Math.PI, 0, false);
@@ -1122,8 +1352,8 @@ function initPacmanMaze() {
 function renderMazeStatic() {
      if (!mazeCtx) return;
      
-     mazeCtx.fillStyle = pacmanThemeBgColor;
-     mazeCtx.fillRect(0, 0, 1080, 1920);
+     // CLEAR as transparent instead of filling with black
+     mazeCtx.clearRect(0, 0, 1080, 1920);
      
      function drawNeonMaze(ctx, color) {
          ctx.shadowBlur = 15;
@@ -1165,21 +1395,8 @@ function renderMazeStatic() {
          ctx.shadowBlur = 0;
      }
      
-     // Draw walls with neon glow
+     // Draw walls with neon glow on transparent background
      drawNeonMaze(mazeCtx, pacmanThemeWallColor);
-     
-     // Draw frightened maze variants (red/blue flashing)
-     if (mazeCtxFrightened1) {
-         mazeCtxFrightened1.fillStyle = pacmanThemeBgColor;
-         mazeCtxFrightened1.fillRect(0, 0, 1080, 1920);
-         drawNeonMaze(mazeCtxFrightened1, '#ff0055');
-     }
-     
-     if (mazeCtxFrightened2) {
-         mazeCtxFrightened2.fillStyle = pacmanThemeBgColor;
-         mazeCtxFrightened2.fillRect(0, 0, 1080, 1920);
-         drawNeonMaze(mazeCtxFrightened2, '#0055ff');
-     }
  }
  
  function destroyMazeWall(c, r) {
@@ -1188,23 +1405,112 @@ function renderMazeStatic() {
          pacmanMaze[r][c] = 0; // Convert to path
          var px = c * pacmanTileSize;
          var py = r * pacmanTileSize;
-         // Erase wall visually
+         // Erase wall visually (make it transparent so wave effect doesn't hit it)
          if (mazeCtx) {
-             mazeCtx.fillStyle = pacmanThemeBgColor;
-             mazeCtx.fillRect(px, py, pacmanTileSize, pacmanTileSize);
+             mazeCtx.clearRect(px, py, pacmanTileSize, pacmanTileSize);
          }
-         if (mazeCtxFrightened1) {
-             mazeCtxFrightened1.fillStyle = pacmanThemeBgColor;
-             mazeCtxFrightened1.fillRect(px, py, pacmanTileSize, pacmanTileSize);
-         }
-         if (mazeCtxFrightened2) {
-             mazeCtxFrightened2.fillStyle = pacmanThemeBgColor;
-             mazeCtxFrightened2.fillRect(px, py, pacmanTileSize, pacmanTileSize);
-         }
+         // Frightened canvases were removed, so no need to clear them
          AudioSynth.playBreakWall();
          spawnTextParticle(c, r, 'POW!', pacmanThemeDotColor);
      }
  }
+
+var ghostDialogues = {
+    0: { // Red (Blinky) - English
+        angry: ["I got you!", "Come back here!", "No escape!", "Gotcha!", "Hahaha!", "Muahaha!", "You can't hide!", "I smell fear!", "Turn around!", "Your time is up!", "Don't run!", "I'm right behind you!", "Say your prayers!", "Fresh meat!", "You are mine!", "Peek-a-boo!"],
+        scared: ["Help me!", "Oh no!", "Run away!", "Mercy!", "Aaaahhh!", "Eeeeeek!", "Don't hurt me!", "I'm too young to die!", "Leave me alone!", "Mummy!", "I surrender!", "Not in the face!", "I was just kidding!", "I'm friendly!", "Spare me!", "Time to fly!"],
+        kill: ["Six seven!", "Emotional damage!", "Wasted!", "Get rekt!", "You died!", "GG bro!"],
+        respawn: ["I'm back!", "You will pay!", "Revenge is sweet!", "Round two!", "Miss me?", "I have returned!", "Now it's personal!", "You're going down!", "Vengeance is mine!", "Try that again!"]
+    },
+    1: { // Pink (Pinky) - Spanish
+        angry: ["¡Te pillé!", "¡Vuelve aquí!", "¡No escaparás!", "¡Cuidado!", "¡Jajaja!", "¡Jejeje!", "¡Corre corre!", "¡Te voy a atrapar!", "¡No te escondas!", "¡Es tu fin!", "¡Ven con mami!", "¡Huele a miedo!", "¡Ya eres mío!", "¡Prepárate!", "¡No puedes huir!", "¡Sorpresa!"],
+        scared: ["¡Ayúdame!", "¡Socorro!", "¡Déjame!", "¡Piedad!", "¡Aaaaah!", "¡Ay ay ay!", "¡No me hagas daño!", "¡Soy muy joven!", "¡Mamá!", "¡Me rindo!", "¡No en la cara!", "¡Era una broma!", "¡Soy bueno!", "¡Perdóname!", "¡A volar!", "¡Paz hermano!"],
+        kill: ["¡Ay caramba!", "¡F en el chat!", "¡Adiós, mi amigo!", "¡Se fue al cielo!", "¡Qué lástima!", "¡Hasta la vista!"],
+        respawn: ["¡He vuelto!", "¡Me las pagarás!", "¡La venganza es mía!", "¡Segundo asalto!", "¡Ya estoy aquí!", "¡Ahora es personal!", "¡Prepárate a sufrir!", "¡Vas a caer!", "¡Inténtalo de nuevo!", "¡Regresé más fuerte!"]
+    },
+    2: { // Cyan (Inky) - Portuguese
+        angry: ["Te peguei!", "Volte aqui!", "Agora não escapa!", "Achou que ia fugir?", "Hahaha!", "Muhaha!", "Corre negada!", "Vem pro pai!", "Não tem pra onde correr!", "Eu sinto o cheiro do medo!", "Onde você vai?!", "Vai de base!", "Aqui tem coragem!", "Se correr o bicho pega!", "Game over pra você!", "Olha pra trás!"],
+        scared: ["Socorro!", "Deu ruim!", "Ferrou!", "Deixa disso!", "Aaaahhh!", "Eitaaa!", "Não me machuca!", "Sou muito novo pra morrer!", "Chama a polícia!", "Tô brincando!", "Paz e amor!", "Misericórdia!", "Fui!", "Me deixa em paz!", "Salvem-se quem puder!", "Ferrou de vez!"],
+        kill: ["Receba!", "Foi de arrasta pra cima!", "Fez o L!", "Foi de berço!", "Toma na jabiraca!", "Foi de base!"],
+        respawn: ["Voltei!", "A vingança nunca é plena!", "Agora é pessoal!", "Round dois!", "Achou que eu tinha morrido?", "Sinta a minha fúria!", "Você vai me pagar!", "Tô de volta pro jogo!", "Agora você chora!", "Eu sou imortal!"]
+    },
+    3: { // Orange (Clyde) - Asian Mix
+        angry: ["待て!", "抓住你了!", "बच नहीं सकते!", "フフフ!", "哈哈哈!", "हाहाहा!", "逃がさないぞ!", "覚悟しろ!", "死ね!", "别跑!", "你跑不掉的!", "受死吧!", "रुक जाओ!", "तुम्हारा खेल खत्म!", "डर लग रहा है?", "見つけたぞ!"],
+        scared: ["助けて!", "救命!", "बचाओ!", "キャー!", "啊啊啊!", "ओह नहीं!", "やめて!", "許して!", "逃げろ!", "不要伤害我!", "我投降!", "放过我吧!", "मुझे छोड़ दो!", "कृपा करो!", "क्षमा करें!", "ごめんなさい!"],
+        kill: ["お前はもう死んでいる!", "六七!", "खत्म!", "やった!", "再见!", "अलविदा!"],
+        respawn: ["ただいま!", "復讐してやる!", "覚悟はいいか!", "我回来了!", "复仇时刻!", "你完蛋了!", "मैं वापस आ गया!", "बदला लूंगा!", "अब तुम्हारी खैर नहीं!", "復活!"]
+    },
+    4: { // Michael Jackson Special Ghost
+        spawn: ["Hee hee! Let's dance!", "Shamone!", "This is it!"],
+        angry: ["Beat it!", "Don't stop 'til you get enough!", "Annie, are you ok?"],
+        scared: ["Thriller night!", "Billie Jean is not my lover!", "Auuu!"],
+        kill: ["Smooth criminal!", "You've been struck by...", "Bad! I'm bad!"],
+        respawn: ["Keep the faith...", "Nooo! Hee hee...", "Gone too soon..."]
+    },
+    5: { // Mario Special Ghost
+        spawn: ["It's a-me, Mario!", "Let's a-go!", "Mamma mia!"],
+        angry: ["Here we go!", "Oki doki!", "Wahoo!"],
+        scared: ["Oh no! Mamma mia!", "Mama, help-a me!", "Wahhhhh!"],
+        kill: ["So long-a Bowser!", "Oh yeah, Mario time!", "You-a finished!"],
+        respawn: ["Arrivederci!", "I'm-a tired...", "Game over!"]
+    }
+};
+
+var ghostAudioCache = {};
+
+var activeGhostVoices = [];
+
+function stopAllGhostVoices() {
+    activeGhostVoices.forEach(function(src) {
+        try { src.stop(); } catch(e) {}
+    });
+    activeGhostVoices = [];
+}
+
+function speakGhostDialogue(ghostId, state, index) {
+    if (pacmanGameState !== 'playing') return;
+    if (typeof AudioSynth === 'undefined' || !AudioSynth.ctx) return;
+    
+    var url = 'audio/voices/ghost_' + ghostId + '_' + state + '_' + index + '.mp3';
+    var ctx = AudioSynth.ctx;
+    
+    function playBuffer(buffer) {
+        if (pacmanGameState !== 'playing') return; // Double check just in case
+        
+        var source = ctx.createBufferSource();
+        source.buffer = buffer;
+        // O SEGREDO: playbackRate altera a velocidade E O TOM simultaneamente.
+        // 1.8x = Muito mais rápido e quase o dobro da afinação (efeito Tico e Teco perfeito!)
+        source.playbackRate.value = 1.8;
+        
+        var gainNode = ctx.createGain();
+        gainNode.gain.value = 1.0; // Volume
+        
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        activeGhostVoices.push(source);
+        source.onended = function() {
+            var idx = activeGhostVoices.indexOf(source);
+            if (idx > -1) activeGhostVoices.splice(idx, 1);
+        };
+        
+        source.start(0);
+    }
+    
+    if (ghostAudioCache[url]) {
+        playBuffer(ghostAudioCache[url]);
+    } else {
+        fetch(url)
+            .then(function(res) { return res.arrayBuffer(); })
+            .then(function(buf) { return ctx.decodeAudioData(buf); })
+            .then(function(decoded) {
+                ghostAudioCache[url] = decoded;
+                playBuffer(decoded);
+            })
+            .catch(function(e) { console.error("Erro ao carregar MP3 da voz do fantasma", e); });
+    }
+}
 
 function initGhosts() {
      pacmanGhosts = [];
@@ -1215,9 +1521,24 @@ function initGhosts() {
          {x: 1, y: 46},     // Bottom-Left
          {x: 25, y: 46}     // Bottom-Right
      ];
+     
+     var specialType = null;
+     var specialGhostIndex = -1;
+     if (Math.random() < 0.3) { // 30% chance of a special ghost
+         specialGhostIndex = Math.floor(Math.random() * 4);
+         specialType = Math.random() < 0.5 ? 'michael' : 'mario';
+     }
+     
      for (var i = 0; i < 4; i++) {
+         var isMJ = (i === specialGhostIndex && specialType === 'michael');
+         var isMario = (i === specialGhostIndex && specialType === 'mario');
+         
+         var gId = isMJ ? 4 : isMario ? 5 : i;
+         var gColor = isMJ ? '#ffffff' : isMario ? '#ff0000' : ghostColors[i];
+         
          pacmanGhosts.push({
-             id: i,
+             id: gId,
+             special: isMJ ? 'michael' : isMario ? 'mario' : null,
              x: ghostCorners[i].x,
              y: ghostCorners[i].y,
              targetX: ghostCorners[i].x,
@@ -1226,13 +1547,34 @@ function initGhosts() {
              spawnY: ghostCorners[i].y,
              progress: 0,
              dir: 'up',
-             color: ghostColors[i],
+             color: gColor,
              speed: 0.006,
              homeTime: 0,
-             isDead: false
+             isDead: false,
+             speechText: "",
+             speechTimer: 0,
+             speechCooldown: 0
          });
      }
      initGhostReturnFields(ghostCorners);
+     if (specialGhostIndex !== -1) {
+         ghostReturnFields[specialType === 'michael' ? 4 : 5] = ghostReturnFields[specialGhostIndex];
+     }
+     
+     if (specialGhostIndex !== -1) {
+         setTimeout(function() {
+             if (pacmanGameState !== 'playing') return;
+             var specialId = specialType === 'michael' ? 4 : 5;
+             var rIndex = Math.floor(Math.random() * ghostDialogues[specialId]['spawn'].length);
+             var gh = pacmanGhosts[specialGhostIndex];
+             if (gh && !gh.isDead) {
+                 gh.speechText = ghostDialogues[specialId]['spawn'][rIndex];
+                 if (gh.speechText.text) gh.speechText = gh.speechText.text; // Handle objects
+                 gh.speechTimer = 150;
+                 speakGhostDialogue(specialId, 'spawn', rIndex);
+             }
+         }, 2500);
+     }
  }
 
 var ghostReturnFields = [];
@@ -1319,7 +1661,9 @@ function checkDotCollision(pl, userName) {
              
              // Trigger zoom and individual power mode on power pill consumption
              if (dot.power) {
-                 pl.powerTimer = (pl.powerTimer || 0) + 1800; // Increased to ~30 seconds
+                 var isAlreadyPowerMap = pl.powerEndTime && pl.powerEndTime > Date.now();
+                 pl.powerEndTime = (isAlreadyPowerMap ? pl.powerEndTime : Date.now()) + 30000;
+                 pl.powerTimer = 1; // Used as boolean flag for active power
                  pl.ghostComboCount = 0;
                  AudioSynth.playTone(880, 'sine', 0.4, 0.1);
                  
@@ -1592,7 +1936,12 @@ function triggerRoundEnd() {
     pacmanRoundEndMode = 'match';
     window.pacmanRoundEndStart = Date.now(); // Marca o início para animação de count-up
     AudioSynth.playVictoryFanfare();
+    setTimeout(function() {
+        AudioSynth.playIntermissionMusic();
+    }, 1000);
     AudioSynth.stopSiren(); // Stop the ambient siren during the transition
+    stopAllGhostVoices(); // Interrompe qualquer fala de fantasma que esteja tocando
+
     
     pushAlertEvent(`🎉 FASE COMPLETADA! Exibindo classificação da rodada...`);
     
@@ -1638,16 +1987,18 @@ function triggerRoundEnd() {
     // Atualiza a UI do placar geral apenas no final da partida (para evitar stuttering)
     commitLeaderboardUpdate();
     
-    // After 5 seconds, switch to overall leaderboard
+    // After 10 seconds, switch to overall leaderboard (allowing almost 2 full animation cycles)
     setTimeout(function() {
         pacmanRoundEndMode = 'overall';
+        window.pacmanRoundEndStart = Date.now(); // Reinicia a animação!
+        window.pacmanCachedDisplayPlayers = null; // Invalida o cache
         pushAlertEvent(`🏆 Exibindo o Placar Geral histórico...`);
-    }, 5000);
+    }, 10000);
     
-    // After 10 seconds, transition to next level
+    // After 20 seconds total, transition to next level
     setTimeout(function() {
         triggerLevelUp();
-    }, 10000);
+    }, 20000);
 }
 
 function triggerLevelUp() {
@@ -1724,6 +2075,29 @@ function roundRect(ctx, x, y, width, height, radius) {
     ctx.closePath();
 }
 
+// Lista de Jogadores Ignorados no Placar
+// Adicione aqui qualquer nome falso/conta de teste gerado para testes (sem o '@', apenas minúsculas).
+var IGNORED_PLAYERS_LIST = [
+    'speedy58',
+    'speed29',
+    'player',
+    'teste',
+    'testplayer'
+];
+
+function isPlayerBanned(username) {
+    if (!username) return true;
+    var u = String(username).toLowerCase().trim().replace(/^@/, ''); // Remove o @ para a checagem
+    
+    // Bloqueia bots gerados pelo atalho S
+    if (u.startsWith('bot_')) return true;
+    
+    // Bloqueia jogadores na lista de ignorados
+    if (IGNORED_PLAYERS_LIST.includes(u)) return true;
+    
+    return false;
+}
+
 function drawRoundEndOverlay() {
     if (!pacmanCtx) return;
     
@@ -1740,41 +2114,53 @@ function drawRoundEndOverlay() {
     var footerText = '';
     var displayPlayers = [];
     
+    // Configura textos
     if (pacmanRoundEndMode === 'match') {
         titleText = '🏆 FASE COMPLETADA 🏆';
         subtitleText = `Classificação da Rodada (Fase ${pacmanLevel})`;
         footerText = 'Exibindo placar geral em breve...';
-        
-        displayPlayers = Object.keys(pacmanPlayers).map(function(p) {
-            return {
-                name: p,
-                score: pacmanPlayers[p].roundScore || 0, // Mostra apenas os pontos dessa fase
-                color: pacmanPlayers[p].color,
-                avatar: pacmanPlayers[p].avatar
-            };
-        }).sort(function(a, b) {
-            return b.score - a.score;
-        });
     } else {
         titleText = '🏆 PLACAR GERAL 🏆';
         subtitleText = 'Melhores Pontuações de Sempre (Top 20)';
         footerText = 'Preparando o próximo labirinto...';
-        
-        var rawLeaderboard = Array.isArray(pacmanGlobalLeaderboard) ? pacmanGlobalLeaderboard : [];
-        displayPlayers = rawLeaderboard.filter(function(p) {
-            return p && p.user;
-        }).map(function(p, index) {
-            var username = String(p.user).toLowerCase();
-            return {
-                name: String(p.user),
-                score: Number(p.score) || 0,
-                color: pacmanPlayers[username] ? pacmanPlayers[username].color : PACMAN_COLORS[index % PACMAN_COLORS.length],
-                avatar: p.avatar || ''
-            };
-        }).sort(function(a, b) {
-            return b.score - a.score;
-        });
     }
+    
+    // CACHE de Jogadores para não fazer Sort a 60 frames por segundo (mata a performance)
+    if (!window.pacmanCachedDisplayPlayers || window.pacmanCachedRoundEndMode !== pacmanRoundEndMode) {
+        window.pacmanCachedRoundEndMode = pacmanRoundEndMode;
+        
+        if (pacmanRoundEndMode === 'match') {
+            window.pacmanCachedDisplayPlayers = Object.keys(pacmanPlayers)
+            .filter(function(p) { return !isPlayerBanned(p); })
+            .map(function(p) {
+                return {
+                    name: p,
+                    score: pacmanPlayers[p].roundScore || 0,
+                    color: pacmanPlayers[p].color,
+                    avatar: pacmanPlayers[p].avatar
+                };
+            }).sort(function(a, b) {
+                return b.score - a.score;
+            });
+        } else {
+            var rawLeaderboard = Array.isArray(pacmanGlobalLeaderboard) ? pacmanGlobalLeaderboard : [];
+            window.pacmanCachedDisplayPlayers = rawLeaderboard.filter(function(p) {
+                return !isPlayerBanned(p.user);
+            }).map(function(p, index) {
+                var username = String(p.user).toLowerCase();
+                return {
+                    name: String(p.user),
+                    score: Number(p.score) || 0,
+                    color: pacmanPlayers[username] ? pacmanPlayers[username].color : PACMAN_COLORS[index % PACMAN_COLORS.length],
+                    avatar: p.avatar || ''
+                };
+            }).sort(function(a, b) {
+                return b.score - a.score;
+            });
+        }
+    }
+    
+    displayPlayers = window.pacmanCachedDisplayPlayers;
     
     // Animation Progress (0.0 to 1.0)
     // Starts exactly at 0 and takes 3.5 seconds to reach 1.0
@@ -1790,6 +2176,9 @@ function drawRoundEndOverlay() {
         var cardX = (w - cardW) / 2;
         var cardY = (h - cardH) / 2;
         
+        // --- DRAW FUN ANIMATION ---
+        drawRankingFunAnimation(displayPlayers, elapsed, w, h, cardY, cardY + cardH);
+
         // Glow effect
         pacmanCtx.save();
         pacmanCtx.shadowBlur = 30;
@@ -2007,8 +2396,8 @@ function drawRoundEndOverlay() {
             pacmanCtx.font = 'bold 26px Inter, sans-serif';
             pacmanCtx.fillText(`@${pl.name.substring(0, 16)}`, 270, py + 34);
             
-            // Score
-            var displayScore = Math.floor((Number(pl.score) || 0) * easeOut);
+            // Score (Sem animação no placar geral)
+            var displayScore = Number(pl.score) || 0;
             pacmanCtx.textAlign = 'right';
             pacmanCtx.fillStyle = pl.color || '#00ffcc';
             pacmanCtx.font = 'bold 26px "Press Start 2P", monospace';
@@ -2032,7 +2421,413 @@ function spawnFruit() {
     // Kept dot active so fruits stay in front of the dots (no temporary deactivation)
     pacmanFruits.push({ x: pos.x, y: pos.y, active: true, value: val, type: type, restoredDot: false });
     spawnTextParticle(pos.x, pos.y, `${type} FRUTA!`, '#ff5500');
-    pushAlertEvent(`🍒 Uma Fruta Bônus surgiu no labirinto!`);
+    pushAlertEvent(`🍒 Uma Fruta Bônus surgiu no labirinto!`); // Call it manually or let the animation frame handle it
+}
+
+function drawRankingFunAnimation(players, elapsed, w, h, cardY, cardBottomY) {
+    // Top space center
+    var topSpaceY = cardY / 2;
+    // Bottom space center
+    var bottomSpaceY = cardBottomY + (h - cardBottomY) / 2;
+    
+    // Cycle every 6000ms. We add 1200ms offset so the characters are already entering the screen
+    // when the ranking appears, removing the empty "delay" feeling.
+    var cycle = (elapsed + 1200) % 6000;
+    
+    var ghostColors = ['#ff0000', '#ffb8ff', '#00ffff', '#ffb852'];
+    
+    // Scale slightly larger than game: game is usually 30-40 tile size, let's use radius 45
+    var scale = 45;
+    
+    // Top Animation: Left to Right
+    var topX = -300 + (cycle / 6000) * (w + 1000);
+    // Draw top 3 players running away from ghosts
+    var topPlayers = players.slice(0, 3);
+    
+    pacmanCtx.save();
+    // Ghosts chasing (Right, left of players)
+    for (let i = 0; i < 4; i++) {
+        let gx = topX - 140 - i * 90;
+        if (gx > -100 && gx < w + 100) {
+            drawSimpleGhost(gx, topSpaceY, scale, 'right', ghostColors[i], elapsed, 'angry');
+        }
+    }
+    
+    // Players running ahead (Right, right of ghosts)
+    for (let i = 0; i < topPlayers.length; i++) {
+        let px = topX + (topPlayers.length - 1 - i) * 100;
+        if (px > -100 && px < w + 100) {
+            drawSimplePacman(px, topSpaceY, scale, 'right', topPlayers[i], elapsed);
+            // Draw name above
+            pacmanCtx.font = "bold 18px Inter";
+            pacmanCtx.fillStyle = topPlayers[i].color || '#fff';
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.lineWidth = 3;
+            pacmanCtx.strokeStyle = '#000';
+            pacmanCtx.strokeText(topPlayers[i].name, px, topSpaceY - scale - 15);
+            pacmanCtx.fillText(topPlayers[i].name, px, topSpaceY - scale - 15);
+        }
+    }
+    pacmanCtx.restore();
+    
+    // Bottom Animation: Right to Left
+    var bottomX = w + 300 - (cycle / 6000) * (w + 1000);
+    
+    pacmanCtx.save();
+    // Ghosts chasing (Left, right of players)
+    for (let i = 0; i < 4; i++) {
+        let gx = bottomX + 140 + i * 90;
+        if (gx > -100 && gx < w + 100) {
+            drawSimpleGhost(gx, bottomSpaceY, scale, 'left', ghostColors[i], elapsed, 'angry');
+        }
+    }
+    
+    // Players running ahead (Left, left of ghosts)
+    for (let i = 0; i < topPlayers.length; i++) {
+        let px = bottomX - (topPlayers.length - 1 - i) * 100;
+        if (px > -100 && px < w + 100) {
+            drawSimplePacman(px, bottomSpaceY, scale, 'left', topPlayers[i], elapsed);
+            // Draw name above
+            pacmanCtx.font = "bold 18px Inter";
+            pacmanCtx.fillStyle = topPlayers[i].color || '#fff';
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.lineWidth = 3;
+            pacmanCtx.strokeStyle = '#000';
+            pacmanCtx.strokeText(topPlayers[i].name, px, bottomSpaceY - scale - 15);
+            pacmanCtx.fillText(topPlayers[i].name, px, bottomSpaceY - scale - 15);
+        }
+    }
+    pacmanCtx.restore();
+}
+
+function drawSpeechBubble(ctx, px, py, text) {
+    ctx.save();
+    ctx.font = "bold 20px Inter"; // Increased by ~30%
+    var textWidth = ctx.measureText(text).width;
+    var bubbleW = textWidth + 26;
+    var bubbleH = 34;
+    var bubbleX = px - bubbleW / 2;
+    var bubbleY = py - 55; // Above ghost
+    
+    // Canvas bounds check
+    if (bubbleX < 5) bubbleX = 5;
+    if (bubbleX + bubbleW > 1075) bubbleX = 1075 - bubbleW;
+    
+    // Draw bubble and tail
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    
+    ctx.beginPath();
+    var r = 8; // border radius
+    ctx.moveTo(bubbleX + r, bubbleY);
+    ctx.lineTo(bubbleX + bubbleW - r, bubbleY);
+    ctx.quadraticCurveTo(bubbleX + bubbleW, bubbleY, bubbleX + bubbleW, bubbleY + r);
+    ctx.lineTo(bubbleX + bubbleW, bubbleY + bubbleH - r);
+    ctx.quadraticCurveTo(bubbleX + bubbleW, bubbleY + bubbleH, bubbleX + bubbleW - r, bubbleY + bubbleH);
+    
+    // The tail on the bottom edge pointing to ghost
+    var tailBaseX = px;
+    if (tailBaseX < bubbleX + 15) tailBaseX = bubbleX + 15;
+    if (tailBaseX > bubbleX + bubbleW - 15) tailBaseX = bubbleX + bubbleW - 15;
+    
+    ctx.lineTo(tailBaseX + 8, bubbleY + bubbleH);
+    ctx.lineTo(px, py - 18); // Point down exactly to ghost head
+    ctx.lineTo(tailBaseX - 8, bubbleY + bubbleH);
+    
+    ctx.lineTo(bubbleX + r, bubbleY + bubbleH);
+    ctx.quadraticCurveTo(bubbleX, bubbleY + bubbleH, bubbleX, bubbleY + bubbleH - r);
+    ctx.lineTo(bubbleX, bubbleY + r);
+    ctx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + r, bubbleY);
+    
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // Text
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, bubbleX + bubbleW / 2, bubbleY + bubbleH / 2 + 1);
+    ctx.restore();
+}
+
+function drawGhostFace(gx, gy, dir, scale, state, isSpecial) {
+    pacmanCtx.save();
+    pacmanCtx.translate(gx, gy);
+    if (isSpecial) {
+        pacmanCtx.scale(0.75, 0.75);
+        pacmanCtx.translate(0, 4 * scale);
+    }
+    var lGx = 0, lGy = 0;
+    
+    var eyeOffsetX = 0, eyeOffsetY = 0;
+    if (dir === 'left') eyeOffsetX = -2 * scale;
+    else if (dir === 'right') eyeOffsetX = 2 * scale;
+    else if (dir === 'up') eyeOffsetY = -2 * scale;
+    else if (dir === 'down') eyeOffsetY = 2 * scale;
+    
+    // Eyes Background
+    pacmanCtx.fillStyle = '#ffffff';
+    pacmanCtx.strokeStyle = '#000000';
+    pacmanCtx.lineWidth = 1;
+    pacmanCtx.beginPath(); pacmanCtx.arc(lGx - 5 * scale + eyeOffsetX, lGy - 6 * scale + eyeOffsetY, 4 * scale, 0, Math.PI*2); pacmanCtx.fill();
+    if (isSpecial) pacmanCtx.stroke();
+    pacmanCtx.beginPath(); pacmanCtx.arc(lGx + 5 * scale + eyeOffsetX, lGy - 6 * scale + eyeOffsetY, 4 * scale, 0, Math.PI*2); pacmanCtx.fill();
+    if (isSpecial) pacmanCtx.stroke();
+    
+    // Pupils
+    var pupilOffsetX = (dir === 'left') ? -0.5 * scale : (dir === 'right') ? 0.5 * scale : 0;
+    var pupilOffsetY = (dir === 'up') ? -0.5 * scale : (dir === 'down') ? 0.5 * scale : 0;
+    
+    if (state === 'scared') {
+        pacmanCtx.fillStyle = '#ff0000';
+        pacmanCtx.beginPath(); pacmanCtx.arc(lGx - 5 * scale + eyeOffsetX + pupilOffsetX, lGy - 6 * scale + eyeOffsetY + pupilOffsetY, 2 * scale, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.beginPath(); pacmanCtx.arc(lGx + 5 * scale + eyeOffsetX + pupilOffsetX, lGy - 6 * scale + eyeOffsetY + pupilOffsetY, 2 * scale, 0, Math.PI*2); pacmanCtx.fill();
+    } else {
+        pacmanCtx.fillStyle = isSpecial ? '#000000' : '#0000dd';
+        pacmanCtx.beginPath(); pacmanCtx.arc(lGx - 5 * scale + eyeOffsetX + pupilOffsetX, lGy - 6 * scale + eyeOffsetY + pupilOffsetY, 2 * scale, 0, Math.PI*2); pacmanCtx.fill();
+        pacmanCtx.beginPath(); pacmanCtx.arc(lGx + 5 * scale + eyeOffsetX + pupilOffsetX, lGy - 6 * scale + eyeOffsetY + pupilOffsetY, 2 * scale, 0, Math.PI*2); pacmanCtx.fill();
+    }
+    
+    if (state === 'dead') {
+        pacmanCtx.restore();
+        return; // Dead ghosts are just eyes
+    }
+    
+    // Expressions
+    pacmanCtx.lineWidth = 1.5 * scale;
+    pacmanCtx.lineCap = 'round';
+    pacmanCtx.lineJoin = 'round';
+    
+    if (state === 'angry') {
+        pacmanCtx.strokeStyle = '#000000';
+        // Angry Eyebrows \ /
+        pacmanCtx.beginPath(); pacmanCtx.moveTo(lGx - 8 * scale + eyeOffsetX, lGy - 11 * scale + eyeOffsetY); pacmanCtx.lineTo(lGx - 3 * scale + eyeOffsetX, lGy - 9 * scale + eyeOffsetY); pacmanCtx.stroke();
+        pacmanCtx.beginPath(); pacmanCtx.moveTo(lGx + 8 * scale + eyeOffsetX, lGy - 11 * scale + eyeOffsetY); pacmanCtx.lineTo(lGx + 3 * scale + eyeOffsetX, lGy - 9 * scale + eyeOffsetY); pacmanCtx.stroke();
+        
+        // Angry Mouth (sharp zigzag)
+        pacmanCtx.beginPath();
+        var my = lGy + 3 * scale;
+        pacmanCtx.moveTo(lGx - 5 * scale, my);
+        pacmanCtx.lineTo(lGx - 2.5 * scale, my - 2 * scale);
+        pacmanCtx.lineTo(lGx, my);
+        pacmanCtx.lineTo(lGx + 2.5 * scale, my - 2 * scale);
+        pacmanCtx.lineTo(lGx + 5 * scale, my);
+        pacmanCtx.stroke();
+    } else if (state === 'scared') {
+        pacmanCtx.strokeStyle = '#222';
+        // Scared Eyebrows / \
+        pacmanCtx.beginPath(); pacmanCtx.moveTo(lGx - 7 * scale + eyeOffsetX, lGy - 9 * scale + eyeOffsetY); pacmanCtx.lineTo(lGx - 3 * scale + eyeOffsetX, lGy - 11 * scale + eyeOffsetY); pacmanCtx.stroke();
+        pacmanCtx.beginPath(); pacmanCtx.moveTo(lGx + 7 * scale + eyeOffsetX, lGy - 9 * scale + eyeOffsetY); pacmanCtx.lineTo(lGx + 3 * scale + eyeOffsetX, lGy - 11 * scale + eyeOffsetY); pacmanCtx.stroke();
+        
+        // Wavy/Zigzag Mouth (longer)
+        pacmanCtx.beginPath();
+        var my = lGy + 5 * scale;
+        pacmanCtx.moveTo(lGx - 6 * scale, my);
+        pacmanCtx.lineTo(lGx - 4 * scale, my - 1.5 * scale);
+        pacmanCtx.lineTo(lGx - 2 * scale, my + 1.5 * scale);
+        pacmanCtx.lineTo(lGx, my - 1.5 * scale);
+        pacmanCtx.lineTo(lGx + 2 * scale, my + 1.5 * scale);
+        pacmanCtx.lineTo(lGx + 4 * scale, my - 1.5 * scale);
+        pacmanCtx.lineTo(lGx + 6 * scale, my);
+        pacmanCtx.stroke();
+    } else {
+        // Normal Mouth (straight small line)
+        pacmanCtx.strokeStyle = '#111111';
+        pacmanCtx.beginPath();
+        pacmanCtx.moveTo(lGx - 3 * scale, lGy + 4 * scale);
+        pacmanCtx.lineTo(lGx + 3 * scale, lGy + 4 * scale);
+        pacmanCtx.stroke();
+    }
+    
+    pacmanCtx.restore();
+}
+
+function drawMichaelJacksonAccessories(gx, gy, dir, scale, state) {
+    if (state === 'dead') return;
+    
+    // Fedora Hat
+    pacmanCtx.save();
+    pacmanCtx.translate(gx, gy - 12 * scale); // Lower the hat back down since the face is lower now
+    
+    // Slight tilt depending on direction
+    if (dir === 'left') pacmanCtx.rotate(-0.1);
+    else if (dir === 'right') pacmanCtx.rotate(0.1);
+    else if (dir === 'down') pacmanCtx.translate(0, 2 * scale); // Hat covers less when moving down
+    
+    // Brim
+    pacmanCtx.fillStyle = '#111111';
+    pacmanCtx.beginPath();
+    pacmanCtx.ellipse(0, 0, 12 * scale, 2.5 * scale, 0, 0, Math.PI * 2);
+    pacmanCtx.fill();
+    
+    // Crown
+    pacmanCtx.beginPath();
+    pacmanCtx.rect(-7 * scale, -8 * scale, 14 * scale, 8 * scale);
+    pacmanCtx.fill();
+    
+    // White Ribbon
+    pacmanCtx.fillStyle = '#ffffff';
+    pacmanCtx.fillRect(-7 * scale, -3 * scale, 14 * scale, 2 * scale);
+    
+    pacmanCtx.restore();
+    
+    // Sparkly Glove (Left hand, meaning right side of screen)
+    var time = Date.now();
+    var bobbing = Math.sin(time / 100) * 3 * scale;
+    var gloveX = gx + 12 * scale;
+    var gloveY = gy + bobbing;
+    
+    if (dir === 'left') {
+        gloveX = gx - 12 * scale; // Switch side if moving left
+    }
+    
+    pacmanCtx.save();
+    pacmanCtx.translate(gloveX, gloveY);
+    
+    // Glove base
+    pacmanCtx.fillStyle = '#e0e0e0';
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(0, 0, 4 * scale, 0, Math.PI * 2);
+    pacmanCtx.fill();
+    
+    // Sparkles
+    pacmanCtx.fillStyle = '#ffffff';
+    if (Math.floor(time / 50) % 2 === 0) pacmanCtx.fillRect(-2 * scale, -2 * scale, 1 * scale, 1 * scale);
+    if (Math.floor(time / 70) % 2 === 0) pacmanCtx.fillRect(1 * scale, 1 * scale, 1 * scale, 1 * scale);
+    if (Math.floor(time / 90) % 2 === 0) pacmanCtx.fillRect(2 * scale, -1 * scale, 1 * scale, 1 * scale);
+    
+    pacmanCtx.restore();
+}
+
+function drawMarioAccessories(gx, gy, dir, scale, state) {
+    if (state === 'dead') return;
+    
+    // 1. Bigode (mustache)
+    pacmanCtx.save();
+    pacmanCtx.translate(gx, gy);
+    pacmanCtx.scale(0.75, 0.75);
+    pacmanCtx.translate(0, 4 * scale); // acompanha o deslocamento do rosto
+    
+    var eyeOffsetX = 0, eyeOffsetY = 0;
+    if (dir === 'left') eyeOffsetX = -2 * scale;
+    else if (dir === 'right') eyeOffsetX = 2 * scale;
+    else if (dir === 'up') eyeOffsetY = -2 * scale;
+    else if (dir === 'down') eyeOffsetY = 2 * scale;
+    
+    pacmanCtx.fillStyle = '#000000';
+    pacmanCtx.beginPath();
+    pacmanCtx.ellipse(-2.5 * scale + eyeOffsetX, 2.5 * scale + eyeOffsetY, 4 * scale, 2 * scale, -0.2, 0, Math.PI*2);
+    pacmanCtx.fill();
+    pacmanCtx.beginPath();
+    pacmanCtx.ellipse(2.5 * scale + eyeOffsetX, 2.5 * scale + eyeOffsetY, 4 * scale, 2 * scale, 0.2, 0, Math.PI*2);
+    pacmanCtx.fill();
+    pacmanCtx.restore();
+    
+    // 2. Quepe (Hat)
+    pacmanCtx.save();
+    pacmanCtx.translate(gx, gy - 11 * scale); // Topo da cabeça
+    
+    if (dir === 'left') pacmanCtx.rotate(-0.1);
+    else if (dir === 'right') pacmanCtx.rotate(0.1);
+    else if (dir === 'down') pacmanCtx.translate(0, 1 * scale);
+    
+    // Aba do boné
+    pacmanCtx.fillStyle = '#aa0000'; // Um tom um pouco mais escuro que o corpo pra destacar
+    var brimOffset = (dir === 'left') ? -3 * scale : (dir === 'right') ? 3 * scale : 0;
+    pacmanCtx.beginPath();
+    var brimY = (dir === 'up') ? 1 * scale : 2 * scale;
+    pacmanCtx.ellipse(brimOffset, brimY, 12 * scale, 3 * scale, 0, 0, Math.PI*2);
+    pacmanCtx.fill();
+    
+    // Domo do boné
+    pacmanCtx.fillStyle = '#dd0000'; // Vermelho mario (diferente de ff0000 do corpo pra dar relevo)
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(0, 1 * scale, 11 * scale, Math.PI, 0);
+    pacmanCtx.fill();
+    
+    // Contorno pro chapéu destacar no corpo
+    pacmanCtx.strokeStyle = '#550000';
+    pacmanCtx.lineWidth = 1 * scale;
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(0, 1 * scale, 11 * scale, Math.PI, 0);
+    pacmanCtx.stroke();
+    
+    // Círculo branco com M
+    pacmanCtx.fillStyle = '#ffffff';
+    var logoX = (dir === 'left') ? -4 * scale : (dir === 'right') ? 4 * scale : 0;
+    var logoY = (dir === 'up') ? -5 * scale : -4 * scale;
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(logoX, logoY, 3.5 * scale, 0, Math.PI * 2);
+    pacmanCtx.fill();
+    
+    pacmanCtx.fillStyle = '#dd0000';
+    pacmanCtx.font = 'bold ' + (5.5 * scale) + 'px sans-serif';
+    pacmanCtx.textAlign = 'center';
+    pacmanCtx.textBaseline = 'middle';
+    pacmanCtx.fillText('M', logoX, logoY + 0.5 * scale);
+    pacmanCtx.restore();
+}
+
+
+function drawSimpleGhost(gx, gy, scale, dir, color, elapsed, state) {
+    var bodySprite = getGhostBodySprite(color);
+    if (!bodySprite) return;
+    
+    var drawW = scale * 2.2;
+    var drawH = scale * 2.2;
+    
+    pacmanCtx.drawImage(bodySprite, gx - drawW/2, gy - drawH/2, drawW, drawH);
+    
+    var eyeScale = scale / 15;
+    drawGhostFace(gx, gy, dir, eyeScale, state || 'angry');
+}
+
+function drawSimplePacman(px, py, scale, dir, player, elapsed) {
+    var frameIndex = Math.floor(elapsed / 80) % 3;
+    var mOpen = [Math.PI / 4.5, Math.PI / 8, 0.05][frameIndex];
+    
+    var rotAngle = dir === 'right' ? 0 : Math.PI;
+    
+    // Removed bobbing effect
+    // py += Math.sin(elapsed / 100 + px) * 8;
+    
+    var avatarImg = getAvatarImage(player.name, player.avatar);
+    
+    pacmanCtx.save();
+    pacmanCtx.translate(px, py);
+    pacmanCtx.rotate(rotAngle);
+    
+    if (avatarImg && avatarImg.complete && avatarImg.naturalWidth !== 0) {
+        pacmanCtx.beginPath();
+        pacmanCtx.arc(0, 0, scale, mOpen, Math.PI * 2 - mOpen);
+        pacmanCtx.lineTo(0, 0);
+        pacmanCtx.closePath();
+        pacmanCtx.save();
+        pacmanCtx.clip();
+        
+        // Draw avatar upright
+        pacmanCtx.rotate(-rotAngle);
+        pacmanCtx.drawImage(avatarImg, -scale, -scale, scale * 2, scale * 2);
+        
+        pacmanCtx.restore(); // remove clip
+        
+        // Draw glowing outline (optimized: no shadowBlur)
+        pacmanCtx.strokeStyle = player.color || '#ffff00';
+        pacmanCtx.lineWidth = 3;
+        pacmanCtx.stroke();
+    } else {
+        pacmanCtx.fillStyle = player.color || '#ffff00';
+        pacmanCtx.beginPath();
+        pacmanCtx.arc(0, 0, scale, mOpen, Math.PI * 2 - mOpen);
+        pacmanCtx.lineTo(0, 0);
+        pacmanCtx.closePath();
+        pacmanCtx.fill();
+    }
+    
+    pacmanCtx.restore();
 }
 
 function checkGhostCollisions() {
@@ -2050,8 +2845,12 @@ function checkGhostCollisions() {
             var ghDrawX = gh.x + (gh.targetX - gh.x) * gh.progress;
             var ghDrawY = gh.y + (gh.targetY - gh.y) * gh.progress;
             
-            // Check collision distance threshold (0.68 tile units, or larger if giant)
-            var threshold = pl.giantTimer > 0 ? 1.8 : 0.68;
+            var threshold = 0.68;
+            if (pl.giantTimer > 0) {
+                var stacks = pl.giantStacks || 1;
+                var dynamicScale = Math.min(2.5 * (1 + (stacks - 1) * 0.2), 4.5);
+                threshold = dynamicScale * 0.75;
+            }
             var dist = Math.hypot(plDrawX - ghDrawX, plDrawY - ghDrawY);
             if (dist < threshold) {
                 if (pl.powerTimer > 0 || pl.giantTimer > 0) {
@@ -2116,6 +2915,15 @@ function checkGhostCollisions() {
                     AudioSynth.playDeath();
                     spawnDeathParticles(pl.x, pl.y, pl.color);
                     
+                    // --- Ghost Meme Voice ---
+                    var rIndex = Math.floor(Math.random() * 6);
+                    speakGhostDialogue(gh.id, 'kill', rIndex);
+                    if (ghostDialogues[gh.id] && ghostDialogues[gh.id]['kill']) {
+                        gh.speechText = ghostDialogues[gh.id]['kill'][rIndex];
+                        gh.speechTimer = 240; // 4 seconds
+                    }
+                    // ------------------------
+                    
                     // Destroy all clones owned by this player instantly
                     for (var i = pacmanClones.length - 1; i >= 0; i--) {
                         if (pacmanClones[i].owner === p) {
@@ -2177,7 +2985,8 @@ function checkGhostCollisions() {
 // Movement Update Loops
 // ==========================================
 function updateEntities() {
-    if (pacmanGameState !== 'playing') return;
+    if (pacmanGameState !== 'playing' && pacmanGameState !== 'round_end') return;
+    var isSlowMo = (pacmanGameState === 'round_end');
     
     // 1. Update Player Positions
     for (var p in pacmanPlayers) {
@@ -2187,16 +2996,30 @@ function updateEntities() {
         if (pl.spawnProtection > 0) pl.spawnProtection--;
         if (pl.speedBoostTimer > 0) pl.speedBoostTimer--;
         
-        if (pl.giftSpeedTimer > 0) {
+        if (pl.giftSpeedEndTime) {
+            if (Date.now() < pl.giftSpeedEndTime) pl.giftSpeedTimer = 1;
+            else { pl.giftSpeedTimer = 0; pl.giftSpeedMultiplier = 1.0; }
+        } else if (pl.giftSpeedTimer > 0) {
             pl.giftSpeedTimer--;
             if (pl.giftSpeedTimer <= 0) {
                 pl.giftSpeedMultiplier = 1.0;
             }
         }
         
-        // --- Continuous Energy Tank Tracking (Likes) ---
-        if (pl.autoEnergyTimer && pl.autoEnergyTimer > 0) {
+        // Update autoEnergyTimer based on endTime
+        if (pl.autoEnergyEndTime) {
+            if (Date.now() < pl.autoEnergyEndTime) pl.autoEnergyTimer = 1;
+            else pl.autoEnergyTimer = 0;
+        } else if (pl.autoEnergyTimer && pl.autoEnergyTimer > 0) {
             pl.autoEnergyTimer--;
+        }
+
+        // --- Continuous Energy Tank Tracking (Likes) ---
+        if (pl.giantTimer > 0) {
+            // Se for gigante, a aceleração fica cravada no MÁXIMO e a energia não cai.
+            pl.likeEnergy = 100;
+            pl.tapSpeedMultiplier = 2.0;
+        } else if ((pl.autoEnergyTimer && pl.autoEnergyTimer > 0) || pl.giftSpeedTimer > 0) {
             pl.likeEnergy = 100;
             pl.tapSpeedMultiplier = 2.0; // max multiplier at 100 energy
         } else if (pl.likeEnergy > 0) {
@@ -2238,7 +3061,7 @@ function updateEntities() {
                 if (pl.tapSpeedMultiplier && pl.tapSpeedMultiplier > 1.0) {
                     pl.isFast = true;
                 } else if (pl.fuel > 0) {
-                    pl.fuel--; // consume 1 movement fuel step!
+                    if (!(pl.giantTimer > 0)) pl.fuel--; // consume 1 movement fuel step!
                     pl.isFast = true;
                 } else {
                     pl.isFast = false;
@@ -2269,6 +3092,13 @@ function updateEntities() {
             // Gift speed multiplier stacks on top
             if (pl.giftSpeedTimer > 0) {
                 currentSpeed *= pl.giftSpeedMultiplier;
+            }
+            
+            if (isSlowMo) currentSpeed *= 0.15;
+            
+            // Reduzir a velocidade máxima do gigante pela metade conforme solicitado
+            if (pl.giantTimer > 0) {
+                currentSpeed *= 0.5;
             }
             
             pl.progress += currentSpeed;
@@ -2305,7 +3135,12 @@ function updateEntities() {
                 });
             }
             
-            if (pl.giantTimer > 0) pl.giantTimer--;
+            if (pl.giantEndTime) {
+                if (Date.now() < pl.giantEndTime) pl.giantTimer = 1;
+                else pl.giantTimer = 0;
+            } else if (pl.giantTimer > 0) {
+                pl.giantTimer--;
+            }
             
             if (pl.progress >= 1.0) {
                 pl.x = pl.targetX;
@@ -2314,13 +3149,14 @@ function updateEntities() {
                 pacmanPheromones[pl.x + ',' + pl.y] = { time: Date.now(), color: pl.color, turbo: pl.speedBoostTimer > 0 };
                 
                 if (pl.giantTimer > 0) {
-                    var dirs = [
-                        {x: 0, y: -1}, {x: 0, y: 1}, {x: -1, y: 0}, {x: 1, y: 0},
-                        {x: -1, y: -1}, {x: 1, y: -1}, {x: -1, y: 1}, {x: 1, y: 1}
-                    ];
-                    dirs.forEach(function(d) {
-                        if (typeof destroyMazeWall === 'function') destroyMazeWall(pl.x + d.x, pl.y + d.y);
-                    });
+                    var r = 1 + Math.floor((pl.giantStacks || 1) - 1);
+                    r = Math.min(3, r); // limite para não quebrar o mapa inteiro de uma vez
+                    for (var dx = -r; dx <= r; dx++) {
+                        for (var dy = -r; dy <= r; dy++) {
+                            if (dx === 0 && dy === 0) continue;
+                            if (typeof destroyMazeWall === 'function') destroyMazeWall(pl.x + dx, pl.y + dy);
+                        }
+                    }
                 }
                 
                 AudioSynth.playWaka(); // Som waka-waka ao andar/comer
@@ -2342,7 +3178,11 @@ function updateEntities() {
             continue;
         }
         
-        cl.timer--;
+        if (cl.endTime) {
+            if (Date.now() > cl.endTime) cl.timer = 0;
+        } else {
+            cl.timer--;
+        }
         if (cl.timer <= 0) {
             pacmanClones.splice(i, 1);
             continue;
@@ -2379,6 +3219,7 @@ function updateEntities() {
         
         if (cl.progress > 0 || (cl.progress === 0 && (cl.x !== cl.targetX || cl.y !== cl.targetY))) {
             var currentSpeed = 0.01625 * 0.75; // Clones speed reduced by half (fixed and independent of parent)
+            if (isSlowMo) currentSpeed *= 0.15;
             // Clones do not get power pill speed boost as they cannot eat ghosts
             cl.progress += currentSpeed;
             
@@ -2465,7 +3306,7 @@ function updateEntities() {
                         tx = targetPlayer.x;
                         ty = targetPlayer.y;
                         useTarget = true;
-                        reverse = pacmanPowerMode;
+                        reverse = pacmanPowerMode || pacmanGiantMode;
                     }
                     
                     if (useTarget) {
@@ -2525,9 +3366,11 @@ function updateEntities() {
             var activeSpeed = gh.speed;
             if (gh.isDead) {
                 activeSpeed = gh.speed * 4.0; // Very fast when returning
-            } else if (pacmanPowerMode) {
+            } else if (pacmanPowerMode || pacmanGiantMode) {
                 activeSpeed = 0.00625; // slow down in frightened mode (halved)
             }
+            
+            if (isSlowMo) activeSpeed *= 0.15;
             
             gh.progress += activeSpeed;
             if (gh.progress >= 1.0) {
@@ -2539,17 +3382,70 @@ function updateEntities() {
                 if (gh.isDead && gh.x === gh.spawnX && gh.y === gh.spawnY) {
                     gh.isDead = false;
                     gh.homeTime = 300; // 5 segundos de invulnerabilidade/espera na base
+                    
+                    // --- Respawn Speech ---
+                    var rIndex = Math.floor(Math.random() * 10);
+                    speakGhostDialogue(gh.id, 'respawn', rIndex);
+                    if (ghostDialogues[gh.id] && ghostDialogues[gh.id]['respawn']) {
+                        gh.speechText = ghostDialogues[gh.id]['respawn'][rIndex];
+                        gh.speechTimer = 240;
+                    }
+                    // ----------------------
                 }
             }
         } else if (gh.isDead && gh.x === gh.spawnX && gh.y === gh.spawnY) {
             // Já está na base e não vai se mover, ressuscita imediatamente
             gh.isDead = false;
             gh.homeTime = 300; // Evita loop infinito de combos (spawn kill)
+            
+            // --- Respawn Speech ---
+            var rIndex = Math.floor(Math.random() * 10);
+            speakGhostDialogue(gh.id, 'respawn', rIndex);
+            if (ghostDialogues[gh.id] && ghostDialogues[gh.id]['respawn']) {
+                gh.speechText = ghostDialogues[gh.id]['respawn'][rIndex];
+                gh.speechTimer = 240;
+            }
+            // ----------------------
+        }
+        
+        // --- Speech Logic ---
+        if (!gh.isDead && gh.homeTime <= 0) {
+            if (gh.speechCooldown > 0) gh.speechCooldown--;
+            if (gh.speechTimer > 0) gh.speechTimer--;
+            else gh.speechText = "";
+            
+            if (gh.speechCooldown <= 0 && Math.random() < 0.015) { // 1.5% chance per frame when off cooldown
+                var state = 'normal';
+                if (pacmanPowerMode || pacmanGiantMode) {
+                    state = 'scared';
+                } else {
+                    var targetPlayer = getClosestPlayer(gh.x, gh.y);
+                    if (targetPlayer) {
+                        var dx = targetPlayer.x - gh.x;
+                        var dy = targetPlayer.y - gh.y;
+                        var dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist < 4.5) state = 'angry';
+                    }
+                }
+                
+                if (state === 'angry' || state === 'scared') {
+                    var phrases = ghostDialogues[gh.id][state];
+                    if (phrases) {
+                        var phraseIndex = Math.floor(Math.random() * phrases.length);
+                        gh.speechText = phrases[phraseIndex];
+                        speakGhostDialogue(gh.id, state, phraseIndex); // Toca o MP3 acelerado!
+                        gh.speechTimer = 240; // 4 seconds
+                        gh.speechCooldown = 300 + Math.random() * 300; // 5-10 seconds
+                    }
+                }
+            }
         }
     });
     
     // 3. Process Collisions
-    checkGhostCollisions();
+    if (!isSlowMo) {
+        checkGhostCollisions();
+    }
 }
 
 // ==========================================
@@ -2636,20 +3532,23 @@ function spawnScoreText(x, y, text, color) {
 }
 
 function updateParticles() {
+    var isSlowMo = (pacmanGameState === 'round_end');
+    var timeFactor = isSlowMo ? 0.15 : 1.0;
+    
     // Optimized particle update - only update visible particles
     var len = pacmanParticles.length;
     for (var i = len - 1; i >= 0; i--) {
         var p = pacmanParticles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life--;
+        p.x += p.vx * timeFactor;
+        p.y += p.vy * timeFactor;
+        p.life -= timeFactor;
         if (p.life <= 0) pacmanParticles.splice(i, 1);
     }
     
     for (var i = pacmanTextParticles.length - 1; i >= 0; i--) {
         var pt = pacmanTextParticles[i];
-        pt.y += pt.vy;
-        pt.life--;
+        pt.y += pt.vy * timeFactor;
+        pt.life -= timeFactor;
         if (pt.life <= 0) pacmanTextParticles.splice(i, 1);
     }
 }
@@ -2664,7 +3563,9 @@ function checkCameraZoomTrigger() {
     
     if (pacmanGameState !== 'playing') return;
     
-    var sortedPlayers = Object.keys(pacmanPlayers).map(function(p) {
+    var sortedPlayers = Object.keys(pacmanPlayers)
+    .filter(function(p) { return !isPlayerBanned(p); })
+    .map(function(p) {
         return {
             name: p,
             score: pacmanPlayers[p].roundScore || 0,
@@ -2721,24 +3622,29 @@ function drawPacman() {
     // Check for zoom triggers
     checkCameraZoomTrigger();
     
-    // Clear Board
-    pacmanCtx.fillStyle = pacmanThemeBgColor;
-    pacmanCtx.fillRect(0, 0, canvas.width, canvas.height);
+    // Clear Board TRANSPARENTLY first
+    pacmanCtx.clearRect(0, 0, canvas.width, canvas.height);
     
     // Save context for zoom transformations
     pacmanCtx.save();
     
     // Apply zoom if active (applies to everything: maze, dots, players, ghosts)
     if (pacmanZoomTarget) {
+        if (!pacmanZoomTarget.maxTimer) pacmanZoomTarget.maxTimer = pacmanZoomTarget.timer;
+        var maxTimer = pacmanZoomTarget.maxTimer;
+        
         var zoomIntensity;
         var remaining = pacmanZoomTarget.timer;
-        if (remaining > 340) {
-            zoomIntensity = (360 - remaining) / 20;
+        if (remaining > maxTimer - 20) {
+            zoomIntensity = (maxTimer - remaining) / 20;
         } else if (remaining < 20) {
             zoomIntensity = remaining / 20;
         } else {
             zoomIntensity = 1;
         }
+        
+        // Garante que a intensidade nunca seja negativa, o que causava a tela de ponta cabeça
+        zoomIntensity = Math.max(0, Math.min(1, zoomIntensity));
         var zoomFactor = 1 + zoomIntensity * 3;
         
         // centerX e centerY já vêm com +0.5 do checkCameraZoomTrigger
@@ -2752,8 +3658,71 @@ function drawPacman() {
     
     // Draw static walls cache (pre-rendered with glow shadow)
     if (mazeCanvas) {
-        pacmanCtx.globalAlpha = 1.0; // SEM TRANSPARÊNCIA
+        pacmanCtx.globalAlpha = 1.0; 
         pacmanCtx.drawImage(mazeCanvas, 0, 0);
+        
+        // EFEITO DE ONDA (Wave Effect) NAS PAREDES!
+        pacmanCtx.globalCompositeOperation = 'source-in';
+        
+        var waveDuration = 6000; // Onda mais lenta (6 segundos)
+        var nowTime = Date.now();
+        var cycleIndex = Math.floor(nowTime / waveDuration) % 8;
+        var waveOffset = (nowTime % waveDuration) / waveDuration;
+        
+        var w = 1080;
+        var h = 1920;
+        
+        // Posição inicial (sx, sy) e final (ex, ey) da onda dependendo da direção
+        var sx = 0, sy = 0, ex = 0, ey = h; 
+        if (cycleIndex === 0) { sx = 0; sy = 0; ex = 0; ey = h; } // Cima pra Baixo
+        else if (cycleIndex === 1) { sx = w; sy = 0; ex = 0; ey = 0; } // Direita pra Esquerda
+        else if (cycleIndex === 2) { sx = 0; sy = h; ex = 0; ey = 0; } // Baixo pra Cima
+        else if (cycleIndex === 3) { sx = 0; sy = 0; ex = w; ey = 0; } // Esquerda pra Direita
+        else if (cycleIndex === 4) { sx = 0; sy = 0; ex = w; ey = h; } // Diagonal SE -> ID
+        else if (cycleIndex === 5) { sx = w; sy = h; ex = 0; ey = 0; } // Diagonal ID -> SE
+        else if (cycleIndex === 6) { sx = w; sy = 0; ex = 0; ey = h; } // Diagonal SD -> IE
+        else if (cycleIndex === 7) { sx = 0; sy = h; ex = w; ey = 0; } // Diagonal IE -> SD
+        
+        var cx = sx + (ex - sx) * waveOffset;
+        var cy = sy + (ey - sy) * waveOffset;
+        
+        var dx = ex - sx;
+        var dy = ey - sy;
+        var length = Math.sqrt(dx*dx + dy*dy) || 1;
+        dx /= length;
+        dy /= length;
+        
+        var span = 2000;
+        var gStartX = cx - dx * span;
+        var gStartY = cy - dy * span;
+        var gEndX = cx + dx * span;
+        var gEndY = cy + dy * span;
+        
+        var gradient = pacmanCtx.createLinearGradient(gStartX, gStartY, gEndX, gEndY);
+        
+        var baseColor = pacmanThemeWallColor; // Ciano
+        var waveColor = '#ff00ff'; // Onda Magenta
+        if (pacmanPowerMode) {
+            baseColor = '#ff0055'; // Vermelho no modo power
+            waveColor = '#ffff00'; // Onda Amarela no modo power
+        }
+        
+        gradient.addColorStop(0, baseColor);
+        gradient.addColorStop(0.47, baseColor); 
+        gradient.addColorStop(0.5, waveColor); // O centro da onda (mais fina e focada)
+        gradient.addColorStop(0.53, baseColor);
+        gradient.addColorStop(1, baseColor);
+        
+        pacmanCtx.fillStyle = gradient;
+        pacmanCtx.fillRect(0, 0, 1080, 1920);
+        
+        // Pinta o fundo real por trás de tudo
+        pacmanCtx.globalCompositeOperation = 'destination-over';
+        pacmanCtx.fillStyle = pacmanThemeBgColor;
+        pacmanCtx.fillRect(0, 0, 1080, 1920);
+        
+        // Restaura modo normal de blend
+        pacmanCtx.globalCompositeOperation = 'source-over';
     }
     
     // Draw Pheromone Trails (Glowing paths)
@@ -2850,22 +3819,44 @@ function drawPacman() {
             pacmanCtx.drawImage(bodySprite, gx - bodySprite.width/2, gy - bodySprite.height/2);
         }
         
-        // Draw eyes dynamically (same size alive or dead)
-        var eyeScale = 1.5;
+        // Determine Ghost State
+        var state = 'normal';
+        if (gh.isDead) {
+            state = 'dead';
+        } else if (pacmanPowerMode) {
+            state = 'scared';
+        } else {
+            var closestDist = Infinity;
+            for (var p in pacmanPlayers) {
+                var pl = pacmanPlayers[p];
+                if (pl.lives > 0 && pl.spawnProtection <= 0) {
+                    var dx = pl.x - gh.x;
+                    var dy = pl.y - gh.y;
+                    var dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < closestDist) closestDist = dist;
+                }
+            }
+            if (closestDist < 4.5) { // within 4.5 tiles
+                state = 'angry';
+            }
+        }
         
-        var eyeOffsetX = 0, eyeOffsetY = 0;
-        if (gh.dir === 'left') eyeOffsetX = -2 * eyeScale;
-        else if (gh.dir === 'right') eyeOffsetX = 2 * eyeScale;
-        else if (gh.dir === 'up') eyeOffsetY = -2 * eyeScale;
-        else if (gh.dir === 'down') eyeOffsetY = 2 * eyeScale;
-        
-        pacmanCtx.fillStyle = '#ffffff';
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 * eyeScale + eyeOffsetX, gy - 6 * eyeScale + eyeOffsetY, 4 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 * eyeScale + eyeOffsetX, gy - 6 * eyeScale + eyeOffsetY, 4 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-        
-        pacmanCtx.fillStyle = pacmanPowerMode && !gh.isDead ? '#ff0000' : '#0000ff';
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx - 5 * eyeScale + eyeOffsetX*2, gy - 6 * eyeScale + eyeOffsetY*2, 2 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-        pacmanCtx.beginPath(); pacmanCtx.arc(gx + 5 * eyeScale + eyeOffsetX*2, gy - 6 * eyeScale + eyeOffsetY*2, 2 * eyeScale, 0, Math.PI*2); pacmanCtx.fill();
+        var isSpecial = (gh.special === 'michael' || gh.special === 'mario');
+        drawGhostFace(gx, gy, gh.dir, 1.5, state, isSpecial);
+        if (gh.special === 'michael') {
+            drawMichaelJacksonAccessories(gx, gy, gh.dir, 1.5, state);
+        } else if (gh.special === 'mario') {
+            drawMarioAccessories(gx, gy, gh.dir, 1.5, state);
+        }
+    });
+    
+    // Draw Ghost Speech Bubbles (after all ghosts to ensure they are on top)
+    pacmanGhosts.forEach(function(gh) {
+        if (!gh.isDead && gh.homeTime <= 0 && gh.speechText && gh.speechTimer > 0) {
+            var gx = (gh.x + (gh.targetX - gh.x) * gh.progress) * pacmanTileSize + pacmanTileSize / 2;
+            var gy = (gh.y + (gh.targetY - gh.y) * gh.progress) * pacmanTileSize + pacmanTileSize / 2;
+            drawSpeechBubble(pacmanCtx, gx, gy, gh.speechText);
+        }
     });
     
     // Render Gift Drops
@@ -2880,16 +3871,81 @@ function drawPacman() {
                 var baseSize = pacmanTileSize * 1.5;
                 var size = baseSize * pulse;
                 
-                var img = getGiftImage(g.giftPictureUrl);
-                if (img && img.complete) {
-                    pacmanCtx.save();
-                    // Simplified drawing without shadowBlur
-                    pacmanCtx.drawImage(img, px - size / 2, py - size / 2, size, size);
-                    pacmanCtx.restore();
+                var useImg = window.pacmanUseGiftImages !== false; // If not explicitly false, assume true or check.
+                if (useImg) {
+                    var img = getGiftImage(g.giftPictureUrl);
+                    if (img && img.complete && img.naturalWidth !== 0) {
+                        pacmanCtx.save();
+                        // Simplified drawing without shadowBlur
+                        try {
+                            pacmanCtx.drawImage(img, px - size / 2, py - size / 2, size, size);
+                        } catch(e) {}
+                        pacmanCtx.restore();
+                    } else {
+                        // Fallback square
+                        pacmanCtx.fillStyle = '#ff00ff';
+                        pacmanCtx.fillRect(px - size/2, py - size/2, size, size);
+                    }
                 } else {
-                    // Fallback square
-                    pacmanCtx.fillStyle = '#ff00ff';
-                    pacmanCtx.fillRect(px - size/2, py - size/2, size, size);
+                    // Draw ultra-lightweight geometric shapes instead of heavy text/emojis
+                    pacmanCtx.save();
+                    pacmanCtx.translate(px, py);
+                    pacmanCtx.scale(pulse, pulse); // Hardware accelerated scaling
+                    
+                    var gName = (g.gift || '').toLowerCase();
+                    var radius = baseSize * 0.4;
+                    
+                    if (gName.includes('rose') || gName.includes('rosa') || gName.includes('love')) {
+                        // Pink Circle
+                        pacmanCtx.fillStyle = '#e91e63';
+                        pacmanCtx.beginPath();
+                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
+                        pacmanCtx.fill();
+                    }
+                    else if (gName.includes('gg')) {
+                        // Purple Square
+                        pacmanCtx.fillStyle = '#9c27b0';
+                        pacmanCtx.fillRect(-radius, -radius, radius*2, radius*2);
+                    }
+                    else if (gName.includes('donut') || gName.includes('rosquinha')) {
+                        // Orange Donut (Circle with a hole)
+                        pacmanCtx.fillStyle = '#ff9800';
+                        pacmanCtx.beginPath();
+                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
+                        pacmanCtx.arc(0, 0, radius*0.4, 0, 2*Math.PI, true);
+                        pacmanCtx.fill();
+                    }
+                    else if (gName.includes('tiktok') || gName.includes('coração') || gName.includes('heart')) {
+                        // Red Circle
+                        pacmanCtx.fillStyle = '#f44336';
+                        pacmanCtx.beginPath();
+                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
+                        pacmanCtx.fill();
+                    }
+                    else if (gName.includes('amo') || gName.includes('finger')) {
+                        // Orange-Red Rectangle
+                        pacmanCtx.fillStyle = '#ff5722';
+                        pacmanCtx.fillRect(-radius, -radius*0.8, radius*2, radius*1.6);
+                    }
+                    else {
+                        // Cyan Diamond
+                        pacmanCtx.fillStyle = '#00f2fe';
+                        pacmanCtx.beginPath();
+                        pacmanCtx.moveTo(0, -radius);
+                        pacmanCtx.lineTo(radius, 0);
+                        pacmanCtx.lineTo(0, radius);
+                        pacmanCtx.lineTo(-radius, 0);
+                        pacmanCtx.fill();
+                    }
+                    
+                    // Add a tiny white center dot for detail on all shapes
+                    pacmanCtx.fillStyle = '#fff';
+                    pacmanCtx.globalAlpha = 0.6;
+                    pacmanCtx.beginPath();
+                    pacmanCtx.arc(0, 0, radius * 0.2, 0, 2*Math.PI);
+                    pacmanCtx.fill();
+                    
+                    pacmanCtx.restore();
                 }
             }
         });
@@ -2908,7 +3964,11 @@ function drawPacman() {
         var px = (pl.x + (pl.targetX - pl.x) * pl.progress) * pacmanTileSize + pacmanTileSize / 2;
         var py = (pl.y + (pl.targetY - pl.y) * pl.progress) * pacmanTileSize + pacmanTileSize / 2;
         var radius = pacmanTileSize * 0.75;
-        var giantScale = pl.giantTimer > 0 ? 2.5 : 1.0;
+        var giantScale = 1.0;
+        if (pl.giantTimer > 0) {
+            var stacks = pl.giantStacks || 1;
+            giantScale = Math.min(2.5 * (1 + (stacks - 1) * 0.2), 4.5); // Capped at 4.5x
+        }
         radius *= giantScale;
         
         // Expose username text centered above
@@ -3100,7 +4160,9 @@ function drawPacman() {
     });
     pacmanCtx.globalAlpha = 1.0; // reset
     
-// Restore translation context
+    // Overlay DOM sync removido a pedido do usuário (animação agora é fixa no centro)
+    
+    // Restore translation context
     pacmanCtx.restore();
     
     // Overlay "PAUSED / WAITING" if needed
@@ -3175,7 +4237,9 @@ function commitLeaderboardUpdate() {
     });
     
     // Convert to array and sort descending by score
-    var sortedList = Object.keys(combinedPlayers).map(function(key) {
+    var sortedList = Object.keys(combinedPlayers)
+    .filter(function(key) { return !isPlayerBanned(key); })
+    .map(function(key) {
         return combinedPlayers[key];
     }).sort(function(a, b) {
         return b.score - a.score;
@@ -3188,7 +4252,10 @@ function commitLeaderboardUpdate() {
         return;
     }
     
-    sortedList.forEach(function(p, idx) {
+    var fragment = document.createDocumentFragment();
+    
+    // LIMIT to Top 100 to prevent browser freezing (DOM bloat) on tab switch
+    sortedList.slice(0, 100).forEach(function(p, idx) {
         var entry = document.createElement('div');
         entry.className = 'player-entry';
         // Add style for styling inactive versus active players slightly differently if desired
@@ -3201,6 +4268,7 @@ function commitLeaderboardUpdate() {
         if (idx === 0) crown = '👑 ';
         else if (idx === 1) crown = '🥈 ';
         else if (idx === 2) crown = '🥉 ';
+        else crown = (idx + 1) + '. '; // Mostrar posição para os demais
         
         var avatarUrl = resolveAvatarUrl(p.name, p.avatar);
         var avatarHtml = `<img src="${avatarUrl}" onerror="if(this.src!=='${GENERIC_AVATAR}'){this.src='${GENERIC_AVATAR}';}" style="width:20px; height:20px; border-radius:50%; border:1px solid ${p.color}; flex-shrink:0;">`;
@@ -3228,8 +4296,10 @@ function commitLeaderboardUpdate() {
             </div>
             <span class="player-score" style="color:${p.color};">${p.score}</span>
         `;
-        lb.appendChild(entry);
+        fragment.appendChild(entry);
     });
+    
+    lb.appendChild(fragment);
 }
 const recentAlerts = [];
 function pushAlertEvent(text) {
@@ -3267,12 +4337,80 @@ function getGiftImage(url) {
     return img;
 }
 
+function triggerGiftAnimationOverlay(url, senderName, giftName) {
+    if (!url) return;
+    
+    // Criar overlay
+    var overlay = document.getElementById('giftAnimationOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'giftAnimationOverlay';
+        overlay.style.position = 'absolute';
+        overlay.style.top = '50%';
+        overlay.style.left = '50%';
+        overlay.style.transform = 'translate(-50%, -50%)';
+        overlay.style.opacity = '1';
+        overlay.style.zIndex = '20000'; // Above everything
+        overlay.style.pointerEvents = 'none';
+        overlay.style.display = 'flex';
+        overlay.style.flexDirection = 'column';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        
+        var img = document.createElement('img');
+        img.id = 'giftAnimationImg';
+        img.style.maxWidth = '450px';
+        img.style.maxHeight = '450px';
+        
+        overlay.appendChild(img);
+        
+        var wrapper = document.getElementById('gameWrapper') || document.body;
+        wrapper.appendChild(overlay);
+    }
+    
+    var imgEl = document.getElementById('giftAnimationImg');
+    if (window.pacmanUseGiftImages === false) {
+        imgEl.style.display = 'none';
+        imgEl.src = '';
+    } else {
+        imgEl.style.display = 'block';
+        imgEl.src = url;
+    }
+    
+    // Configura metadados para o loop do drawPacman amarrar na posição
+    overlay.style.display = 'flex';
+    overlay.dataset.active = 'true';
+    overlay.dataset.targetUser = senderName.toLowerCase();
+    overlay.dataset.startTime = Date.now();
+    overlay.dataset.baseScale = '1';
+    
+    // Force reflow
+    void overlay.offsetWidth;
+    
+    // Clear previous timeout if exists
+    if (window.giftAnimationTimeout) clearTimeout(window.giftAnimationTimeout);
+    
+    window.giftAnimationTimeout = setTimeout(function() {
+        if (overlay) {
+            overlay.style.display = 'none';
+            overlay.dataset.active = 'false';
+        }
+    }, 4500); // Fica 4.5 segundos na tela
+}
+
 function processTikTokGift(data) {
     if (!data || !data.user) return;
     var user = data.user.replace(/^@/, '').toLowerCase();
     var gift = (data.giftName || '').toLowerCase().trim();
     var diamondCount = data.diamondCount || 1;
     var repeatCount = data.repeatCount || 1;
+    
+    // Trigger animation in DOM se for presente caro ou animado
+    var totalValue = diamondCount * repeatCount;
+    var animUrl = data.giftAnimationUrl || data.giftPictureUrl;
+    if (animUrl && (data.giftType > 1 || totalValue >= 30 || data.giftAnimationUrl)) {
+        triggerGiftAnimationOverlay(animUrl, user, gift || 'Presente Especial');
+    }
     
     // Atualiza o painel financeiro (Contabilidade de faturamento)
     updateDailyRevenue(diamondCount * repeatCount);
@@ -3294,88 +4432,178 @@ function processTikTokGift(data) {
 }
 
 function activateGiftPower(pl, userName, giftDrop) {
-    var gift = giftDrop.gift;
+    var gift = String(giftDrop.gift || '').toLowerCase();
     var user = giftDrop.sender;
     var diamondCount = giftDrop.diamondCount || 1;
     var repeatCount = giftDrop.repeatCount || 1;
     var consumerName = userName || pl.owner || 'Fantasma/Clone';
     
-    // Calculate gift speed boost
-    var speedBonusPercent = 0.05 * diamondCount * repeatCount;
-    var multiplier = 1.0 + speedBonusPercent;
-    if (multiplier > 2.5) multiplier = 2.5; // Cap at 2.5x speed
+    var totalValue = diamondCount * repeatCount;
+    var msgParts = [];
     
-    var duration = 300 + (diamondCount * repeatCount * 60);
-    if (duration > 1800) duration = 1800; // Cap at 30 seconds
+    // Nomes clássicos para o modo Híbrido
+    var isGG = gift.includes('gg');
+    var isRosa = gift.includes('rosa') || gift.includes('rose') || gift.includes('love');
+    var isTikTok = gift.includes('tiktok') || ((gift.includes('coração') || gift.includes('coracao') || gift.includes('heart')) && !gift.includes('finger'));
+    var isFingerHeart = gift.includes('finger') || gift.includes('amo');
+    var isDonut = gift.includes('rosquinha') || gift.includes('donut');
     
-    pl.giftSpeedMultiplier = multiplier;
-    pl.giftSpeedTimer = Math.max(pl.giftSpeedTimer || 0, duration);
+    // 1. SISTEMA CLÁSSICO (Por Nome)
+    var handledClassic = false;
     
-    spawnTextParticle(pl.x, pl.y, `TURBO +${Math.round((multiplier - 1.0)*100)}%`, '#ffff00');
-    
-    // Map of TikTok gifts to in-game actions
-    if (gift.includes('rose') || gift.includes('rosa') || gift.includes('love')) {
-        pl.powerTimer = (pl.powerTimer || 0) + 1800; // 30 seconds
-        pl.autoEnergyTimer = (pl.autoEnergyTimer || 0) + 1800;
-        pl.ghostComboCount = 0;
-        AudioSynth.playTone(880, 'sine', 0.4, 0.1);
-        spawnTextParticle(pl.x, pl.y, 'PÍLULA DE PODER!', '#ff0055');
-        pushAlertEvent(`💪 @${consumerName} pegou a Rosa! Apenas ele pode comer fantasmas!`);
-    } else if (gift.includes('tiktok') || gift.includes('coracao') || gift.includes('heart')) {
-        for (var p in pacmanPlayers) {
-            if (pacmanPlayers[p].lives > 0 && pacmanPlayers[p].lives < 5) {
-                pacmanPlayers[p].lives++;
-                spawnTextParticle(pacmanPlayers[p].x, pacmanPlayers[p].y, '+1 VIDA!', '#00ffcc');
-            }
-        }
-        AudioSynth.playTone(523, 'sine', 0.25, 0.1);
-        pushAlertEvent(`💪 @${consumerName} pegou o TikTok de @${user}! Vida extra para todos!`);
-    } else if (gift.includes('cherry') || gift.includes('cereja')) {
-        spawnFruit();
-        pushAlertEvent(`💪 @${consumerName} comeu a Cereja! Fruta Bônus gerada!`);
-    } else if (gift.includes('gg')) {
-        pl.speedBoostTimer = (pl.speedBoostTimer || 0) + 1200; // Acumula +20 segundos
-        spawnTextParticle(pl.x, pl.y, 'HIPER VELOCIDADE!', '#ffff00');
-        pushAlertEvent(`🚀 @${consumerName} pegou o GG de @${user}! Aceleração Máxima!`);
-    } else if (gift.includes('amo voce') || gift.includes('love you') || gift.includes('finger heart') || gift.includes('hand heart') || gift.includes('heart me') || gift.includes('maos fazendo') || gift.includes('mãos fazendo')) {
+    if (isDonut) {
+        // GIGANTE (10s por unidade)
+        var addedMs = 10000 * repeatCount;
+        var isAlreadyGiant = pl.giantEndTime && pl.giantEndTime > Date.now();
+        pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + addedMs;
+        pl.giantStacks = isAlreadyGiant ? (pl.giantStacks || 1) + repeatCount : repeatCount;
+        pl.giantTimer = 1;
+        AudioSynth.playTone(400, 'sine', 0.5, 0.2);
+        msgParts.push(`${repeatCount}x GIGANTE`);
+        handledClassic = true;
+    } else if (isFingerHeart) {
+        // CLONES (60s por unidade)
         var existingClones = pacmanClones.filter(function(c) { return c.owner === consumerName; });
         if (existingClones.length > 0) {
-            existingClones.forEach(function(c) { c.timer += 3600; }); // +60 segundos
-            spawnTextParticle(pl.x, pl.y, '+TEMPO CLONES!', '#ff66ff');
-            pushAlertEvent(`💕 @${consumerName} ampliou a vida dos clones! (Amo Você)`);
+            existingClones.forEach(function(c) { 
+                var isAlreadyClone = c.endTime && c.endTime > Date.now();
+                c.endTime = (isAlreadyClone ? c.endTime : Date.now()) + (60000 * repeatCount);
+                c.timer = 1;
+            });
         } else {
             var cloneDirs = ['up', 'down', 'left', 'right', 'up'];
             for (var i = 0; i < 5; i++) {
                 pacmanClones.push({
                     owner: consumerName, x: pl.x, y: pl.y, targetX: pl.x, targetY: pl.y, progress: 0,
-                    dir: cloneDirs[i], timer: 3600, color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
-                    spawnDelay: i * 90 // 1.5 seconds delay between each clone
+                    dir: cloneDirs[i], timer: 1, endTime: Date.now() + (60000 * repeatCount), color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
+                    spawnDelay: i * 90
                 });
             }
-            spawnTextParticle(pl.x, pl.y, 'CLONES ATIVADOS!', '#ff66ff');
-            pushAlertEvent(`💕 @${consumerName} acionou os Clones com o presente de @${user}!`);
         }
-    } else if (gift.includes('rosquinha') || gift.includes('donut') || gift.includes('doughnut')) {
-        pl.giantTimer = 600; // ~10 seconds (60 frames * 10)
-        pl.autoEnergyTimer = (pl.autoEnergyTimer || 0) + 600;
-        AudioSynth.playTone(400, 'sine', 0.5, 0.2); // Special sound
-        spawnTextParticle(pl.x, pl.y, 'MODO GIGANTE!', pacmanThemeDotColor);
-        pushAlertEvent(`🍩 @${consumerName} pegou a Rosquinha e virou GIGANTE destruidor!`);
-        
-        pacmanZoomTarget = {
-            user: pl.owner || consumerName,
-            x: pl.x + 0.5,
-            y: pl.y + 0.5,
-            color: pl.color,
-            avatar: pl.avatar,
-            timer: 450
-        };
-        pacmanZoomCooldown = 900;
-    } else {
-        // Fallback
-        pushAlertEvent(`🎁 PRESENTE DESCONHECIDO: '${gift}' - Fruta bônus gerada!`);
-        spawnFruit();
+        msgParts.push(`${repeatCount}x CLONES`);
+        handledClassic = true;
+    } else if (isTikTok) {
+        // VIDA EXTRA (+1 Life por unidade)
+        var addedLives = 0;
+        for (var l = 0; l < repeatCount; l++) {
+            if (pl.lives < 5) { pl.lives++; addedLives++; }
+        }
+        if (addedLives > 0) {
+            msgParts.push(`+${addedLives} VIDA`);
+            AudioSynth.playTone(1000, 'square', 0.1, 0.2);
+            updatePacmanLeaderboard(true);
+        } else {
+            msgParts.push(`VIDA MÁXIMA`);
+        }
+        handledClassic = true;
+    } else if (isRosa) {
+        // PÍLULA DE PODER (15s por unidade)
+        var isAlreadyPower = pl.powerEndTime && pl.powerEndTime > Date.now();
+        pl.powerEndTime = (isAlreadyPower ? pl.powerEndTime : Date.now()) + (15000 * repeatCount);
+        pl.powerTimer = 1;
+        var isAlreadyAuto = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
+        pl.autoEnergyEndTime = (isAlreadyAuto ? pl.autoEnergyEndTime : Date.now()) + (15000 * repeatCount);
+        pl.autoEnergyTimer = 1;
+        pl.ghostComboCount = 0;
+        AudioSynth.playTone(880, 'sine', 0.4, 0.1);
+        msgParts.push(`+PÍLULA DE PODER`);
+        handledClassic = true;
+    } else if (isGG) {
+        // APENAS TURBO (20s por unidade)
+        var boostMultiplier = 1.5 + (0.1 * repeatCount);
+        if (boostMultiplier > 2.5) boostMultiplier = 2.5;
+        pl.giftSpeedMultiplier = boostMultiplier;
+        var isAlreadySpeed = pl.giftSpeedEndTime && pl.giftSpeedEndTime > Date.now();
+        pl.giftSpeedEndTime = (isAlreadySpeed ? pl.giftSpeedEndTime : Date.now()) + (20000 * repeatCount);
+        pl.giftSpeedTimer = 1;
+        msgParts.push(`SUPER TURBO`);
+        handledClassic = true;
     }
+    
+    // 2. SISTEMA MATEMÁTICO DE DIAMANTES (Somente se não foi presente clássico)
+    if (!handledClassic) {
+        // Bônus Universal de Velocidade
+        var speedBonusPercent = 0.05 * totalValue;
+        var multiplier = 1.0 + speedBonusPercent;
+        if (multiplier > 2.5) multiplier = 2.5;
+        var durationMs = 5000 + (totalValue * 1000);
+        if (durationMs > 30000) durationMs = 30000; // Cap at 30 seconds
+        
+        pl.giftSpeedMultiplier = multiplier;
+        var isAlreadySpeedMath = pl.giftSpeedEndTime && pl.giftSpeedEndTime > Date.now();
+        pl.giftSpeedEndTime = (isAlreadySpeedMath ? pl.giftSpeedEndTime : Date.now()) + durationMs;
+        pl.giftSpeedTimer = 1;
+        if (multiplier > 1.0) msgParts.push(`TURBO +${Math.round((multiplier - 1.0)*100)}%`);
+        
+        if (totalValue >= 30) {
+            // TIER 3: GIGANTE
+            var numGiants = Math.floor(totalValue / 30);
+            var remainder = totalValue % 30;
+            var addedMs = 10000 * numGiants;
+            var isAlreadyGiant = pl.giantEndTime && pl.giantEndTime > Date.now();
+            pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + addedMs;
+            pl.giantStacks = isAlreadyGiant ? (pl.giantStacks || 1) + numGiants : numGiants;
+            pl.giantTimer = 1;
+            AudioSynth.playTone(400, 'sine', 0.5, 0.2);
+            msgParts.push(`${numGiants}x GIGANTE`);
+            totalValue = remainder;
+        }
+        
+        if (totalValue >= 5) {
+            // TIER 2: CLONES
+            var numCloneGroups = Math.floor(totalValue / 5);
+            var existingClones = pacmanClones.filter(function(c) { return c.owner === consumerName; });
+            if (existingClones.length > 0) {
+                existingClones.forEach(function(c) { 
+                    var isAlreadyClone = c.endTime && c.endTime > Date.now();
+                    c.endTime = (isAlreadyClone ? c.endTime : Date.now()) + (60000 * numCloneGroups);
+                    c.timer = 1;
+                });
+            } else {
+                var cloneDirs = ['up', 'down', 'left', 'right', 'up'];
+                for (var i = 0; i < 5; i++) {
+                    pacmanClones.push({
+                        owner: consumerName, x: pl.x, y: pl.y, targetX: pl.x, targetY: pl.y, progress: 0,
+                        dir: cloneDirs[i], timer: 1, endTime: Date.now() + (60000 * numCloneGroups), color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
+                        spawnDelay: i * 90
+                    });
+                }
+            }
+            msgParts.push(`${numCloneGroups}x CLONES`);
+            
+            // Tier 2 também dá Pílula de Poder
+            var rosePower = numCloneGroups * 2; 
+            var isAlreadyPower2 = pl.powerEndTime && pl.powerEndTime > Date.now();
+            pl.powerEndTime = (isAlreadyPower2 ? pl.powerEndTime : Date.now()) + (15000 * rosePower);
+            pl.powerTimer = 1;
+            var isAlreadyAuto2 = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
+            pl.autoEnergyEndTime = (isAlreadyAuto2 ? pl.autoEnergyEndTime : Date.now()) + (15000 * rosePower);
+            pl.autoEnergyTimer = 1;
+            pl.ghostComboCount = 0;
+            msgParts.push(`+PÍLULA DE PODER`);
+            AudioSynth.playTone(880, 'sine', 0.4, 0.1);
+            
+        } else if (totalValue >= 1) {
+            // TIER 1: PÍLULA DE PODER
+            var isAlreadyPower1 = pl.powerEndTime && pl.powerEndTime > Date.now();
+            pl.powerEndTime = (isAlreadyPower1 ? pl.powerEndTime : Date.now()) + (15000 * totalValue);
+            pl.powerTimer = 1;
+            var isAlreadyAuto1 = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
+            pl.autoEnergyEndTime = (isAlreadyAuto1 ? pl.autoEnergyEndTime : Date.now()) + (15000 * totalValue);
+            pl.autoEnergyTimer = 1;
+            pl.ghostComboCount = 0;
+            AudioSynth.playTone(880, 'sine', 0.4, 0.1);
+            msgParts.push(`+PÍLULA DE PODER`);
+            
+        } else if (giftDrop.diamondCount === 0 || !totalValue) {
+            spawnFruit();
+            msgParts.push(`Fruta Bônus`);
+        }
+    }
+    
+    var summary = msgParts.join(', ');
+    spawnTextParticle(pl.x, pl.y, summary, '#ffaa00');
+    pushAlertEvent(`🎁 @${consumerName} ativou '${giftDrop.gift}' (${diamondCount*repeatCount}💎): ${summary}!`);
 }
 
 function processTikTokLike(data) {
@@ -3756,17 +4984,7 @@ function initWebSocket() {
     }
 
     var wsProto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    var wsHost = window.location.hostname || '127.0.0.1';
-    
-    // Fallback to 127.0.0.1 if hostname is localhost or a local domain and we had multiple failures
-    var isLocalHostName = (wsHost === 'localhost' || wsHost.endsWith('.test') || wsHost.endsWith('.local'));
-    if (_wsFailedAttempts >= 2 && isLocalHostName) {
-        console.log('[WS] Connection failed multiple times, falling back to 127.0.0.1');
-        wsHost = '127.0.0.1';
-    } else if (wsHost === 'localhost') {
-        wsHost = '127.0.0.1'; // Prefer 127.0.0.1 over localhost to prevent IPv6 loopback routing issues
-    }
-
+    var wsHost = window.location.hostname;
     var wsPort = window.location.port;
     var isLocal = (wsHost === 'localhost' || wsHost === '127.0.0.1' || wsHost.endsWith('.test') || wsHost.endsWith('.local') || wsHost.startsWith('192.168.') || wsHost.startsWith('10.'));
 
@@ -3815,6 +5033,8 @@ function initWebSocket() {
                 processTikTokSocial(data);
             } else if (data.type === 'leaderboard') {
                 pacmanGlobalLeaderboard = data.data || [];
+                _leaderboardDirty = true;
+                commitLeaderboardUpdate();
             } else if (data.type === 'connected') {
                 updateConnectionUI('connected', data.platform, data.username);
                 pushAlertEvent(`🟢 Conexão estabelecida com ${data.platform.toUpperCase()}`);
@@ -3913,7 +5133,7 @@ function connectPacmanYoutube() {
 
 function spawnTestPlayer() {
     var randomNames = ['Ninja', 'ArcadeKing', 'WakaFan', 'GhostBuster', 'Speedy', 'RetroGamer', 'TikTokHero'];
-    var name = randomNames[Math.floor(Math.random() * randomNames.length)] + Math.floor(Math.random() * 100);
+    var name = 'bot_' + randomNames[Math.floor(Math.random() * randomNames.length)] + Math.floor(Math.random() * 100);
     spawnPacmanPlayer(name.toLowerCase(), 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=60');
     
     // If game state is waiting and websocket not connected (local play), force start game loop
@@ -3938,8 +5158,23 @@ document.addEventListener('keydown', function(e) {
     }
     
     // HUD show/hide hotkey
-    if (e.key.toLowerCase() === 'h') {
-        document.body.classList.toggle('hud-hidden');
+    if (e.key && typeof e.key === 'string') {
+        if (e.key.toLowerCase() === 'h') {
+            document.body.classList.toggle('hud-hidden');
+        }
+        
+        // Debug: Simular presente premium animado
+        if (e.key.toLowerCase() === 'g') {
+            processTikTokGift({
+                user: offlineName,
+                giftName: 'Leão Teste',
+                diamondCount: 29999,
+                repeatCount: 1,
+                giftPictureUrl: 'https://p16-webcast.tiktokcdn.com/img/maliva/webcast-va/1283c70685933d0bd3c02eb25e6e3ce5~tplv-obj.png', // Leão fallback
+                giftAnimationUrl: 'https://p16-webcast.tiktokcdn.com/img/maliva/webcast-va/1283c70685933d0bd3c02eb25e6e3ce5~tplv-obj.png', 
+                giftType: 2
+            });
+        }
     }
 });
 
@@ -3951,14 +5186,26 @@ function gameLoop() {
     
     try {
         if (pacmanGameState === 'playing') {
-            // Recalculate pacmanPowerMode based on active players
+            // Recalculate pacmanPowerMode and pacmanGiantMode based on active players
             var anyPowered = false;
+            var anyGiant = false;
             for (var p in pacmanPlayers) {
-                if (pacmanPlayers[p].powerTimer > 0) {
-                    pacmanPlayers[p].powerTimer--;
+                var pl = pacmanPlayers[p];
+                if (pl.powerEndTime) {
+                    if (Date.now() < pl.powerEndTime) pl.powerTimer = 1;
+                    else pl.powerTimer = 0;
+                } else if (pl.powerTimer > 0) {
+                    pl.powerTimer--;
+                }
+                
+                if (pl.powerTimer > 0) {
                     anyPowered = true;
                 }
+                if (pacmanPlayers[p].giantTimer > 0) {
+                    anyGiant = true;
+                }
             }
+            pacmanGiantMode = anyGiant;
             
             if (pacmanPowerMode && !anyPowered) {
                 pacmanPowerMode = false;
@@ -3995,14 +5242,8 @@ function gameLoop() {
             // if (leaderboardUpdateCounter >= 60) {
             //     leaderboardUpdateCounter = 0;
             //     commitLeaderboardUpdate(); // Atualizacao continua removida para evitar travamento
+            // Atualizacao continua removida para evitar travamento
             // }
-            
-            if (window.pacmanHitStopTimer > 0) {
-                window.pacmanHitStopTimer--;
-            } else {
-                updateEntities();
-            }
-            updateParticles();
             
             // --- Dynamic Fruit Spawning & Despawning ---
             // Decrement timer
@@ -4068,6 +5309,15 @@ function gameLoop() {
                 }
                 pacmanGiftSpawnTimer = 7200 + Math.random() * 3600; // Next in 120-180 seconds
             }
+        }
+        
+        if (pacmanGameState === 'playing' || pacmanGameState === 'round_end') {
+            if (window.pacmanHitStopTimer > 0) {
+                window.pacmanHitStopTimer--;
+            } else {
+                updateEntities();
+            }
+            updateParticles();
         }
         
         // Update celebration logic
