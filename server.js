@@ -402,6 +402,35 @@ wss.on('connection', function (ws) {
       if (msg.action === 'connect' && msg.username) {
         var uname = msg.username.replace(/^@/, '').trim();
         if (!uname) { send(ws, { type: 'error', platform: 'tiktok', message: 'Username required.' }); return; }
+        
+        var fs = require('fs');
+        var path = require('path');
+        var authFile = path.join(__dirname, 'authorized_users.json');
+        var isAuthorized = false;
+        
+        try {
+          if (fs.existsSync(authFile)) {
+            var authData = JSON.parse(fs.readFileSync(authFile, 'utf8'));
+            if (authData && authData.users && Array.isArray(authData.users)) {
+              var authorizedUsers = authData.users.map(u => u.toLowerCase());
+              if (authorizedUsers.includes(uname.toLowerCase())) {
+                isAuthorized = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Auth] Error reading authorized_users.json:', e);
+        }
+        
+        if (!isAuthorized) {
+          send(ws, { 
+            type: 'error', 
+            platform: 'tiktok', 
+            message: 'Acesso Negado! Solicite acesso enviando uma mensagem no direct do canal do TikTok.' 
+          });
+          return;
+        }
+
         connectTikTok(ws, uname, msg.sessionId);
       }
       else if (msg.action === 'connect_youtube' && msg.youtubeId) {

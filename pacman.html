@@ -154,6 +154,24 @@
                                 <option value="bossa">Bossa Nova</option>
                             </select>
                         </div>
+
+                        <!-- MODO COPA DO MUNDO -->
+                        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="font-size: 12px; font-weight: bold; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🏆 MODO COPA DO MUNDO</div>
+                            
+                            <select id="worldCupToggle" onchange="toggleWorldCupMode(this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;">
+                                <option value="off">Desativado (Clássico)</option>
+                                <option value="on">Ativado (Campo & Vidro)</option>
+                            </select>
+
+                            <div id="worldCupControls" style="display: flex; flex-direction: column; gap: 8px; margin-top: 5px;">
+                                <label style="font-size: 11px; color: #ccc;">Time 1 (Cima):</label>
+                                <select id="team1Select" onchange="changeCopaTeam(1, this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;"></select>
+                                
+                                <label style="font-size: 11px; color: #ccc;">Time 2 (Baixo):</label>
+                                <select id="team2Select" onchange="changeCopaTeam(2, this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;"></select>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Status de Conexão -->

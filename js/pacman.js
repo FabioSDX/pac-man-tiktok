@@ -185,17 +185,26 @@ const AudioSynth = {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)();
             this.gameGain = this.ctx.createGain();
             this.musicGain = this.ctx.createGain();
+            this.speechGain = this.ctx.createGain();
             this.gameGain.connect(this.ctx.destination);
             this.musicGain.connect(this.ctx.destination);
+            this.speechGain.connect(this.ctx.destination);
             this.updateVolumes();
         }
     },
     updateVolumes() {
+        if (!this.ctx) return;
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(e => console.warn("AudioContext resume failed:", e));
+        }
         if (this.gameGain) {
             this.gameGain.gain.setTargetAtTime( (window.pacmanGameVolume !== undefined ? window.pacmanGameVolume * 2 : 1), this.ctx.currentTime, 0.1);
         }
         if (this.musicGain) {
             this.musicGain.gain.setTargetAtTime( (window.pacmanMusicVolume !== undefined ? window.pacmanMusicVolume * 2 : 1), this.ctx.currentTime, 0.1);
+        }
+        if (this.speechGain) {
+            this.speechGain.gain.setTargetAtTime( (window.pacmanSpeechVolume !== undefined ? window.pacmanSpeechVolume * 2 : 1), this.ctx.currentTime, 0.1);
         }
     },
     toggleMute() {
@@ -1487,7 +1496,11 @@ function speakGhostDialogue(ghostId, state, index) {
         gainNode.gain.value = 1.0; // Volume
         
         source.connect(gainNode);
-        gainNode.connect(ctx.destination);
+        if (AudioSynth.speechGain) {
+            gainNode.connect(AudioSynth.speechGain);
+        } else {
+            gainNode.connect(ctx.destination);
+        }
         
         activeGhostVoices.push(source);
         source.onended = function() {
@@ -1653,6 +1666,9 @@ function checkDotCollision(pl, userName) {
              // Clone passes over the power pill without doing anything
          } else {
              dot.active = false;
+             if (!dot.power) {
+                 AudioSynth.playWaka();
+             }
              var pts = dot.power ? 50 : 10;
              if (pacmanPlayers[userName]) {
                  pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + pts;
@@ -3656,8 +3672,22 @@ function drawPacman() {
         pacmanCtx.translate(-centerX, -centerY);
     }
     
-    // Draw static walls cache (pre-rendered with glow shadow)
-    if (mazeCanvas) {
+    // Draw background (Copa Mode or Static Neon)
+    if (window.isCopaMode) {
+        var time = Date.now();
+        var cw = canvas.width;
+        var ch = canvas.height;
+        
+        // 1. Desenha Fundo do Campo
+        window.drawSoccerField(pacmanCtx, cw, ch, time);
+        
+        // 2. Paredes Originais (Máxima Eficiência)
+        if (mazeCanvas) {
+            pacmanCtx.globalAlpha = 1.0;
+            pacmanCtx.drawImage(mazeCanvas, 0, 0);
+        }
+        
+    } else if (mazeCanvas) {
         pacmanCtx.globalAlpha = 1.0; 
         pacmanCtx.drawImage(mazeCanvas, 0, 0);
         
@@ -5051,6 +5081,9 @@ function initWebSocket() {
             } else if (data.type === 'error') {
                 updateConnectionUI('disconnected');
                 pushAlertEvent(`⚠️ Erro: ${data.message}`);
+                if (data.message.includes('Acesso Negado')) {
+                    alert(data.message);
+                }
             }
         } catch (err) {
             console.error('[WS] Error processing msg:', err);
@@ -5682,3 +5715,160 @@ window.regenerateMap = function() {
      initGhosts();
      updatePacmanLeaderboard();
  };
+
+// ==========================================
+// MODO COPA DO MUNDO (UI & Estado)
+// ==========================================
+window.isCopaMode = false;
+window.copaTeam1 = 'br';
+window.copaTeam2 = 'ar';
+
+var cvsFlag1 = document.createElement('canvas'); cvsFlag1.width = 600; cvsFlag1.height = 400;
+var cvsFlag2 = document.createElement('canvas'); cvsFlag2.width = 600; cvsFlag2.height = 400;
+
+window.worldCupTeams = [
+    { id: 'ar', name: 'Argentina' }, { id: 'br', name: 'Brasil' }, { id: 'fr', name: 'França' }, { id: 'gb-eng', name: 'Inglaterra' },
+    { id: 'es', name: 'Espanha' }, { id: 'de', name: 'Alemanha' }, { id: 'pt', name: 'Portugal' }, { id: 'nl', name: 'Holanda' },
+    { id: 'it', name: 'Itália' }, { id: 'be', name: 'Bélgica' }, { id: 'hr', name: 'Croácia' }, { id: 'us', name: 'EUA' },
+    { id: 'mx', name: 'México' }, { id: 'ca', name: 'Canadá' }, { id: 'uy', name: 'Uruguai' }, { id: 'co', name: 'Colômbia' },
+    { id: 'sn', name: 'Senegal' }, { id: 'ma', name: 'Marrocos' }, { id: 'jp', name: 'Japão' }, { id: 'kr', name: 'Coreia do Sul' },
+    { id: 'ch', name: 'Suíça' }, { id: 'dk', name: 'Dinamarca' }, { id: 'rs', name: 'Sérvia' }, { id: 'pl', name: 'Polônia' },
+    { id: 'se', name: 'Suécia' }, { id: 'ua', name: 'Ucrânia' }, { id: 'gb-wls', name: 'País de Gales' }, { id: 'cr', name: 'Costa Rica' },
+    { id: 'pa', name: 'Panamá' }, { id: 'jm', name: 'Jamaica' }, { id: 'ec', name: 'Equador' }, { id: 'pe', name: 'Peru' },
+    { id: 'ir', name: 'Irã' }, { id: 'sa', name: 'Arábia Saudita' }, { id: 'au', name: 'Austrália' }, { id: 'qa', name: 'Catar' },
+    { id: 'ae', name: 'Emirados Árabes' }, { id: 'uz', name: 'Uzbequistão' }, { id: 'eg', name: 'Egito' }, { id: 'dz', name: 'Argélia' },
+    { id: 'ng', name: 'Nigéria' }, { id: 'cm', name: 'Camarões' }, { id: 'ci', name: 'Costa do Marfim' }, { id: 'gh', name: 'Gana' },
+    { id: 'ml', name: 'Mali' }, { id: 'nz', name: 'Nova Zelândia' }, { id: 'cn', name: 'China' }, { id: 'tr', name: 'Turquia' },
+    { id: 'jo', name: 'Jordânia' }
+];
+
+// Initialize UI selects on DOM load or directly if elements exist
+document.addEventListener('DOMContentLoaded', function() {
+    var select1 = document.getElementById('team1Select');
+    var select2 = document.getElementById('team2Select');
+    if(select1 && select2) {
+        worldCupTeams.sort((a,b) => a.name.localeCompare(b.name)).forEach(t => {
+            select1.add(new Option(t.name, t.id));
+            select2.add(new Option(t.name, t.id));
+        });
+        select1.value = copaTeam1;
+        select2.value = copaTeam2;
+    }
+    loadCopaFlag(copaTeam1, cvsFlag1);
+    loadCopaFlag(copaTeam2, cvsFlag2);
+});
+
+window.toggleWorldCupMode = function(val) {
+    isCopaMode = (val === 'on');
+};
+
+window.changeCopaTeam = function(slot, iso) {
+    if(slot === 1) {
+        copaTeam1 = iso;
+        loadCopaFlag(iso, cvsFlag1);
+    } else {
+        copaTeam2 = iso;
+        loadCopaFlag(iso, cvsFlag2);
+    }
+};
+
+window.loadCopaFlag = function(iso, targetCvs) {
+    var ctxOff = targetCvs.getContext('2d');
+    var img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.src = 'https://flagcdn.com/w640/' + iso + '.png';
+    img.onload = function() {
+        ctxOff.clearRect(0,0,targetCvs.width,targetCvs.height);
+        ctxOff.drawImage(img, 0, 0, targetCvs.width, targetCvs.height);
+    };
+};
+
+// ==========================================
+// MODO COPA DO MUNDO (Renderização Específica)
+// ==========================================
+window.drawWavedFlag = function(ctx, offscreen, x, y, width, height, time) {
+    ctx.save();
+    ctx.translate(x - width/2, y - height/2);
+    var slices = 60; 
+    var sliceW = offscreen.width / slices;
+    var drawSliceW = width / slices;
+    for (var i = 0; i < slices; i++) {
+        var waveY = Math.sin(time * 0.005 + i * 0.15) * (height * 0.06);
+        var waveX = Math.cos(time * 0.003 + i * 0.1) * (width * 0.02);
+        ctx.globalAlpha = 0.55; 
+        ctx.drawImage(offscreen, i * sliceW, 0, sliceW, offscreen.height, i * drawSliceW + waveX, waveY, drawSliceW + 1.5, height);
+    }
+    ctx.restore();
+};
+
+window.drawSoccerField = function(ctx, w, h, time) {
+    var numStripes = 12;
+    var stripeWidth = h / numStripes; 
+    for (var i = 0; i < numStripes; i++) {
+        ctx.fillStyle = (i % 2 === 0) ? '#1f5a1f' : '#267326'; 
+        ctx.fillRect(0, i * stripeWidth, w, stripeWidth + 1);
+    }
+    
+    if (cvsFlag1) drawWavedFlag(ctx, cvsFlag1, w/2, h/4, 500, 333, time);
+    if (cvsFlag2) drawWavedFlag(ctx, cvsFlag2, w/2, h - h/4, 500, 333, time + 1000); 
+    
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 6;
+    var pad = 40;
+    ctx.strokeRect(pad, pad, w - pad*2, h - pad*2);
+    ctx.beginPath(); ctx.moveTo(pad, h/2); ctx.lineTo(w - pad, h/2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(w/2, h/2, 120, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.beginPath(); ctx.arc(w/2, h/2, 10, 0, Math.PI*2); ctx.fill();
+    var areaW = 400; var areaH = 200;
+    ctx.strokeRect(w/2 - areaW/2, pad, areaW, areaH); 
+    ctx.strokeRect(w/2 - areaW/2, h - pad - areaH, areaW, areaH); 
+    var smallAreaW = 200; var smallAreaH = 80;
+    ctx.strokeRect(w/2 - smallAreaW/2, pad, smallAreaW, smallAreaH); 
+    ctx.strokeRect(w/2 - smallAreaW/2, h - pad - smallAreaH, smallAreaW, smallAreaH); 
+    ctx.beginPath(); ctx.arc(w/2, pad + areaH, 80, 0, Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.arc(w/2, h - pad - areaH, 80, Math.PI, Math.PI*2); ctx.stroke();
+};
+
+window.makeRealMazePath = function(ctx) {
+    ctx.beginPath();
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+            if (pacmanMaze[r][c] === 1) {
+                ctx.rect(c * pacmanTileSize, r * pacmanTileSize, pacmanTileSize, pacmanTileSize);
+            }
+        }
+    }
+};
+
+window.drawRealMazeBorders = function(ctx) {
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#00aaff';
+    ctx.strokeStyle = '#00aaff';
+    ctx.lineWidth = 8;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    ctx.beginPath();
+    for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+            if (pacmanMaze[r][c] === 1) {
+                var cx = c * pacmanTileSize + pacmanTileSize / 2;
+                var cy = r * pacmanTileSize + pacmanTileSize / 2;
+                
+                var hasRight = (c + 1 < cols && pacmanMaze[r][c+1] === 1);
+                var hasDown = (r + 1 < rows && pacmanMaze[r+1][c] === 1);
+                
+                if (hasRight) { ctx.moveTo(cx, cy); ctx.lineTo(cx + pacmanTileSize, cy); }
+                if (hasDown) { ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + pacmanTileSize); }
+            }
+        }
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+};
