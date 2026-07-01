@@ -29,6 +29,7 @@
                 <div class="tab-buttons">
                     <button id="btn-tab-leaderboard" class="tab-btn active" onclick="switchTab('tab-leaderboard')">🏆 Placar</button>
                     <button id="btn-tab-setup" class="tab-btn" onclick="switchTab('tab-setup')">⚙️ Controle</button>
+                    <button id="btn-tab-upscale" class="tab-btn" onclick="switchTab('tab-upscale')">🤖 Upscale</button>
                 </div>
                 
                 <!-- Tab 1: Leaderboard -->
@@ -62,6 +63,7 @@
                         </div>
                         <button class="btn-control" onclick="if(confirm('Tem certeza que deseja zerar a contagem de faturamento de hoje?')) resetDailyRevenue()" style="margin-top: 10px; font-size: 10px; padding: 6px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">Resetar Contagem de Hoje</button>
                     </div>
+
                     
                     <!-- TikTok Connection -->
                     <div class="setup-section tiktok-border">
@@ -89,11 +91,11 @@
                         <div class="sim-grid">
                             <button class="btn-sim action-btn" onclick="spawnTestPlayer()">Spawn Player</button>
                             <button class="btn-sim action-btn" onclick="window.regenerateMap()">Novo Mapa</button>
-                            <button class="btn-sim gift-btn" onclick="simulateGift('rose')">Rosa (Poder)</button>
-                            <button class="btn-sim gift-btn" onclick="simulateGift('tiktok')">TikTok (Vida)</button>
-                            <button class="btn-sim gift-btn" onclick="simulateGift('gg')">GG (Turbo)</button>
-                            <button class="btn-sim gift-btn" onclick="simulateGift('amo voce')">Amo Você (Clones)</button>
-                            <button class="btn-sim gift-btn" onclick="simulateGift('rosquinha')">Rosquinha (Gigante)</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('rose')">🌹 Rosa</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('gg')">🎮 GG</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('perfume')">🧴 Perfume</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('jogo tiktok')">🎵 TikTok</button>
+                            <button class="btn-sim gift-btn" onclick="simulateGift('icecream')">🍦 Sorvete</button>
                             <button class="btn-sim action-btn" onclick="simulateSocial('follow')">👤 Seguir</button>
                             <button class="btn-sim action-btn" onclick="simulateSocial('share')">🔗 Compartilhar</button>
                             <button class="btn-sim action-btn" onclick="simulateSocial('subscribe')">⭐ Inscrição</button>
@@ -155,16 +157,17 @@
                             </select>
                         </div>
 
-                        <!-- MODO COPA DO MUNDO -->
+                        <!-- MODO DE MAPA -->
                         <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
-                            <div style="font-size: 12px; font-weight: bold; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🏆 MODO COPA DO MUNDO</div>
+                            <div style="font-size: 12px; font-weight: bold; color: #ffdd44; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">🗺️ MODO DE MAPA</div>
                             
-                            <select id="worldCupToggle" onchange="toggleWorldCupMode(this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;">
-                                <option value="off">Desativado (Clássico)</option>
-                                <option value="on">Ativado (Campo & Vidro)</option>
+                            <select id="mapModeSelect" onchange="changeMapMode(this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;">
+                                <option value="default">Padrão</option>
+                                <option value="copa">Copa do Mundo (Campo & Vidro)</option>
+                                <option value="ranking">Ranking Dinâmico</option>
                             </select>
 
-                            <div id="worldCupControls" style="display: flex; flex-direction: column; gap: 8px; margin-top: 5px;">
+                            <div id="worldCupControls" style="display: none; flex-direction: column; gap: 8px; margin-top: 5px;">
                                 <label style="font-size: 11px; color: #ccc;">Time 1 (Cima):</label>
                                 <select id="team1Select" onchange="changeCopaTeam(1, this.value)" style="width: 100%; padding: 6px; font-size: 12px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #444; border-radius: 4px;"></select>
                                 
@@ -178,6 +181,46 @@
                     <div class="status-footer">
                         <div id="statusDot"></div>
                         <span id="statusText">Status: Desconectado</span>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Upscale Manager -->
+                <div id="tab-upscale" class="tab-content">
+                    <div class="brand-logo">
+                        <span class="logo-emoji">🤖</span>
+                        <h2>GERENCIADOR DE UPSCALE</h2>
+                    </div>
+
+                    <div class="setup-section" style="text-align: center; background: rgba(0,0,0,0.4);">
+                        <div class="platform-title"><span class="icon">✨</span> Ativação do Upscale</div>
+                        <label style="display:inline-flex; align-items:center; gap:8px; font-size: 14px; color: #fff; cursor:pointer; margin-top: 10px;">
+                            <input type="checkbox" id="togglePremiumUpscale" checked onchange="window.enablePremiumUpscale = this.checked" style="width:20px; height:20px;">
+                            <strong>Ativar Upscale Premium</strong>
+                        </label>
+                        <div style="font-size: 11px; color: #aaa; margin-top: 8px;">Se desmarcado, as bandeiras usarão o formato padrão sem a API paga.</div>
+                    </div>
+                    
+                    <!-- Fila de Aprovação (Moderação) -->
+                    <div class="setup-section" style="border-left-color: #ffaa00; text-align: center; background: rgba(255,170,0,0.05);">
+                        <div class="platform-title"><span class="icon">🔍</span> Fila de Aprovação</div>
+                        <div id="upscaleQueueContainer" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto;">
+                            <div style="font-size: 11px; color: #888; padding: 10px;">Nenhum avatar pendente no momento.</div>
+                        </div>
+                    </div>
+
+                    <!-- Custo API Replicate -->
+                    <div class="setup-section replicate-border" style="border-left-color: #ff3366; text-align: center; background: rgba(255,51,102,0.05);">
+                        <div class="platform-title"><span class="icon">📈</span> Custos API (Replicate)</div>
+                        <div style="margin-top: 10px;">
+                            <div id="replicateRuns" style="font-size: 14px; font-weight: 600; color: #ff99cc; margin-bottom: 5px;">🤖 0 Upscales Premium</div>
+                            <div id="replicateCost" style="font-size: 24px; font-weight: 800; color: #ff3366;">US$ 0.0000</div>
+                        </div>
+                        <div style="margin-top: 8px; font-size: 11px; color: #aaa;">
+                            Atualizado em tempo real
+                        </div>
+                        <div id="replicateLogs" style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.4); border-radius: 4px; font-size: 10px; color: #ddd; text-align: left; max-height: 150px; overflow-y: auto;">
+                            <div style="color: #888;"><i>Aguardando eventos...</i></div>
+                        </div>
                     </div>
                 </div>
 
@@ -222,8 +265,10 @@
             document.getElementById(tabId).classList.add('active');
             if (tabId === 'tab-leaderboard') {
                 document.getElementById('btn-tab-leaderboard').classList.add('active');
-            } else {
+            } else if (tabId === 'tab-setup') {
                 document.getElementById('btn-tab-setup').classList.add('active');
+            } else if (tabId === 'tab-upscale') {
+                document.getElementById('btn-tab-upscale').classList.add('active');
             }
         }
 
@@ -239,13 +284,28 @@
         function simulateGift(giftName) {
             var users = Object.keys(pacmanPlayers);
             if (users.length === 0) {
-                // If no players, just spawn a dummy player first or alert
                 alert("Nenhum jogador na arena para receber o poder!");
                 return;
             }
             
-            // Apply to the main Pac-Man (first player in the list)
-            var mainUser = users[0];
+            // Try to resolve the player from the URL param (?player=username)
+            var paramPlayer = (new URLSearchParams(window.location.search).get('player') || '').toLowerCase().trim();
+            var mainUser = null;
+            
+            if (paramPlayer && pacmanPlayers[paramPlayer] && pacmanPlayers[paramPlayer].lives > 0) {
+                mainUser = paramPlayer;
+            } else {
+                // Fallback: first player with lives > 0
+                for (var i = 0; i < users.length; i++) {
+                    if (pacmanPlayers[users[i]].lives > 0) {
+                        mainUser = users[i];
+                        break;
+                    }
+                }
+                // Last resort: first in list
+                if (!mainUser) mainUser = users[0];
+            }
+            
             var pl = pacmanPlayers[mainUser];
             
             var fakeGiftDrop = {
@@ -403,6 +463,21 @@
             } else {
                 changeMusicStyle('techno');
             }
+
+            // Polling para Custos Replicate
+            setInterval(function() {
+                fetch('/api/cost-report')
+                .then(r => r.json())
+                .then(data => {
+                    if (data) {
+                        var costEl = document.getElementById('replicateCost');
+                        var runsEl = document.getElementById('replicateRuns');
+                        if (costEl) costEl.textContent = 'US$ ' + (data.total_cost || 0).toFixed(4);
+                        if (runsEl) runsEl.textContent = '🤖 ' + (data.runs || 0) + ' Upscales Premium';
+                    }
+                }).catch(e => {});
+            }, 10000); // 10s poll
+
         }, 500);
     </script>
 </body>

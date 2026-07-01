@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -516,37 +517,9 @@ app.get('/api/streamers', function (req, res) {
   res.json({ status: 'ok', count: uniqueStreamers.length, streamers: uniqueStreamers, metrics: eventsHistory });
 });
 
+
 // ── Serve avatares_hd ──────────────────────────────────────────────────────────
 app.use('/avatares_hd', express.static(path.join(__dirname, 'avatares_hd')));
-app.use('/avatares_video', express.static(path.join(__dirname, 'avatares_video')));
-
-// ── Lista de avatares HD da pasta /avatares_hd ──────────────────────────────────
-app.get('/avatar-list', function (_req, res) {
-  var hdDir = path.join(__dirname, 'avatares_hd');
-  try {
-    if (!fs.existsSync(hdDir)) {
-      return res.json({ files: [] });
-    }
-    var files = fs.readdirSync(hdDir);
-    var imageExt = ['.png', '.jpg', '.jpeg', '.webp'];
-    var avatarFiles = files.filter(function (f) {
-      var ext = path.extname(f).toLowerCase();
-      return imageExt.includes(ext);
-    });
-    avatarFiles = avatarFiles.map(function (f) { return 'avatares_hd/' + f; });
-
-    var videoFiles = [];
-    var videoDir = path.join(__dirname, 'avatares_video');
-    if (fs.existsSync(videoDir)) {
-      videoFiles = fs.readdirSync(videoDir).filter(function(f) { return f.endsWith('.mp4'); });
-      videoFiles = videoFiles.map(function (f) { return 'avatares_video/' + f; });
-    }
-
-    res.json({ files: avatarFiles, videos: videoFiles });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ── Upscale Endpoint & Helper ──────────────────────────────────────────────────
 function getAvatarUrlHash(url) {
@@ -572,171 +545,6 @@ function getAvatarUrlHash(url) {
 }
 
 const { execFile } = require('child_process');
-
-
-// ── Replicate Live Portrait Endpoint ──────────────────────────────────────────
-const https = require('https');
-
-const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN || '';
-
-app.get('/api/animate-face', async function (req, res) {
-  let url = req.query.url || '';
-  let id  = req.query.id  || '';
-
-  if (!url || !id) {
-    return res.json({ error: 'URL and ID are required' });
-  }
-
-  id = id.replace(/[^a-zA-Z0-9_]/g, '');
-  const urlHash = getAvatarUrlHash(url);
-  const videoFileName = `${id}_${urlHash}.mp4`;
-  const outputFile = path.join(__dirname, 'avatares_video', videoFileName);
-  const outputUrl = `avatares_video/${videoFileName}`;
-
-  if (fs.existsSync(outputFile)) {
-    console.log(`[Animate] Cached video found: ${outputFile}`);
-    return res.json({ status: 'cached', url: outputUrl });
-  }
-
-  try {
-    if (!fs.existsSync(path.join(__dirname, 'avatares_video'))) {
-      fs.mkdirSync(path.join(__dirname, 'avatares_video'), { recursive: true });
-    }
-
-    // Must provide an absolute URL for Replicate
-    // If the URL is relative like "avatares_hd/...", we need to form a full URL.
-    // However, Laragon local URLs (localhost) cannot be reached by Replicate.
-    // The user's image must be publicly accessible. 
-    // BUT the 'url' param might already be the TikTok userAvatarUrl!
-    // Wait, the client passes 'url' which is availableAvatars[] (a local path) or the TikTok URL?
-    // In our implementation, availableAvatars gives "avatares_hd/xxx.png". Replicate can't download from localhost.
-    // So we CANNOT pass localhost URL to Replicate.
-    // Wait! Replicate also accepts base64 data URIs!
-    // Let's read the local HD image and convert it to base64.
-    
-    let localImagePath = '';
-    if (url.startsWith('avatares_hd/')) {
-        localImagePath = path.join(__dirname, url);
-    } else {
-        // Fallback: assume it's already an absolute URL (unlikely to be HD though)
-        // But if it's the TikTok URL, it is public.
-    }
-
-    let inputImageStr = url;
-    if (localImagePath && fs.existsSync(localImagePath)) {
-        const imgBuffer = fs.readFileSync(localImagePath);
-        const ext = path.extname(localImagePath).toLowerCase().substring(1) || 'png';
-        const mime = ext === 'jpg' ? 'jpeg' : ext;
-        inputImageStr = `data:image/${mime};base64,${imgBuffer.toString('base64')}`;
-    }
-
-    const payload = JSON.stringify({
-      version: "067dd98cc3e5cb396c4a9efb4bba3eec6c4a9d271211325c477518fc6485e146",
-      input: {
-        face_image: inputImageStr,
-        driving_video: "https://replicate.delivery/pbxt/LEQxLFMUNZMiKt5PWjyMJIbTdvKAb5j3f0spuiEwt9TEbo8B/d0.mp4"
-      }
-    });
-
-    const createOptions = {
-      hostname: 'api.replicate.com',
-      path: '/v1/predictions',
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload)
-      }
-    };
-
-    console.log(`[Animate] Starting Replicate API for ID: ${id}`);
-
-    const reqReplicate = https.request(createOptions, (resRep) => {
-      let data = '';
-      resRep.on('data', chunk => { data += chunk; });
-      resRep.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (resRep.statusCode !== 201) {
-             console.error('[Animate] Replicate Create Error:', json);
-             return res.json({ status: 'error', error: json.detail || 'Failed to create prediction' });
-          }
-
-          const getUrl = json.urls.get;
-          
-          // Polling function
-          const poll = () => {
-             const pollReq = https.request(getUrl, {
-                 headers: { 'Authorization': `Bearer ${REPLICATE_API_TOKEN}` }
-             }, (pollRes) => {
-                 let pData = '';
-                 pollRes.on('data', chunk => { pData += chunk; });
-                 pollRes.on('end', () => {
-                    const pJson = JSON.parse(pData);
-                    if (pJson.status === 'succeeded') {
-                        // Download the MP4
-                        const outputMp4 = pJson.output;
-                        console.log(`[Animate] Replicate success! Downloading video from ${outputMp4}`);
-                        const downloadFile = async (downloadUrl, targetPath) => {
-                            try {
-                                const response = await fetch(downloadUrl);
-                                if (!response.ok) {
-                                    throw new Error(`Status: ${response.status} ${response.statusText}`);
-                                }
-                                const file = fs.createWriteStream(targetPath);
-                                const { Readable } = require('stream');
-                                const { finished } = require('stream/promises');
-                                await finished(Readable.fromWeb(response.body).pipe(file));
-                            } catch (err) {
-                                try { fs.unlinkSync(targetPath); } catch (_) {}
-                                throw err;
-                            }
-                        };
-
-                        downloadFile(outputMp4, outputFile).then(() => {
-                            console.log(`[Animate] Saved video to ${outputFile}`);
-                            res.json({ status: 'success', url: outputUrl });
-                        }).catch(err => {
-                            console.error('[Animate] Video download failed:', err);
-                            res.json({ status: 'error', error: 'Failed to download video: ' + err.message });
-                        });
-                    } else if (pJson.status === 'failed' || pJson.status === 'canceled') {
-                        console.error('[Animate] Prediction failed:', pJson.error);
-                        res.json({ status: 'error', error: pJson.error || 'Prediction failed' });
-                    } else {
-                        // Still processing/starting
-                        setTimeout(poll, 2000);
-                    }
-                 });
-             });
-             pollReq.on('error', (e) => res.json({ status: 'error', error: e.message }));
-             pollReq.end();
-          };
-          
-          // Start polling
-          setTimeout(poll, 3000);
-
-        } catch (e) {
-          console.error('[Animate] Parse error:', e);
-          res.json({ status: 'error', error: 'Invalid response from Replicate' });
-        }
-      });
-    });
-
-    reqReplicate.on('error', (e) => {
-      console.error('[Animate] Request error:', e);
-      res.json({ status: 'error', error: e.message });
-    });
-
-    reqReplicate.write(payload);
-    reqReplicate.end();
-
-  } catch (error) {
-    console.error('[Animate] Exception:', error.message);
-    res.json({ status: 'error', error: error.message });
-  }
-});
-
 
 const upscaleQueue = [];
 let upscaleActiveCount = 0;
@@ -772,17 +580,21 @@ app.get('/api/upscale', async function (req, res) {
   const urlHash = getAvatarUrlHash(url);
 
   const tempFile   = path.join(__dirname, 'temp_upscale', `${id}_${urlHash}.png`);
-  const outputFile = path.join(__dirname, 'avatares_hd',  `${id}_${urlHash}.png`);
-  const outputUrl  = `avatares_hd/${id}_${urlHash}.png`;
+  const outputFile = path.join(__dirname, 'avatares_hd',  `${urlHash}.png`);
+  const outputUrl  = `avatares_hd/${urlHash}.png`;
 
   if (fs.existsSync(outputFile)) {
-    console.log(`[Upscale Cache Hit] ID: ${id} (${outputUrl})`);
+    console.log(`[Upscale Cache Hit] Hash: ${urlHash} (${outputUrl})`);
     return res.json({ status: 'cached', url: outputUrl });
   }
 
   const runUpscale = () => {
     return new Promise(async (resolve, reject) => {
       try {
+        if (fs.existsSync(outputFile)) {
+          console.log(`[Upscale Queue Cache Hit] Hash: ${urlHash} (${outputUrl})`);
+          return resolve({ status: 'cached', url: outputUrl });
+        }
         if (!fs.existsSync(path.join(__dirname, 'temp_upscale'))) {
           fs.mkdirSync(path.join(__dirname, 'temp_upscale'), { recursive: true });
         }
@@ -862,71 +674,119 @@ app.get('/api/upscale', async function (req, res) {
 });
 
 
-// ── Lista de músicas da pasta /music ───────────────────────────────────────────
-app.get('/music-list', function (_req, res) {
-  var musicDir = path.join(__dirname, 'music');
-  try {
-    if (!fs.existsSync(musicDir)) {
-      return res.json({ files: [] });
-    }
-    var files = fs.readdirSync(musicDir);
-    var audioExt = ['.mp3', '.ogg', '.wav', '.m4a', '.webm'];
-    var musicFiles = files.filter(function (f) {
-      var ext = path.extname(f).toLowerCase();
-      return audioExt.includes(ext);
-    });
-    // Retorna URLs relativas
-    musicFiles = musicFiles.map(function (f) { return 'music/' + f; });
-    res.json({ files: musicFiles });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+// ── Premium Upscale (Replicate) ──────────────────────────────────────────────
+function registerReplicateCost(cost) {
+  const costFile = path.join(__dirname, 'replicate_costs.json');
+  let data = { total_cost: 0, runs: 0 };
+  if (fs.existsSync(costFile)) {
+    try { data = JSON.parse(fs.readFileSync(costFile)); } catch(e){}
   }
+  data.total_cost += cost;
+  data.runs += 1;
+  fs.writeFileSync(costFile, JSON.stringify(data));
+}
+
+app.get('/api/cost-report', (req, res) => {
+  const costFile = path.join(__dirname, 'replicate_costs.json');
+  if (fs.existsSync(costFile)) {
+    return res.sendFile(costFile);
+  }
+  return res.json({ total_cost: 0, runs: 0 });
 });
 
-// ── Lista de vídeos da pasta /video ───────────────────────────────────────────
-app.get('/video-list', function (_req, res) {
-  var videoDir = path.join(__dirname, 'video');
+app.get('/api/upscale-premium', async function (req, res) {
+  let url = req.query.url || '';
+  let id  = req.query.id  || '';
+
+  if (!url || !id) {
+    return res.json({ error: 'URL and ID are required' });
+  }
+
+  id = id.replace(/[^a-zA-Z0-9_]/g, '');
+  const urlHash = getAvatarUrlHash(url);
+  const internalHdFile = path.join(__dirname, 'avatares_hd', `${urlHash}.png`);
+
+  const outputHash = urlHash + "_premium";
+  const outputFile = path.join(__dirname, 'avatares_premium', `${outputHash}.png`);
+  const outputUrl  = `avatares_premium/${outputHash}.png`;
+
+  if (fs.existsSync(outputFile)) {
+    return res.json({ status: 'cached', url: outputUrl });
+  }
+
+  if (!fs.existsSync(path.join(__dirname, 'avatares_premium'))) {
+    fs.mkdirSync(path.join(__dirname, 'avatares_premium'), { recursive: true });
+  }
+
+  const Replicate = require('replicate');
+  const replicate = new Replicate({
+    auth: process.env.REPLICATE_API_TOKEN,
+  });
+
   try {
-    if (!fs.existsSync(videoDir)) {
-      return res.json({ files: [] });
+    let imageUri;
+    if (fs.existsSync(internalHdFile)) {
+      const fsPromises = require('fs/promises');
+      const data = (await fsPromises.readFile(internalHdFile)).toString("base64");
+      imageUri = `data:image/png;base64,${data}`;
+    } else {
+      console.log(`[Upscale Premium] Internal HD missing, falling back to original URL: ${url}`);
+      imageUri = url;
     }
-    var files = fs.readdirSync(videoDir);
-    var videoExt = ['.mp4', '.webm', '.ogg', '.mov'];
-    var videoFiles = files.filter(function (f) {
-      var ext = path.extname(f).toLowerCase();
-      return videoExt.includes(ext);
+
+    const input = {
+      image: imageUri,
+      codeformer_fidelity: 0.02,
+      background_enhance: false,
+      face_upsample: true,
+      upscale: 2
+    };
+
+    console.log(`[Upscale Premium] Enviando para Replicate... ID: ${id}`);
+    
+    let prediction = await replicate.predictions.create({
+      version: "cc4956dd26fa5a7185d5660cc9100fab1b8070a1d1654a8bb5eb6d443b020bb2",
+      input: input
     });
-    // Retorna URLs relativas
-    videoFiles = videoFiles.map(function (f) { return 'video/' + f; });
-    res.json({ files: videoFiles });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    
+    while (prediction.status !== "succeeded" && prediction.status !== "failed" && prediction.status !== "canceled") {
+      await new Promise(r => setTimeout(r, 1000));
+      prediction = await replicate.predictions.get(prediction.id);
+    }
+
+    if (prediction.status !== "succeeded") {
+       throw new Error("Prediction falhou: " + prediction.status);
+    }
+    
+    const outputImgUrl = prediction.output; 
+    
+    const predictTime = prediction.metrics ? prediction.metrics.predict_time : 0;
+    const cost = predictTime * 0.000725;
+    console.log(`[Upscale Premium] Finalizado. Tempo: ${predictTime}s, Custo: US$ ${cost.toFixed(4)}`);
+    registerReplicateCost(cost);
+
+    const downloadImage = (downloadUrl, targetPath) => {
+        return new Promise((resolveDl, rejectDl) => {
+            const proto = downloadUrl.startsWith('https') ? require('https') : require('http');
+            const req2 = proto.get(downloadUrl, (r) => {
+                if (r.statusCode !== 200) return rejectDl(new Error(`Status ${r.statusCode}`));
+                const file = fs.createWriteStream(targetPath);
+                r.pipe(file);
+                file.on('finish', () => file.close(resolveDl));
+                file.on('error', rejectDl);
+            });
+            req2.on('error', rejectDl);
+        });
+    };
+    
+    await downloadImage(outputImgUrl, outputFile);
+    
+    return res.json({ status: 'success', url: outputUrl });
+  } catch (err) {
+    console.error('[Upscale Premium Error]', err);
+    return res.json({ error: err.message });
   }
 });
-
-// ── Lista de áudios da pasta /menssagens ───────────────────────────────────────
-app.get('/messages-list', function (_req, res) {
-  var msgDir = path.join(__dirname, 'menssagens');
-  try {
-    if (!fs.existsSync(msgDir)) {
-      return res.json({ files: [] });
-    }
-    var files = fs.readdirSync(msgDir);
-    var audioExt = ['.mp3', '.ogg', '.wav', '.m4a', '.webm'];
-    var audioFiles = files.filter(function (f) {
-      var ext = path.extname(f).toLowerCase();
-      return audioExt.includes(ext);
-    });
-    // Retorna URLs relativas
-    audioFiles = audioFiles.map(function (f) { return 'menssagens/' + f; });
-    res.json({ files: audioFiles });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Serve pasta de mensagens como estático
-app.use('/menssagens', express.static(path.join(__dirname, 'menssagens')));
 
 // ── TikTok TTS Proxy ───────────────────────────────────────────────────────────
 // ── Microsoft Edge TTS Proxy (Vozes Naturais) ──────────────────────────────────

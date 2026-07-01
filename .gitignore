@@ -17,3 +17,10 @@ middle_rich.js
 
 # Node.js
 node_modules/
+
+# Pacman dynamic assets and cache
+avatares_hd/
+avatares_premium/
+temp_upscale/
+replicate_costs.json
+found.txt
