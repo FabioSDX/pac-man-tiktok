@@ -20,6 +20,16 @@ var pacmanMaze = []; // 2D grid of walls
 var pacmanPowerMode = false;
 var pacmanGiantMode = false;
 var pacmanPowerTimer = 0;
+var pacmanFruitTimer = 0;
+var leaderboardUpdateCounter = 0;
+var cleanupCheckFrameCounter = 0;
+var pacmanSoundEnabled = true;
+
+window.enablePremiumUpscale = true;
+window.pendingUpscales = []; // Fila de moderação de upscale
+
+// Definições visuais
+var PACMAN_RADIUS = 15;
 var pacmanCtx = null;
 var mazeCanvas = null;
 var mazeCtx = null;
@@ -29,7 +39,17 @@ var mazeCanvasFrightened2 = null;
 var mazeCtxFrightened2 = null;
 
 const GENERIC_AVATAR = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTIiIGZpbGw9IiMxYTFhMmUiLz48cGF0aCBkPSJNMTIgMTJjMi4yMSAwIDQtMS43OSA0LTRzLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6IiBmaWxsPSIjMDBmZmZmIi8+PC9zdmc+";
-var pacmanComboPopup = null; // { user, avatar, color, combo, points, timer }
+var pacmanComboPopup = null;
+window.pacmanActiveBanners = [];
+window.pushBannerNotification = function(banner) {
+    banner.timer = banner.timer || 300; // Aumentado para 300 frames (5 segundos)
+    banner.maxTimer = banner.timer;
+    // Limita banners ativos na tela para evitar sobreposição vertical
+    if (window.pacmanActiveBanners.length >= 4) {
+        window.pacmanActiveBanners.shift();
+    }
+    window.pacmanActiveBanners.push(banner);
+};
 var pacmanLevel = 1;
 var pacmanRoundEndMode = 'match'; // 'match' or 'overall'
 var pacmanGlobalLeaderboard = [];
@@ -1334,11 +1354,12 @@ function initPacmanMaze() {
      pacmanGiftDrops = []; // Reset gift drops
      
      var initialGifts = [
-         { gift: 'rose', url: 'images tiktok/Rose.png' },
-         { gift: 'gg', url: 'images tiktok/GG.png' },
-         { gift: 'amo voce', url: 'images tiktok/Hand_Hearts.png' },
-         { gift: 'rosquinha', url: 'images tiktok/Doughnut.png' }
-     ];
+          { gift: 'rose', url: 'images tiktok/Rose.png' },
+          { gift: 'gg', url: 'images tiktok/GG.png' },
+          { gift: 'perfume', url: 'images tiktok/Perfume.png' },
+          { gift: 'jogo tiktok', url: 'images tiktok/tik_tok.png' },
+          { gift: 'icecream', url: 'images tiktok/ice_cream.png' }
+      ];
      // Distribuir 4 presentes iniciais aleatórios no labirinto
      for (var i = 0; i < 4; i++) {
          var pos = getAvailableGiftSpawnPosition();
@@ -1503,9 +1524,18 @@ function speakGhostDialogue(ghostId, state, index) {
         }
         
         activeGhostVoices.push(source);
+        
         source.onended = function() {
             var idx = activeGhostVoices.indexOf(source);
             if (idx > -1) activeGhostVoices.splice(idx, 1);
+            
+            // Quando o áudio acelerado termina, zera o timer do balão imediatamente
+            for (var i = 0; i < pacmanGhosts.length; i++) {
+                if (pacmanGhosts[i].id === ghostId) {
+                    pacmanGhosts[i].speechTimer = 0;
+                    break;
+                }
+            }
         };
         
         source.start(0);
@@ -1561,7 +1591,7 @@ function initGhosts() {
              progress: 0,
              dir: 'up',
              color: gColor,
-             speed: 0.006,
+             speed: 0.0072,
              homeTime: 0,
              isDead: false,
              speechText: "",
@@ -1634,6 +1664,53 @@ function initGhostReturnFields(corners) {
 }
 
 function checkDotCollision(pl, userName) {
+     // Magnet effect (Peach 🍑) - attracts nearby dots within a 1-tile radius
+     var hasPeach = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍑'; });
+     if (hasPeach) {
+         pacmanDots.forEach(function(d) {
+             if (d.active) {
+                 var dx = Math.abs(d.x - pl.targetX);
+                 var dy = Math.abs(d.y - pl.targetY);
+                 if (dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0)) {
+                      if (d.power) {
+                          var isAlreadyPowerMap = pl.powerEndTime && pl.powerEndTime > Date.now();
+                          pl.powerEndTime = (isAlreadyPowerMap ? pl.powerEndTime : Date.now()) + 30000;
+                          pl.powerTimer = 1;
+                          pacmanZoomTarget = {
+                              user: userName,
+                              x: pl.x + 0.5,
+                              y: pl.y + 0.5,
+                              color: pl.color,
+                              avatar: pl.avatar,
+                              timer: 360
+                          };
+                          pacmanZoomCooldown = 600;
+                          pushAlertEvent(`💪 @${userName} atraiu e comeu uma Pílula de Poder!`);
+                          window.pushBannerNotification({
+                              type: 'skill',
+                              user: userName,
+                              avatar: pl.avatar || '',
+                              color: pl.color || '#ffffff',
+                              message: 'atraiu Pílula de Poder 🧲',
+                              icon: '⚡',
+                              timer: 300
+                          });
+                      }
+                      // Regular dots also get eaten by magnet
+                      if (!d.power) {
+                        d.active = false;
+                        var dPts = 10;
+                        var hasGrapeMagnet = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍇'; });
+                        if (hasGrapeMagnet) dPts *= 2;
+                        pl.roundScore = (pl.roundScore || 0) + dPts;
+                        pacmanScore += dPts;
+                        spawnDotParticles(d.x, d.y, pacmanThemeDotColor, 3);
+                      }
+                 }
+             }
+         });
+     }
+
      // Check Gift Drops First (only for main players)
      if (pl.lives !== undefined && typeof pacmanGiftDrops !== 'undefined') {
          var giftIndex = pacmanGiftDrops.findIndex(function(g) {
@@ -1646,9 +1723,8 @@ function checkDotCollision(pl, userName) {
              if (typeof activateGiftPower === 'function') {
                  activateGiftPower(pl, userName, g);
              }
-             if (pacmanPlayers[userName]) {
-                 pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + 500;
-             }
+             // Always credit via pl directly to avoid key mismatch
+             pl.roundScore = (pl.roundScore || 0) + 500;
              pacmanScore += 500;
              updateDotFlowField(); // Atualizar rotas para evitar que fiquem presos no local do presente vazio
          }
@@ -1670,9 +1746,11 @@ function checkDotCollision(pl, userName) {
                  AudioSynth.playWaka();
              }
              var pts = dot.power ? 50 : 10;
-             if (pacmanPlayers[userName]) {
-                 pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + pts;
-             }
+             var hasGrape = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍇'; });
+             if (hasGrape) pts *= 2;
+             
+             // Always credit the actual player object 'pl' directly (avoid key mismatch)
+             pl.roundScore = (pl.roundScore || 0) + pts;
              pacmanScore += pts;
              
              // Trigger zoom and individual power mode on power pill consumption
@@ -1693,6 +1771,15 @@ function checkDotCollision(pl, userName) {
                  };
                  pacmanZoomCooldown = 600;
                  pushAlertEvent(`💪 @${userName} comeu uma Pílula de Poder! Apenas ele pode comer fantasmas!`);
+                 window.pushBannerNotification({
+                     type: 'skill',
+                     user: userName,
+                     avatar: pl.avatar || '',
+                     color: pl.color || '#ffffff',
+                     message: 'comeu Pílula de Poder',
+                      icon: '⚡',
+                      timer: 300
+                 });
              }
              
              spawnDotParticles(pl.targetX, pl.targetY, dot.power ? '#00ffcc' : pacmanThemeDotColor, dot.power ? 20 : 5);
@@ -1718,20 +1805,39 @@ function checkDotCollision(pl, userName) {
         fr.active = false;
         
         var pts = fr.value || 500;
-        if (pacmanPlayers[userName]) {
-            pacmanPlayers[userName].roundScore = (pacmanPlayers[userName].roundScore || 0) + pts;
-        }
+        var hasRose = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🌹'; });
+        if (hasRose) pts *= 2; // Rose doubles point earnings
+        
+        // Credit directly via pl (avoids key mismatch between pl and pacmanPlayers[userName])
+        pl.roundScore = (pl.roundScore || 0) + pts;
         pacmanScore += pts;
         
+        var frGiftName = 'rose';
+        if (fr.type === '🎮') frGiftName = 'gg';
+        else if (fr.type === '🫰') frGiftName = 'perfume';
+        else if (fr.type === '🎵') frGiftName = 'jogo tiktok';
+        else if (fr.type === '🍦') frGiftName = 'icecream';
+        
+        var fakeGiftDrop = {
+            gift: frGiftName,
+            sender: userName,
+            diamondCount: 1,
+            repeatCount: 1
+        };
+        // Only activate gift power for real players (pl.lives !== undefined), not clones
+        if (pl.lives !== undefined) {
+            activateGiftPower(pl, userName, fakeGiftDrop);
+        }
         spawnTextParticle(pl.targetX, pl.targetY, "+" + pts, pacmanThemeDotColor);
-        pushAlertEvent(`${fr.type} @${userName} devorou a fruta bônus de ${pts} pontos!`);
-        AudioSynth.playTone(770, 'square', 0.3, 0.1);
-        AudioSynth.playTone(880, 'square', 0.3, 0.15); // Little happy tune
         updateDotFlowField();
     }
 }
 
 function spawnPacmanPlayer(userName, avatar) {
+     // Always normalize to lowercase so scores never get attributed to a duplicate key
+     userName = String(userName || '').replace(/^@/, '').toLowerCase().trim();
+     if (!userName) return;
+     
      if (pacmanPlayers[userName]) {
          if (pacmanPlayers[userName].lives <= 0) {
              pacmanPlayers[userName].lives = 3;
@@ -1764,8 +1870,15 @@ function spawnPacmanPlayer(userName, avatar) {
          giftSpeedMultiplier: 1.0,
          ghostComboCount: 0,
          tapTimestamps: [],
-         likesBuffer: 0
+         likesBuffer: 0,
+         orbitingFruits: [],
+         giftQueue: []
      };
+     
+     // Pre-trigger upscaler for Ranking Mode cache
+     if (avatar) {
+         fetch('/api/upscale?id=' + encodeURIComponent(userName) + '&url=' + encodeURIComponent(avatar)).catch(()=>{});
+     }
  }
 
 function findNextMoveAI(pl, isClone) {
@@ -1784,7 +1897,8 @@ function findNextMoveAI(pl, isClone) {
      }
      
      var hasPower = pl.powerTimer > 0 || pl.giantTimer > 0;
-     var isFleeing = !hasPower && nearestGhostDist < 4;
+     var hasSorveteShield = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍦'; });
+     var isFleeing = !hasPower && !hasSorveteShield && nearestGhostDist < 4;
      
      var dirs = ['right', 'down', 'left', 'up'];
      for (var i = 0; i < dirs.length; i++) {
@@ -1817,7 +1931,7 @@ function findNextMoveAI(pl, isClone) {
              
              // Se um fantasma estiver por perto (raio de 6), usamos repulsão forte para evitar o 
              // "jittering" (ir e voltar) na borda do raio de medo (4).
-             if (!hasPower && nearestGhostDist < 6) {
+             if (!hasPower && !hasSorveteShield && nearestGhostDist < 6) {
                  revPenalty = 4000;
              }
              
@@ -1842,12 +1956,13 @@ function findNextMoveAI(pl, isClone) {
                  var dG = Math.abs(tx - pacmanGhosts[j].x) + Math.abs(ty - pacmanGhosts[j].y);
                  if (dG < gDist) gDist = dG;
              }
-             
              if (hasPower) {
                  if (gDist !== 99999) {
                      // CAÇAR FANTASMAS! Sempre focar no fantasma vivo mais próximo, sem limite de distância.
                      score -= (1000 - gDist) * 2000;
                  }
+             } else if (hasSorveteShield) {
+                 // IGNORA FANTASMAS: Não caça, mas também não foge. Continua focando apenas nos pontos.
              } else {
                  if (gDist < 4) {
                      // Forte repulsão. O peso 5000 esmaga qualquer custo de espaço vazio (1000)
@@ -1913,22 +2028,37 @@ function getAvailableGiftSpawnPosition() {
         validSpots[j] = temp;
     }
     
-    // Find a spot that is far from existing drops
+    // Find a spot that is far from existing drops and other fruits
     for (var i = 0; i < validSpots.length; i++) {
         var spot = validSpots[i];
         var isFar = true;
+        
         if (typeof pacmanGiftDrops !== 'undefined') {
             for (var j = 0; j < pacmanGiftDrops.length; j++) {
                 var g = pacmanGiftDrops[j];
                 if (g.active) {
                     var dist = Math.abs(g.x - spot.x) + Math.abs(g.y - spot.y);
-                    if (dist < 10) { // Minimum Manhattan distance between gifts
+                    if (dist < 6) { // Minimum Manhattan distance
                         isFar = false;
                         break;
                     }
                 }
             }
         }
+        
+        if (isFar && typeof pacmanFruits !== 'undefined') {
+            for (var j = 0; j < pacmanFruits.length; j++) {
+                var f = pacmanFruits[j];
+                if (f.active) {
+                    var dist = Math.abs(f.x - spot.x) + Math.abs(f.y - spot.y);
+                    if (dist < 6) { // Minimum Manhattan distance between fruits
+                        isFar = false;
+                        break;
+                    }
+                }
+            }
+        }
+        
         if (isFar) return spot;
     }
     
@@ -2003,18 +2133,18 @@ function triggerRoundEnd() {
     // Atualiza a UI do placar geral apenas no final da partida (para evitar stuttering)
     commitLeaderboardUpdate();
     
-    // After 10 seconds, switch to overall leaderboard (allowing almost 2 full animation cycles)
+    // After 16 seconds (2 full 8s animation cycles), switch to overall leaderboard
     setTimeout(function() {
         pacmanRoundEndMode = 'overall';
         window.pacmanRoundEndStart = Date.now(); // Reinicia a animação!
         window.pacmanCachedDisplayPlayers = null; // Invalida o cache
         pushAlertEvent(`🏆 Exibindo o Placar Geral histórico...`);
-    }, 10000);
+    }, 16000);
     
-    // After 20 seconds total, transition to next level
+    // After 24 seconds total, transition to next level
     setTimeout(function() {
         triggerLevelUp();
-    }, 20000);
+    }, 24000);
 }
 
 function triggerLevelUp() {
@@ -2336,6 +2466,84 @@ function drawRoundEndOverlay() {
         pacmanCtx.fillStyle = '#8888ff';
         pacmanCtx.font = 'italic 24px Inter, sans-serif';
         pacmanCtx.fillText(footerText, w / 2, cardY + cardH - 60);
+        
+        // ==========================================
+        // GIFT / SKILL LEGEND BELOW THE CARD
+        // ==========================================
+        var legendY = cardY + cardH + 40;
+        var legendGifts = [
+            { url: 'images tiktok/Rose.png',     emoji: '🌹', name: 'Rosa',    skill: 'Come Fantasmas' },
+            { url: 'images tiktok/GG.png',        emoji: '🎮', name: 'GG',      skill: 'Turbo' },
+            { url: 'images tiktok/Perfume.png',   emoji: '🫰', name: 'Perfume', skill: 'Clones' },
+            { url: 'images tiktok/tik_tok.png',   emoji: '🎵', name: 'TikTok',  skill: 'Gigante' },
+            { url: 'images tiktok/ice_cream.png', emoji: '🍦', name: 'Sorvete', skill: 'Escudo' }
+        ];
+        
+        // Legend title
+        pacmanCtx.save();
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        pacmanCtx.fillStyle = '#ffdd44';
+        pacmanCtx.font = 'bold 34px Outfit, Inter, sans-serif';
+        pacmanCtx.shadowBlur = 8;
+        pacmanCtx.shadowColor = '#000';
+        pacmanCtx.fillText('🎁 PRESENTES & HABILIDADES 🎁', w / 2, legendY);
+        pacmanCtx.shadowBlur = 0;
+        pacmanCtx.restore();
+        
+        // Legend items (2 per row)
+        var itemW = 360;
+        var itemH = 100;
+        var cols = 2;
+        var totalItemsW = cols * itemW + (cols - 1) * 20;
+        var startLegendX = (w - totalItemsW) / 2;
+        
+        for (var gi = 0; gi < legendGifts.length; gi++) {
+            var gift = legendGifts[gi];
+            var col = gi % cols;
+            var row = Math.floor(gi / cols);
+            var gx = startLegendX + col * (itemW + 20);
+            var gy = legendY + 30 + row * (itemH + 10);
+            
+            // Card background
+            pacmanCtx.save();
+            pacmanCtx.fillStyle = 'rgba(20, 20, 50, 0.85)';
+            pacmanCtx.strokeStyle = '#444488';
+            pacmanCtx.lineWidth = 2;
+            pacmanCtx.beginPath();
+            pacmanCtx.roundRect(gx, gy, itemW, itemH, 12);
+            pacmanCtx.fill();
+            pacmanCtx.stroke();
+            pacmanCtx.restore();
+            
+            // Gift image
+            var gImg = getGiftImage(gift.url);
+            var iconSize = 68;
+            if (gImg && gImg.complete && gImg.naturalWidth !== 0) {
+                pacmanCtx.drawImage(gImg, gx + 14, gy + (itemH - iconSize) / 2, iconSize, iconSize);
+            } else {
+                pacmanCtx.save();
+                pacmanCtx.font = '48px Segoe UI Emoji';
+                pacmanCtx.textAlign = 'left';
+                pacmanCtx.textBaseline = 'middle';
+                pacmanCtx.fillText(gift.emoji, gx + 14, gy + itemH / 2);
+                pacmanCtx.restore();
+            }
+            
+            // Gift name
+            pacmanCtx.save();
+            pacmanCtx.textAlign = 'left';
+            pacmanCtx.textBaseline = 'middle';
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.font = 'bold 30px Outfit, Inter, sans-serif';
+            pacmanCtx.fillText(gift.name, gx + 92, gy + 30);
+            
+            // Skill name
+            pacmanCtx.fillStyle = '#00ffcc';
+            pacmanCtx.font = 'bold 24px Outfit, Inter, sans-serif';
+            pacmanCtx.fillText('⚡ ' + gift.skill, gx + 92, gy + 65);
+            pacmanCtx.restore();
+        }
 
     } else {
         // --- DRAW OVERALL RANKING FULL SCREEN ---
@@ -2429,68 +2637,237 @@ function drawRoundEndOverlay() {
 }
 
 function spawnFruit() {
-    var pos = getAvailableSpawnPosition();
-    var fruitTypes = ['🍒', '🍓', '🍑', '🍎', '🍇'];
-    var type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-    var val = (fruitTypes.indexOf(type) + 1) * 300;
+    var pos = getAvailableGiftSpawnPosition();
+    var giftTypes = ['🌹', '🎮', '🫰', '🍦', '🎵'];
+    var type = giftTypes[Math.floor(Math.random() * giftTypes.length)];
+    var val = (giftTypes.indexOf(type) + 1) * 300;
     
-    // Kept dot active so fruits stay in front of the dots (no temporary deactivation)
-    pacmanFruits.push({ x: pos.x, y: pos.y, active: true, value: val, type: type, restoredDot: false });
-    spawnTextParticle(pos.x, pos.y, `${type} FRUTA!`, '#ff5500');
-    pushAlertEvent(`🍒 Uma Fruta Bônus surgiu no labirinto!`); // Call it manually or let the animation frame handle it
+    var urls = {
+        '🌹': 'images tiktok/Rose.png',
+        '🎮': 'images tiktok/GG.png',
+        '🫰': 'images tiktok/Perfume.png',
+        '🎵': 'images tiktok/tik_tok.png',
+        '🍦': 'images tiktok/ice_cream.png'
+    };
+    
+    pacmanFruits.push({
+        x: pos.x,
+        y: pos.y,
+        active: true,
+        value: val,
+        type: type,
+        url: urls[type] || 'images tiktok/Rose.png',
+        restoredDot: false,
+        timer: 1200 // Dura 20 segundos
+    });
+    
+    var giftName = 'Presente';
+    if (type === '🌹') giftName = 'Rosa';
+    else if (type === '🎮') giftName = 'GG';
+    else if (type === '🫰') giftName = 'Perfume';
+    else if (type === '🍦') giftName = 'Sorvete';
+    else if (type === '🎵') giftName = 'TikTok';
+    
+    spawnTextParticle(pos.x, pos.y, `${type} ${giftName.toUpperCase()}!`, '#ff5500');
+    pushAlertEvent(`${type} Um presente de 1 Diamante (${giftName}) surgiu no labirinto!`);
 }
 
 function drawRankingFunAnimation(players, elapsed, w, h, cardY, cardBottomY) {
-    // Top space center
     var topSpaceY = cardY / 2;
-    // Bottom space center
     var bottomSpaceY = cardBottomY + (h - cardBottomY) / 2;
     
-    // Cycle every 6000ms. We add 1200ms offset so the characters are already entering the screen
-    // when the ranking appears, removing the empty "delay" feeling.
-    var cycle = (elapsed + 1200) % 6000;
+    // Timeline de 8 segundos (8000ms)
+    var cycle = elapsed % 8000;
     
     var ghostColors = ['#ff0000', '#ffb8ff', '#00ffff', '#ffb852'];
-    
-    // Scale slightly larger than game: game is usually 30-40 tile size, let's use radius 45
     var scale = 45;
     
-    // Top Animation: Left to Right
-    var topX = -300 + (cycle / 6000) * (w + 1000);
-    // Draw top 3 players running away from ghosts
-    var topPlayers = players.slice(0, 3);
+    var topPlayer = players.length > 0 ? players[0] : { name: 'Player', color: '#ffdd00' };
+    
+    var tutorialType = (window.pacmanLevel || 1) % 5; // 0=Rose, 1=GG, 2=TikTok, 3=Finger Heart, 4=Ice Cream
+    var giftNames = [
+        '🌹 ROSA (PODER DE COMER FANTASMAS)',
+        '🎮 GG (MODO TURBO)',
+        '🎵 TIKTOK (MODO GIGANTE)',
+        '🫰 CORAÇÃO (CLONES)',
+        '🍦 SORVETE (ESCUDO PROTETOR)'
+    ];
+    var giftType = ['rose', 'gg', 'tiktok', 'heart', 'icecream'][tutorialType];
     
     pacmanCtx.save();
-    // Ghosts chasing (Right, left of players)
+    
+    // Título do Tutorial
+    pacmanCtx.font = "bold 24px Inter";
+    pacmanCtx.fillStyle = '#ffdd44';
+    pacmanCtx.textAlign = 'center';
+    pacmanCtx.shadowBlur = 10;
+    pacmanCtx.shadowColor = '#000';
+    pacmanCtx.fillText("TUTORIAL: " + giftNames[tutorialType], w / 2, topSpaceY - 90);
+    pacmanCtx.shadowBlur = 0;
+    
+    var giftX = w - 200; 
+    var startX = -200;
+    
+    // Fases da animação
+    // 0: Fuga para a direita (0 - 3500ms)
+    // 1: Pegando o item (3500 - 4500ms)
+    // 2: Reação para a esquerda (4500 - 8000ms)
+    
+    var phase = 0;
+    var px = 0;
+    var pDir = 'right';
+    var pScale = scale;
+    
+    if (cycle < 3500) {
+        phase = 0;
+        var p = cycle / 3500;
+        px = startX + p * (giftX - startX);
+        pDir = 'right';
+    } else if (cycle < 4500) {
+        phase = 1;
+        px = giftX;
+        pDir = 'left';
+    } else {
+        phase = 2;
+        var p = (cycle - 4500) / 3500;
+        px = giftX - p * (giftX + 300);
+        pDir = 'left';
+    }
+    
+    // Desenha a Fruta
+    if (phase === 0) {
+        drawSimulatedGift(giftX, topSpaceY, giftType, scale);
+    } else if (phase === 1) {
+        pacmanCtx.save();
+        pacmanCtx.fillStyle = '#ffffff';
+        pacmanCtx.globalAlpha = Math.max(0, 1.0 - ((cycle - 3500) / 500));
+        pacmanCtx.beginPath();
+        pacmanCtx.arc(giftX, topSpaceY, scale * 2, 0, Math.PI * 2);
+        pacmanCtx.fill();
+        pacmanCtx.restore();
+    }
+    
+    var ghostsScared = false;
+    var pColor = topPlayer.color || '#ffdd00';
+    var drawClones = false;
+    
+    if (phase >= 1) {
+        if (tutorialType === 0) { ghostsScared = true; } // Uva (Poder)
+        else if (tutorialType === 1) { pColor = '#00ffff'; if (phase === 2) { var p = (cycle - 4500) / 1500; px = giftX - p * (giftX + 300); } } // Cereja (Turbo)
+        else if (tutorialType === 2) { pScale = scale * 2.5; ghostsScared = true; } // Maçã (Gigante)
+        else if (tutorialType === 3) { drawClones = true; } // Pêssego (Clones)
+    }
+    
+    // Desenha Fantasmas
     for (let i = 0; i < 4; i++) {
-        let gx = topX - 140 - i * 90;
-        if (gx > -100 && gx < w + 100) {
-            drawSimpleGhost(gx, topSpaceY, scale, 'right', ghostColors[i], elapsed, 'angry');
+        let gx = 0;
+        let gDir = 'right';
+        let gState = 'angry';
+        let isEaten = false;
+        
+        if (phase === 0) {
+            gx = px - 120 - (i * 80);
+            gDir = 'right';
+            gState = 'angry';
+        } else if (phase === 1) {
+            gx = giftX - 120 - (i * 80);
+            gDir = 'right';
+            gState = ghostsScared ? 'scared' : 'angry';
+        } else if (phase === 2) {
+            if (tutorialType === 0 || tutorialType === 2) { // Uva / Maçã
+                let dist = (cycle - 4500) / 3500;
+                gx = (giftX - 120 - (i * 80)) - dist * (giftX + 300) * 0.4;
+                gDir = 'left';
+                gState = 'scared';
+                if (px < gx + scale) isEaten = true;
+            } else if (tutorialType === 1) { // Cereja
+                let p = (cycle - 4500) / 3500;
+                gx = (giftX - 120 - (i * 80)) + p * 200;
+                gDir = 'right';
+                gState = 'angry';
+            } else if (tutorialType === 3) { // Pêssego
+                gx = giftX - 120 - (i * 80) + Math.sin(cycle / 100 + i) * 20;
+                gDir = (Math.floor(cycle / 200) % 2 === 0) ? 'left' : 'right';
+                gState = 'angry';
+            } else if (tutorialType === 4) { // Morango (Escudo)
+                var p = (cycle - 4500) / 3500;
+                if (p < 0.5) {
+                    gx = giftX - 120 - (i * 80) - p * 300;
+                    gDir = 'left';
+                    gState = 'angry';
+                } else {
+                    var bp = (p - 0.5) * 2;
+                    gx = (giftX - 120 - (i * 80) - 150) + bp * 400;
+                    gDir = 'right';
+                    gState = 'scared';
+                }
+            }
+        }
+        
+        if (!isEaten) {
+            drawSimpleGhost(gx, topSpaceY, scale, gDir, ghostColors[i], elapsed, gState);
+        } else if (phase === 2 && px < gx + scale + 50 && px > gx - scale - 50) {
+            pacmanCtx.save();
+            pacmanCtx.font = "bold 20px Inter";
+            pacmanCtx.fillStyle = '#00ffff';
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.fillText(200 * Math.pow(2, i), gx, topSpaceY - 20 - (cycle % 20));
+            pacmanCtx.restore();
         }
     }
     
-    // Players running ahead (Right, right of ghosts)
-    for (let i = 0; i < topPlayers.length; i++) {
-        let px = topX + (topPlayers.length - 1 - i) * 100;
-        if (px > -100 && px < w + 100) {
-            drawSimplePacman(px, topSpaceY, scale, 'right', topPlayers[i], elapsed);
-            // Draw name above
-            pacmanCtx.font = "bold 18px Inter";
-            pacmanCtx.fillStyle = topPlayers[i].color || '#fff';
-            pacmanCtx.textAlign = 'center';
-            pacmanCtx.lineWidth = 3;
-            pacmanCtx.strokeStyle = '#000';
-            pacmanCtx.strokeText(topPlayers[i].name, px, topSpaceY - scale - 15);
-            pacmanCtx.fillText(topPlayers[i].name, px, topSpaceY - scale - 15);
+    // Desenha Pac-Man
+    if (!drawClones) {
+        var tempPlayer = Object.assign({}, topPlayer, {color: pColor});
+        drawSimplePacman(px, topSpaceY, pScale, pDir, tempPlayer, elapsed);
+        
+        pacmanCtx.font = "bold 18px Inter";
+        pacmanCtx.fillStyle = tempPlayer.color || '#fff';
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.lineWidth = 3;
+        pacmanCtx.strokeStyle = '#000';
+        pacmanCtx.strokeText(tempPlayer.name, px, topSpaceY - pScale - 15);
+        pacmanCtx.fillText(tempPlayer.name, px, topSpaceY - pScale - 15);
+        
+        // Efeito Turbo (Cereja)
+        if (tutorialType === 1 && phase === 2) {
+             pacmanCtx.globalAlpha = 0.5;
+             drawSimplePacman(px + 60, topSpaceY, scale, pDir, tempPlayer, elapsed - 100);
+             pacmanCtx.globalAlpha = 0.2;
+             drawSimplePacman(px + 120, topSpaceY, scale, pDir, tempPlayer, elapsed - 200);
+             pacmanCtx.globalAlpha = 1.0;
+        }
+        
+        // Efeito Escudo (Morango)
+        if (tutorialType === 4 && phase === 1) {
+             pacmanCtx.strokeStyle = '#00ff00';
+             pacmanCtx.lineWidth = 4;
+             pacmanCtx.beginPath();
+             pacmanCtx.arc(px, topSpaceY, pScale + 10, 0, Math.PI * 2);
+             pacmanCtx.stroke();
+        }
+    } else {
+        // Clones do Pêssego
+        if (phase < 2) {
+            drawSimplePacman(px, topSpaceY, scale, pDir, topPlayer, elapsed);
+        } else {
+            var cOffset = Math.min(60, (cycle - 4500) / 10);
+            for (let c = 0; c < 3; c++) {
+                let cy = topSpaceY + (c - 1) * cOffset;
+                let cDir = 'left';
+                var clonePlayer = Object.assign({}, topPlayer, {color: PACMAN_COLORS[c % PACMAN_COLORS.length]});
+                drawSimplePacman(px + (c * 20), cy, scale, cDir, clonePlayer, elapsed);
+            }
         }
     }
+    
     pacmanCtx.restore();
     
-    // Bottom Animation: Right to Left
-    var bottomX = w + 300 - (cycle / 6000) * (w + 1000);
+    // --- Animação Inferior (Classic Run) ---
+    var bottomCycle = elapsed % 6000;
+    var bottomX = w + 300 - (bottomCycle / 6000) * (w + 1000);
     
     pacmanCtx.save();
-    // Ghosts chasing (Left, right of players)
     for (let i = 0; i < 4; i++) {
         let gx = bottomX + 140 + i * 90;
         if (gx > -100 && gx < w + 100) {
@@ -2498,20 +2875,57 @@ function drawRankingFunAnimation(players, elapsed, w, h, cardY, cardBottomY) {
         }
     }
     
-    // Players running ahead (Left, left of ghosts)
-    for (let i = 0; i < topPlayers.length; i++) {
-        let px = bottomX - (topPlayers.length - 1 - i) * 100;
-        if (px > -100 && px < w + 100) {
-            drawSimplePacman(px, bottomSpaceY, scale, 'left', topPlayers[i], elapsed);
-            // Draw name above
+    for (let i = 1; i < Math.min(4, players.length); i++) {
+        let bx = bottomX - (4 - i) * 100;
+        if (bx > -100 && bx < w + 100) {
+            drawSimplePacman(bx, bottomSpaceY, scale, 'left', players[i], elapsed);
             pacmanCtx.font = "bold 18px Inter";
-            pacmanCtx.fillStyle = topPlayers[i].color || '#fff';
+            pacmanCtx.fillStyle = players[i].color || '#fff';
             pacmanCtx.textAlign = 'center';
             pacmanCtx.lineWidth = 3;
             pacmanCtx.strokeStyle = '#000';
-            pacmanCtx.strokeText(topPlayers[i].name, px, bottomSpaceY - scale - 15);
-            pacmanCtx.fillText(topPlayers[i].name, px, bottomSpaceY - scale - 15);
+            pacmanCtx.strokeText(players[i].name, bx, bottomSpaceY - scale - 15);
+            pacmanCtx.fillText(players[i].name, bx, bottomSpaceY - scale - 15);
         }
+    }
+    pacmanCtx.restore();
+}
+
+function drawSimulatedGift(x, y, type, scale) {
+    pacmanCtx.save();
+    pacmanCtx.shadowBlur = 20;
+    pacmanCtx.shadowColor = '#fff';
+    pacmanCtx.beginPath();
+    pacmanCtx.arc(x, y, scale * 1.0, 0, Math.PI * 2);
+    pacmanCtx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    pacmanCtx.fill();
+    
+    pacmanCtx.shadowBlur = 0;
+    
+    var urls = {
+        'rose': 'images tiktok/Rose.png',
+        'gg': 'images tiktok/GG.png',
+        'heart': 'images tiktok/Perfume.png',
+        'tiktok': 'images tiktok/tik_tok.png',
+        'icecream': 'images tiktok/ice_cream.png'
+    };
+    var emoji = '🎁';
+    if (type === 'rose') emoji = '🌹';
+    else if (type === 'gg') emoji = '🎮';
+    else if (type === 'tiktok') emoji = '🎵';
+    else if (type === 'heart') emoji = '🫰';
+    else if (type === 'icecream') emoji = '🍦';
+    
+    var url = urls[type];
+    var img = getGiftImage(url);
+    if (img && img.complete && img.naturalWidth !== 0) {
+        var size = scale * 1.6;
+        pacmanCtx.drawImage(img, x - size / 2, y - size / 2, size, size);
+    } else {
+        pacmanCtx.font = (scale * 1.5) + "px Arial";
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        pacmanCtx.fillText(emoji, x, y);
     }
     pacmanCtx.restore();
 }
@@ -2875,6 +3289,8 @@ function checkGhostCollisions() {
                     var comboIndex = pl.ghostComboCount;
                     // Exponential score: 200, 400, 800, 1600. Cap combo at x4
                     var pointsAwarded = 100 * Math.pow(2, comboIndex);
+                    var hasRose = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🌹'; });
+                    if (hasRose) pointsAwarded *= 2;
                     
                     pl.roundScore = (pl.roundScore || 0) + pointsAwarded;
                     pl.score = (pl.score || 0) + pointsAwarded;
@@ -2906,68 +3322,112 @@ function checkGhostCollisions() {
                     pushAlertEvent(`👻 @${p} COMEU o fantasma! Combo x${comboIndex} (+${pointsAwarded} pts)`);
                     
                     // Activate Combo Popup - Accumulate if active
-                    if (pacmanComboPopup && pacmanComboPopup.user === p && pacmanComboPopup.timer > 0) {
-                        pacmanComboPopup.combo = comboIndex;
-                        pacmanComboPopup.points += pointsAwarded;
-                        pacmanComboPopup.ghostColor = gh.color;
-                        pacmanComboPopup.timer = 160; // Mantém ativo sem reativar a animação de pop-in inicial
+                    var existingCombo = (window.pacmanActiveBanners || []).find(function(b) {
+                        return b.type === 'combo' && b.user === p && b.timer > 0;
+                    });
+                    if (existingCombo) {
+                        existingCombo.combo = comboIndex;
+                        existingCombo.points += pointsAwarded;
+                        existingCombo.ghostColor = gh.color;
+                        existingCombo.timer = 160;
                     } else {
-                        pacmanComboPopup = {
+                        window.pushBannerNotification({
+                            type: 'combo',
                             user: p,
                             avatar: pl.avatar || '',
                             color: pl.color,
                             combo: comboIndex,
                             points: pointsAwarded,
                             ghostColor: gh.color,
-                            timer: 180 // 3 seconds
-                        };
+                            timer: 300
+                        });
                     }
                     
                     updatePacmanLeaderboard();
                     updateDotFlowField(); // Atualiza a IA para não perseguirem o fantasma "morto"
                 } else {
-                    // Player Dies
-                    pl.lives--;
-                    AudioSynth.playDeath();
-                    spawnDeathParticles(pl.x, pl.y, pl.color);
+                    // Check if player has sorvete shield
+                    var hasSorvete = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍦'; });
+                    if (hasSorvete) {
+                        // Consume the sorvete shield!
+                        var strIndex = pl.orbitingFruits.findIndex(function(f) { return f.type === '🍦'; });
+                        if (strIndex !== -1) {
+                            pl.orbitingFruits.splice(strIndex, 1);
+                        }
+                        // Give brief invincibility
+                        pl.spawnProtection = 120; // 2 seconds protection
+                        spawnDotParticles(pl.x, pl.y, '#ff3366', 40);
+                        
+                        // Loud impact sound and tone sweep
+                        AudioSynth.playTone(150, 'sawtooth', 0.8, 0.4);
+                        AudioSynth.playTone(120, 'sawtooth', 0.8, 0.4);
+                        
+                        // Set up cinematic fly-up/throw back impact state on ghost
+                        gh.impactTimer = 180; // 3 seconds animation
+                        gh.hitX = gh.x + (gh.targetX - gh.x) * gh.progress;
+                        gh.hitY = gh.y + (gh.targetY - gh.y) * gh.progress;
+                        
+                        var complaints = [
+                            "Ai! Que pancada!",
+                            "Sorvete gelado!",
+                            "Não vale usar escudo!",
+                            "Fui arremessado!",
+                            "Que dor de cabeça!",
+                            "Vou reclamar com o dev!",
+                            "Pensa que me bate? Fui!",
+                            "Waka waka apelão!"
+                        ];
+                        gh.speechText = complaints[Math.floor(Math.random() * complaints.length)];
+                        gh.speechTimer = 180;
+                        
+                        pushAlertEvent(`🛡️ @${p} ativou o escudo de Sorvete e arremessou o fantasma!`);
+                        window.pushBannerNotification({
+                            type: 'skill',
+                            user: p,
+                            avatar: pl.avatar || '',
+                            color: pl.color || '#ffffff',
+                            message: 'usou Escudo de Sorvete 🍦',
+                            icon: '🛡️',
+                            timer: 300
+                        });
+                    } else {
+                        // Morte real — sem escudo
+                        pl.lives--;
+                        AudioSynth.playDeath();
+                        spawnDeathParticles(pl.x, pl.y, pl.color);
+                        
+                        // Destrói clones apenas na morte real (sorvete preserva os clones)
+                        for (var i = pacmanClones.length - 1; i >= 0; i--) {
+                            if (pacmanClones[i].owner === p) {
+                                spawnDeathParticles(pacmanClones[i].x, pacmanClones[i].y, '#ff66ff');
+                                pacmanClones.splice(i, 1);
+                            }
+                        }
+                        
+                        if (pl.lives <= 0) {
+                            spawnTextParticle(pl.x, pl.y, 'GAME OVER', '#ff0000');
+                            pushAlertEvent(`💀 @${p} foi eliminado!`);
+                        } else {
+                            spawnTextParticle(pl.x, pl.y, `PERDEU VIDA (${pl.lives})`, '#ff3300');
+                            var pos = getAvailableSpawnPosition();
+                            pl.x = pos.x;
+                            pl.y = pos.y;
+                            pl.targetX = pos.x;
+                            pl.targetY = pos.y;
+                            pl.progress = 0;
+                            pl.spawnProtection = 180;
+                            setTimeout(function() { AudioSynth.playRespawn(); }, 800);
+                        }
+                        updatePacmanLeaderboard();
+                    }
                     
-                    // --- Ghost Meme Voice ---
+                    // Voz do fantasma (independente de sorvete ou morte)
                     var rIndex = Math.floor(Math.random() * 6);
                     speakGhostDialogue(gh.id, 'kill', rIndex);
                     if (ghostDialogues[gh.id] && ghostDialogues[gh.id]['kill']) {
                         gh.speechText = ghostDialogues[gh.id]['kill'][rIndex];
-                        gh.speechTimer = 240; // 4 seconds
+                        gh.speechTimer = 240;
                     }
-                    // ------------------------
-                    
-                    // Destroy all clones owned by this player instantly
-                    for (var i = pacmanClones.length - 1; i >= 0; i--) {
-                        if (pacmanClones[i].owner === p) {
-                            spawnDeathParticles(pacmanClones[i].x, pacmanClones[i].y, '#ff66ff');
-                            pacmanClones.splice(i, 1);
-                        }
-                    }
-                    
-                    if (pl.lives <= 0) {
-                        spawnTextParticle(pl.x, pl.y, 'GAME OVER', '#ff0000');
-                        pushAlertEvent(`💀 @${p} foi eliminado!`);
-                        // Keep player in memory with 0 lives, can join/spawn again
-                    } else {
-                        spawnTextParticle(pl.x, pl.y, `PERDEU VIDA (${pl.lives})`, '#ff3300');
-                        // Respawn safely
-                        var pos = getAvailableSpawnPosition();
-                        pl.x = pos.x;
-                        pl.y = pos.y;
-                        pl.targetX = pos.x;
-                        pl.targetY = pos.y;
-                        pl.progress = 0;
-                        pl.spawnProtection = 180;
-                        
-                        setTimeout(function() {
-                            AudioSynth.playRespawn();
-                        }, 800);
-                    }
-                    updatePacmanLeaderboard();
                 }
             }
         });
@@ -3012,22 +3472,43 @@ function updateEntities() {
         if (pl.spawnProtection > 0) pl.spawnProtection--;
         if (pl.speedBoostTimer > 0) pl.speedBoostTimer--;
         
-        if (pl.giftSpeedEndTime) {
-            if (Date.now() < pl.giftSpeedEndTime) pl.giftSpeedTimer = 1;
-            else { pl.giftSpeedTimer = 0; pl.giftSpeedMultiplier = 1.0; }
-        } else if (pl.giftSpeedTimer > 0) {
-            pl.giftSpeedTimer--;
-            if (pl.giftSpeedTimer <= 0) {
-                pl.giftSpeedMultiplier = 1.0;
-            }
+        // Update orbiting fruits and pull from queue
+        updatePlayerOrbitAndQueue(pl, p);
+        
+        // Recalculate player skill states based on what is in pl.orbitingFruits
+        var hasRose = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🌹'; });
+        if (hasRose) {
+            pl.powerTimer = 1;
+            pl.powerEndTime = Date.now() + 1000;
+            pl.autoEnergyTimer = 1;
+            pl.autoEnergyEndTime = Date.now() + 1000;
+        } else {
+            pl.powerTimer = 0;
+            pl.powerEndTime = 0;
+            pl.autoEnergyTimer = 0;
+            pl.autoEnergyEndTime = 0;
         }
         
-        // Update autoEnergyTimer based on endTime
-        if (pl.autoEnergyEndTime) {
-            if (Date.now() < pl.autoEnergyEndTime) pl.autoEnergyTimer = 1;
-            else pl.autoEnergyTimer = 0;
-        } else if (pl.autoEnergyTimer && pl.autoEnergyTimer > 0) {
-            pl.autoEnergyTimer--;
+        var hasGG = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🎮'; });
+        if (hasGG) {
+            pl.giftSpeedMultiplier = 1.6;
+            pl.giftSpeedTimer = 1;
+            pl.giftSpeedEndTime = Date.now() + 1000;
+        } else {
+            pl.giftSpeedMultiplier = 1.0;
+            pl.giftSpeedTimer = 0;
+            pl.giftSpeedEndTime = 0;
+        }
+        
+        var numTikToks = pl.orbitingFruits ? pl.orbitingFruits.filter(function(f) { return f.type === '🎵'; }).length : 0;
+        if (numTikToks > 0) {
+            pl.giantTimer = 1;
+            pl.giantStacks = numTikToks;
+            pl.giantEndTime = Date.now() + 1000;
+        } else {
+            pl.giantTimer = 0;
+            pl.giantStacks = 0;
+            pl.giantEndTime = 0;
         }
 
         // --- Continuous Energy Tank Tracking (Likes) ---
@@ -3108,6 +3589,11 @@ function updateEntities() {
             // Gift speed multiplier stacks on top
             if (pl.giftSpeedTimer > 0) {
                 currentSpeed *= pl.giftSpeedMultiplier;
+            }
+            
+            // Cherry speed boost (+40% speed)
+            if (pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍒'; })) {
+                currentSpeed *= 1.4;
             }
             
             if (isSlowMo) currentSpeed *= 0.15;
@@ -3194,12 +3680,11 @@ function updateEntities() {
             continue;
         }
         
-        if (cl.endTime) {
-            if (Date.now() > cl.endTime) cl.timer = 0;
-        } else {
-            cl.timer--;
-        }
-        if (cl.timer <= 0) {
+        var ownerPl = pacmanPlayers[cl.owner];
+        var hasPerfume = ownerPl && ownerPl.perfumeEndTime && ownerPl.perfumeEndTime > Date.now();
+        
+        if (!hasPerfume || cl.timer <= 0) {
+            spawnDeathParticles(cl.x, cl.y, cl.color);
             pacmanClones.splice(i, 1);
             continue;
         }
@@ -3266,8 +3751,24 @@ function updateEntities() {
     }
     
     // 2. Update Ghost Positions
-    // 2. Update Ghost Positions
     pacmanGhosts.forEach(function(gh) {
+        // Handle cinematic bounce-back impact
+        if (gh.impactTimer > 0) {
+            gh.impactTimer--;
+            if (gh.impactTimer <= 0) {
+                // Return to home completely
+                gh.x = gh.spawnX;
+                gh.y = gh.spawnY;
+                gh.targetX = gh.spawnX;
+                gh.targetY = gh.spawnY;
+                gh.progress = 0.0;
+                gh.homeTime = 120; // 2 seconds delay in spawn
+            }
+            if (gh.speechTimer > 0) gh.speechTimer--;
+            else gh.speechText = "";
+            return; // Skip normal AI pathfinding and movement updates
+        }
+
         if (gh.homeTime > 0) {
             gh.homeTime--;
             return;
@@ -3318,7 +3819,7 @@ function updateEntities() {
                 } else {
                     var tx, ty, useTarget = false, reverse = false;
                     var targetPlayer = getClosestPlayer(gh.x, gh.y);
-                    if (targetPlayer && Math.random() < 0.8) { // 80% smart tracking
+                    if (targetPlayer && Math.random() < 0.96) { // 96% smart tracking (up from 80%)
                         tx = targetPlayer.x;
                         ty = targetPlayer.y;
                         useTarget = true;
@@ -3383,7 +3884,7 @@ function updateEntities() {
             if (gh.isDead) {
                 activeSpeed = gh.speed * 4.0; // Very fast when returning
             } else if (pacmanPowerMode || pacmanGiantMode) {
-                activeSpeed = 0.00625; // slow down in frightened mode (halved)
+                activeSpeed = 0.0075; // slow down in frightened mode (halved, +20%)
             }
             
             if (isSlowMo) activeSpeed *= 0.15;
@@ -3672,8 +4173,8 @@ function drawPacman() {
         pacmanCtx.translate(-centerX, -centerY);
     }
     
-    // Draw background (Copa Mode or Static Neon)
-    if (window.isCopaMode) {
+    // Draw background (Copa Mode or Default/Ranking)
+    if (window.mapMode === 'copa') {
         var time = Date.now();
         var cw = canvas.width;
         var ch = canvas.height;
@@ -3688,6 +4189,9 @@ function drawPacman() {
         }
         
     } else if (mazeCanvas) {
+        // Runs for BOTH default and ranking modes
+        var time = Date.now();
+        
         pacmanCtx.globalAlpha = 1.0; 
         pacmanCtx.drawImage(mazeCanvas, 0, 0);
         
@@ -3748,8 +4252,14 @@ function drawPacman() {
         
         // Pinta o fundo real por trás de tudo
         pacmanCtx.globalCompositeOperation = 'destination-over';
-        pacmanCtx.fillStyle = pacmanThemeBgColor;
-        pacmanCtx.fillRect(0, 0, 1080, 1920);
+        
+        // AQUI DESENHA AS BANDEIRAS ATRÁS DAS PAREDES COM EFEITO
+        if (window.mapMode === 'ranking') {
+            window.drawRankingField(pacmanCtx, canvas.width, canvas.height, time);
+        }
+        
+        pacmanCtx.fillStyle = pacmanThemeBgColor || '#000000'; 
+        pacmanCtx.fillRect(0, 0, canvas.width, canvas.height);
         
         // Restaura modo normal de blend
         pacmanCtx.globalCompositeOperation = 'source-over';
@@ -3809,7 +4319,7 @@ function drawPacman() {
         }
     }
     
-    // Draw Fruits (Simplified for performance)
+    // Draw Fruits (Larger size & juicy pulsating effect)
     pacmanFruits.forEach(function(fr) {
         if (fr.active) {
             pacmanCtx.save();
@@ -3817,18 +4327,30 @@ function drawPacman() {
             var fx = (fr.x + 0.5) * pacmanTileSize;
             var fy = (fr.y + 0.5) * pacmanTileSize;
             
-            var fruitColor = '#ff3344'; // default cherry red
-            if (fr.type === '🍑') fruitColor = '#ffaa44';
-            else if (fr.type === '🍇') fruitColor = '#cc44ff';
-            else if (fr.type === '🍎') fruitColor = '#ff2222';
+            // Pulsating scale: grows/shrinks dynamically
+            var pulse = 1.0 + Math.sin(Date.now() / 150) * 0.18;
+            var size = pacmanTileSize * 1.8 * pulse;
             
-            pacmanCtx.translate(fx, fy);
+            var urls = {
+                '🌹': 'images tiktok/Rose.png',
+                '🎮': 'images tiktok/GG.png',
+                '🫰': 'images tiktok/Perfume.png',
+                '🎵': 'images tiktok/tik_tok.png',
+                '🍦': 'images tiktok/ice_cream.png'
+            };
+            var imgPath = fr.url || urls[fr.type] || 'images tiktok/Rose.png';
+            var img = getGiftImage(imgPath);
             
-            // Draw the actual Emoji LARGE and without background circle
-            pacmanCtx.font = "36px 'Segoe UI Emoji', Arial, sans-serif";
-            pacmanCtx.textAlign = "center";
-            pacmanCtx.textBaseline = "middle";
-            pacmanCtx.fillText(fr.type, 0, 0);
+            if (img && img.complete && img.naturalWidth !== 0) {
+                pacmanCtx.drawImage(img, fx - size / 2, fy - size / 2, size, size);
+            } else {
+                pacmanCtx.translate(fx, fy);
+                pacmanCtx.scale(pulse, pulse);
+                pacmanCtx.font = "54px 'Segoe UI Emoji', Arial, sans-serif";
+                pacmanCtx.textAlign = "center";
+                pacmanCtx.textBaseline = "middle";
+                pacmanCtx.fillText(fr.type, 0, 0);
+            }
             
             pacmanCtx.restore();
         }
@@ -3836,6 +4358,59 @@ function drawPacman() {
     
     // Draw Ghosts (Optimized with cached glow bodies)
     pacmanGhosts.forEach(function(gh) {
+        if (gh.impactTimer > 0) {
+            // Draw cinematic arcing flying ghost with spin and zoom!
+            var t = 1.0 - (gh.impactTimer / 180);
+            
+            var startPx = gh.hitX * pacmanTileSize + pacmanTileSize / 2;
+            var startPy = gh.hitY * pacmanTileSize + pacmanTileSize / 2;
+            var endPx = gh.spawnX * pacmanTileSize + pacmanTileSize / 2;
+            var endPy = gh.spawnY * pacmanTileSize + pacmanTileSize / 2;
+            
+            var gx = startPx + (endPx - startPx) * t;
+            var gy = startPy + (endPy - startPy) * t;
+            
+            var heightOffset = Math.sin(t * Math.PI) * 350; // Aumentado para 350px para dar bastante sensação de altura
+            gy -= heightOffset;
+            
+            var zoomFactor = 1.0 + Math.sin(t * Math.PI) * 2.2; // Aumenta até 3.2x o tamanho original
+            var spinAngle = t * Math.PI * 8; // 4 rotações completas
+            
+            pacmanCtx.save();
+            pacmanCtx.translate(gx, gy);
+            pacmanCtx.rotate(spinAngle);
+            
+            // Desenha o corpo do fantasma em vermelho (raiva/pancada)
+            var bodySprite = getGhostBodySprite('#ff0000');
+            pacmanCtx.drawImage(bodySprite, -(bodySprite.width * zoomFactor) / 2, -(bodySprite.height * zoomFactor) / 2, bodySprite.width * zoomFactor, bodySprite.height * zoomFactor);
+            
+            // Desenha olhos em formato de X (tontura/impacto)
+            pacmanCtx.strokeStyle = '#ffffff';
+            pacmanCtx.lineWidth = 3 * zoomFactor;
+            
+            var eSize = 6 * zoomFactor;
+            // Olho esquerdo (X)
+            pacmanCtx.beginPath();
+            pacmanCtx.moveTo(-10 * zoomFactor - eSize, -6 * zoomFactor - eSize);
+            pacmanCtx.lineTo(-10 * zoomFactor + eSize, -6 * zoomFactor + eSize);
+            pacmanCtx.moveTo(-10 * zoomFactor + eSize, -6 * zoomFactor - eSize);
+            pacmanCtx.lineTo(-10 * zoomFactor - eSize, -6 * zoomFactor + eSize);
+            // Olho direito (X)
+            pacmanCtx.moveTo(10 * zoomFactor - eSize, -6 * zoomFactor - eSize);
+            pacmanCtx.lineTo(10 * zoomFactor + eSize, -6 * zoomFactor + eSize);
+            pacmanCtx.moveTo(10 * zoomFactor + eSize, -6 * zoomFactor - eSize);
+            pacmanCtx.lineTo(10 * zoomFactor - eSize, -6 * zoomFactor + eSize);
+            pacmanCtx.stroke();
+            
+            // Boca triste/com raiva (arco virado para baixo)
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(0, 8 * zoomFactor, 10 * zoomFactor, Math.PI, 2 * Math.PI);
+            pacmanCtx.stroke();
+            
+            pacmanCtx.restore();
+            return; // Já desenhou o fantasma no estado de impacto cinematic, pula o desenho normal
+        }
+
         if (gh.homeTime > 0) return;
         
         var gx = (gh.x + (gh.targetX - gh.x) * gh.progress) * pacmanTileSize + pacmanTileSize / 2;
@@ -3901,81 +4476,29 @@ function drawPacman() {
                 var baseSize = pacmanTileSize * 1.5;
                 var size = baseSize * pulse;
                 
-                var useImg = window.pacmanUseGiftImages !== false; // If not explicitly false, assume true or check.
-                if (useImg) {
-                    var img = getGiftImage(g.giftPictureUrl);
-                    if (img && img.complete && img.naturalWidth !== 0) {
-                        pacmanCtx.save();
-                        // Simplified drawing without shadowBlur
-                        try {
-                            pacmanCtx.drawImage(img, px - size / 2, py - size / 2, size, size);
-                        } catch(e) {}
-                        pacmanCtx.restore();
-                    } else {
-                        // Fallback square
-                        pacmanCtx.fillStyle = '#ff00ff';
-                        pacmanCtx.fillRect(px - size/2, py - size/2, size, size);
-                    }
-                } else {
-                    // Draw ultra-lightweight geometric shapes instead of heavy text/emojis
+                var url = g.giftPictureUrl;
+                var gName = (g.gift || '').toLowerCase();
+                if (gName.includes('rose') || gName.includes('rosa') || gName.includes('love')) {
+                    url = 'images tiktok/Rose.png';
+                } else if (gName.includes('gg')) {
+                    url = 'images tiktok/GG.png';
+                } else if (gName.includes('perfume') || gName.includes('coração com dedo') || gName.includes('coração de dedo') || gName.includes('finger') || gName.includes('amo') || gName.includes('coraçao') || gName.includes('coracao')) {
+                    url = 'images tiktok/Perfume.png';
+                } else if (gName.includes('tiktok') || gName.includes('jogo')) {
+                    url = 'images tiktok/tik_tok.png';
+                } else if (gName.includes('ice') || gName.includes('cream') || gName.includes('sorvete')) {
+                    url = 'images tiktok/ice_cream.png';
+                }
+                
+                var img = getGiftImage(url);
+                if (img && img.complete && img.naturalWidth !== 0) {
                     pacmanCtx.save();
-                    pacmanCtx.translate(px, py);
-                    pacmanCtx.scale(pulse, pulse); // Hardware accelerated scaling
-                    
-                    var gName = (g.gift || '').toLowerCase();
-                    var radius = baseSize * 0.4;
-                    
-                    if (gName.includes('rose') || gName.includes('rosa') || gName.includes('love')) {
-                        // Pink Circle
-                        pacmanCtx.fillStyle = '#e91e63';
-                        pacmanCtx.beginPath();
-                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
-                        pacmanCtx.fill();
-                    }
-                    else if (gName.includes('gg')) {
-                        // Purple Square
-                        pacmanCtx.fillStyle = '#9c27b0';
-                        pacmanCtx.fillRect(-radius, -radius, radius*2, radius*2);
-                    }
-                    else if (gName.includes('donut') || gName.includes('rosquinha')) {
-                        // Orange Donut (Circle with a hole)
-                        pacmanCtx.fillStyle = '#ff9800';
-                        pacmanCtx.beginPath();
-                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
-                        pacmanCtx.arc(0, 0, radius*0.4, 0, 2*Math.PI, true);
-                        pacmanCtx.fill();
-                    }
-                    else if (gName.includes('tiktok') || gName.includes('coração') || gName.includes('heart')) {
-                        // Red Circle
-                        pacmanCtx.fillStyle = '#f44336';
-                        pacmanCtx.beginPath();
-                        pacmanCtx.arc(0, 0, radius, 0, 2*Math.PI);
-                        pacmanCtx.fill();
-                    }
-                    else if (gName.includes('amo') || gName.includes('finger')) {
-                        // Orange-Red Rectangle
-                        pacmanCtx.fillStyle = '#ff5722';
-                        pacmanCtx.fillRect(-radius, -radius*0.8, radius*2, radius*1.6);
-                    }
-                    else {
-                        // Cyan Diamond
-                        pacmanCtx.fillStyle = '#00f2fe';
-                        pacmanCtx.beginPath();
-                        pacmanCtx.moveTo(0, -radius);
-                        pacmanCtx.lineTo(radius, 0);
-                        pacmanCtx.lineTo(0, radius);
-                        pacmanCtx.lineTo(-radius, 0);
-                        pacmanCtx.fill();
-                    }
-                    
-                    // Add a tiny white center dot for detail on all shapes
-                    pacmanCtx.fillStyle = '#fff';
-                    pacmanCtx.globalAlpha = 0.6;
-                    pacmanCtx.beginPath();
-                    pacmanCtx.arc(0, 0, radius * 0.2, 0, 2*Math.PI);
-                    pacmanCtx.fill();
-                    
+                    pacmanCtx.drawImage(img, px - size / 2, py - size / 2, size, size);
                     pacmanCtx.restore();
+                } else {
+                    // Fallback square
+                    pacmanCtx.fillStyle = '#ff00ff';
+                    pacmanCtx.fillRect(px - size/2, py - size/2, size, size);
                 }
             }
         });
@@ -4068,6 +4591,36 @@ function drawPacman() {
             pacmanCtx.drawImage(pacSprite, -pacSprite.width/2, -pacSprite.height/2);
         }
         pacmanCtx.restore();
+        
+        // Draw Orbiting Fruits (Larger size on the Pac-man orbit)
+        if (pl.orbitingFruits && pl.orbitingFruits.length > 0) {
+            var numFruits = pl.orbitingFruits.length;
+            var rotTime = Date.now() * 0.003;
+            var orbitRadius = radius + 28; // Aumentado de radius + 15 para radius + 28 para comportar frutas maiores sem encavalar
+            var fruitSize = 38 * giantScale;
+            
+            for (var fIdx = 0; fIdx < numFruits; fIdx++) {
+                var angle = rotTime + (fIdx * (Math.PI * 2 / numFruits));
+                var fx = px + Math.cos(angle) * orbitRadius;
+                var fy = py + Math.sin(angle) * orbitRadius;
+                
+                var fruitObj = pl.orbitingFruits[fIdx];
+                var img = getGiftImage(fruitObj.url);
+                
+                if (img && img.complete && img.naturalWidth !== 0) {
+                    pacmanCtx.save();
+                    pacmanCtx.drawImage(img, fx - fruitSize / 2, fy - fruitSize / 2, fruitSize, fruitSize);
+                    pacmanCtx.restore();
+                } else {
+                    pacmanCtx.save();
+                    pacmanCtx.font = "32px 'Segoe UI Emoji', Arial, sans-serif";
+                    pacmanCtx.textAlign = 'center';
+                    pacmanCtx.textBaseline = 'middle';
+                    pacmanCtx.fillText(fruitObj.type, fx, fy);
+                    pacmanCtx.restore();
+                }
+            }
+        }
         
         // Draw remaining lives as tiny dots inside character or above
         var livesIndicatorY = py + radius + 7;
@@ -4275,6 +4828,10 @@ function commitLeaderboardUpdate() {
         return b.score - a.score;
     });
     
+    if (window.updateRankingFlags) {
+        window.updateRankingFlags(sortedList);
+    }
+    
     lb.innerHTML = '';
     
     if (sortedList.length === 0) {
@@ -4451,6 +5008,8 @@ function processTikTokGift(data) {
     // Aplica o presente diretamente ao dono (quem enviou na live)
     var pl = pacmanPlayers[user];
     if (pl) {
+        pl.lastActivityTime = Date.now(); // Mantém o jogador ativo ao enviar presente
+        
         var dummyDrop = {
             gift: gift,
             sender: user,
@@ -4458,182 +5017,304 @@ function processTikTokGift(data) {
             repeatCount: repeatCount
         };
         activateGiftPower(pl, user, dummyDrop);
+
+        // Adiciona à fila de aprovação de Upscale Premium
+        if (data.avatar) {
+            if (window.enablePremiumUpscale === false) {
+                if (window.logReplicateStatus) window.logReplicateStatus(`Upscale premium pulado para ${user} (Desativado no painel).`);
+            } else {
+                // Checa se já está na fila
+                var alreadyInQueue = window.pendingUpscales.find(item => item.user === user);
+                if (!alreadyInQueue) {
+                    // Pré-carrega o upscale interno para garantir que a imagem HD exista quando aprovar
+                    fetch('/api/upscale?id=' + encodeURIComponent(user) + '&url=' + encodeURIComponent(data.avatar)).catch(()=>{});
+                    
+                    window.pendingUpscales.push({ user: user, avatarUrl: data.avatar });
+                    if (window.logReplicateStatus) window.logReplicateStatus(`Presente de ${user}. Enviado para Fila de Aprovação.`);
+                    if (window.renderUpscaleQueue) window.renderUpscaleQueue();
+                }
+            }
+        }
     }
 }
 
+window.renderUpscaleQueue = function() {
+    var container = document.getElementById('upscaleQueueContainer');
+    if (!container) return;
+    
+    if (window.pendingUpscales.length === 0) {
+        container.innerHTML = '<div style="font-size: 11px; color: #888; padding: 10px;">Nenhum avatar pendente no momento.</div>';
+        return;
+    }
+    
+    container.innerHTML = '';
+    window.pendingUpscales.forEach(item => {
+        var row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.justifyContent = 'space-between';
+        row.style.background = 'rgba(255,255,255,0.05)';
+        row.style.padding = '5px 10px';
+        row.style.borderRadius = '4px';
+        
+        var info = document.createElement('div');
+        info.style.display = 'flex';
+        info.style.alignItems = 'center';
+        info.style.gap = '8px';
+        
+        var img = document.createElement('img');
+        img.src = item.avatarUrl;
+        img.style.width = '30px';
+        img.style.height = '30px';
+        img.style.borderRadius = '50%';
+        img.style.objectFit = 'cover';
+        
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = '@' + item.user;
+        nameSpan.style.fontSize = '12px';
+        nameSpan.style.color = '#fff';
+        
+        info.appendChild(img);
+        info.appendChild(nameSpan);
+        
+        var actions = document.createElement('div');
+        actions.style.display = 'flex';
+        actions.style.gap = '5px';
+        
+        var btnApprove = document.createElement('button');
+        btnApprove.innerHTML = '✅';
+        btnApprove.title = 'Aprovar Upscale';
+        btnApprove.style.background = 'rgba(0,255,0,0.2)';
+        btnApprove.style.border = '1px solid #0f0';
+        btnApprove.style.borderRadius = '3px';
+        btnApprove.style.cursor = 'pointer';
+        btnApprove.onclick = function() { window.approveUpscale(item.user, item.avatarUrl); };
+        
+        var btnReject = document.createElement('button');
+        btnReject.innerHTML = '❌';
+        btnReject.title = 'Rejeitar Upscale';
+        btnReject.style.background = 'rgba(255,0,0,0.2)';
+        btnReject.style.border = '1px solid #f00';
+        btnReject.style.borderRadius = '3px';
+        btnReject.style.cursor = 'pointer';
+        btnReject.onclick = function() { window.rejectUpscale(item.user); };
+        
+        actions.appendChild(btnApprove);
+        actions.appendChild(btnReject);
+        
+        row.appendChild(info);
+        row.appendChild(actions);
+        container.appendChild(row);
+    });
+};
+
+window.approveUpscale = function(user, avatarUrl) {
+    if (window.logReplicateStatus) window.logReplicateStatus(`Aprovado upscale para ${user}. Solicitando à API...`);
+    
+    // Remove from queue visually
+    window.pendingUpscales = window.pendingUpscales.filter(i => i.user !== user);
+    if (window.renderUpscaleQueue) window.renderUpscaleQueue();
+    
+    fetch('/api/upscale-premium?id=' + encodeURIComponent(user) + '&url=' + encodeURIComponent(avatarUrl))
+        .then(res => res.json())
+        .then(result => {
+            if (result.status === 'success' || result.status === 'cached') {
+                if (window.logReplicateStatus) window.logReplicateStatus(`✅ Upscale OK para ${user}!`);
+                var pl = pacmanPlayers[user];
+                if (pl) pl.avatarPremium = result.url;
+                
+                // Força o redesenho se o jogador estiver no ranking
+                if (window.currentTop3Users) {
+                    var topIndex = window.currentTop3Users.indexOf(user);
+                    if (topIndex !== -1) {
+                        window.currentTop3Users[topIndex] = null; // força redraw
+                    }
+                }
+            } else if (result.error) {
+                if (window.logReplicateStatus) window.logReplicateStatus(`❌ Erro (${user}): ${result.error}`);
+            }
+        })
+        .catch(err => {
+            console.error('Erro no upscale premium:', err);
+            if (window.logReplicateStatus) window.logReplicateStatus(`❌ Falha de rede para ${user}.`);
+        });
+};
+
+window.rejectUpscale = function(user) {
+    window.pendingUpscales = window.pendingUpscales.filter(i => i.user !== user);
+    if (window.renderUpscaleQueue) window.renderUpscaleQueue();
+    if (window.logReplicateStatus) window.logReplicateStatus(`❌ Rejeitado upscale premium para ${user}.`);
+};
+
+window.logReplicateStatus = function(msg) {
+    var logs = document.getElementById('replicateLogs');
+    if (logs) {
+        if (logs.innerHTML.includes('Aguardando eventos')) logs.innerHTML = '';
+        var d = new Date();
+        var timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
+        var newLog = document.createElement('div');
+        newLog.style.marginBottom = '2px';
+        newLog.textContent = '[' + timeStr + '] ' + msg;
+        logs.appendChild(newLog);
+        logs.scrollTop = logs.scrollHeight;
+    }
+};
+
 function activateGiftPower(pl, userName, giftDrop) {
-    var gift = String(giftDrop.gift || '').toLowerCase();
-    var user = giftDrop.sender;
-    var diamondCount = giftDrop.diamondCount || 1;
-    var repeatCount = giftDrop.repeatCount || 1;
+    var giftName = String(giftDrop.gift || '').toLowerCase().trim();
     var consumerName = userName || pl.owner || 'Fantasma/Clone';
+    var repeatCount = giftDrop.repeatCount || 1;
+    var diamondCount = giftDrop.diamondCount || 1;
+    
+    var isKnownGift = false;
+    var emoji = '🌹';
+    var url = 'images tiktok/Rose.png';
+    var name = 'Rosa';
+    var duration = 15000;
+    
+    if (giftName.includes('gg')) {
+        emoji = '🎮'; url = 'images tiktok/GG.png'; name = 'GG'; duration = 15000; isKnownGift = true;
+    } else if (giftName.includes('perfume') || giftName.includes('coração com dedo') || giftName.includes('coração de dedo') || giftName.includes('finger') || giftName.includes('amo') || giftName.includes('coraçao') || giftName.includes('coracao')) {
+        emoji = '🫰'; url = 'images tiktok/Perfume.png'; name = 'Perfume'; duration = 60000; isKnownGift = true;
+    } else if (giftName.includes('tiktok') || giftName.includes('jogo')) {
+        emoji = '🎵'; url = 'images tiktok/tik_tok.png'; name = 'Jogo TikTok'; duration = 15000; isKnownGift = true;
+    } else if (giftName.includes('ice') || giftName.includes('cream') || giftName.includes('sorvete') || giftName.includes('gelado')) {
+        emoji = '🍦'; url = 'images tiktok/ice_cream.png'; name = 'Sorvete'; duration = 60000; isKnownGift = true;
+    } else if (giftName.includes('rose') || giftName.includes('rosa') || giftName.includes('love')) {
+        isKnownGift = true;
+    }
+    
+    if (!pl.giftQueue) pl.giftQueue = [];
+    if (!pl.orbitingFruits) pl.orbitingFruits = [];
     
     var totalValue = diamondCount * repeatCount;
-    var msgParts = [];
+    var itemsToGenerate = isKnownGift ? repeatCount : totalValue;
+    itemsToGenerate = Math.min(itemsToGenerate, 500); // limite seguro para não travar
     
-    // Nomes clássicos para o modo Híbrido
-    var isGG = gift.includes('gg');
-    var isRosa = gift.includes('rosa') || gift.includes('rose') || gift.includes('love');
-    var isTikTok = gift.includes('tiktok') || ((gift.includes('coração') || gift.includes('coracao') || gift.includes('heart')) && !gift.includes('finger'));
-    var isFingerHeart = gift.includes('finger') || gift.includes('amo');
-    var isDonut = gift.includes('rosquinha') || gift.includes('donut');
+    var standardGifts = [
+        { emoji: '🌹', url: 'images tiktok/Rose.png', name: 'Rosa', duration: 15000 },
+        { emoji: '🎮', url: 'images tiktok/GG.png', name: 'GG', duration: 15000 },
+        { emoji: '🫰', url: 'images tiktok/Perfume.png', name: 'Perfume', duration: 60000 },
+        { emoji: '🎵', url: 'images tiktok/tik_tok.png', name: 'Jogo TikTok', duration: 15000 },
+        { emoji: '🍦', url: 'images tiktok/ice_cream.png', name: 'Sorvete', duration: 60000 }
+    ];
     
-    // 1. SISTEMA CLÁSSICO (Por Nome)
-    var handledClassic = false;
+    for (var r = 0; r < itemsToGenerate; r++) {
+        var gEmoji = emoji;
+        var gUrl = url;
+        var gName = name;
+        var gDuration = duration;
+        
+        if (!isKnownGift) {
+            var randG = standardGifts[Math.floor(Math.random() * standardGifts.length)];
+            gEmoji = randG.emoji; gUrl = randG.url; gName = randG.name; gDuration = randG.duration;
+        }
+        
+        pl.giftQueue.push({
+            type: gEmoji,
+            url: gUrl,
+            name: gName,
+            duration: gDuration,
+            spawnTime: 0
+        });
+    }
     
-    if (isDonut) {
-        // GIGANTE (10s por unidade)
-        var addedMs = 10000 * repeatCount;
-        var isAlreadyGiant = pl.giantEndTime && pl.giantEndTime > Date.now();
-        pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + addedMs;
-        pl.giantStacks = isAlreadyGiant ? (pl.giantStacks || 1) + repeatCount : repeatCount;
-        pl.giantTimer = 1;
-        AudioSynth.playTone(400, 'sine', 0.5, 0.2);
-        msgParts.push(`${repeatCount}x GIGANTE`);
-        handledClassic = true;
-    } else if (isFingerHeart) {
-        // CLONES (60s por unidade)
-        var existingClones = pacmanClones.filter(function(c) { return c.owner === consumerName; });
-        if (existingClones.length > 0) {
-            existingClones.forEach(function(c) { 
-                var isAlreadyClone = c.endTime && c.endTime > Date.now();
-                c.endTime = (isAlreadyClone ? c.endTime : Date.now()) + (60000 * repeatCount);
-                c.timer = 1;
-            });
-        } else {
+    updatePlayerOrbitAndQueue(pl, consumerName);
+    
+    var bannerName = isKnownGift ? name : (giftDrop.gift || 'Presente Aleatório');
+    window.pushBannerNotification({
+        type: 'gift',
+        user: consumerName,
+        avatar: pl.avatar || '',
+        color: pl.color || '#ffffff',
+        message: isKnownGift ? `enviou ${bannerName} (${repeatCount}x)` : `enviou ${bannerName} (${totalValue} moedas = ${itemsToGenerate} presentes)`,
+        icon: isKnownGift ? emoji : '🎁',
+        timer: 300
+    });
+    
+    AudioSynth.playTone(770, 'square', 0.3, 0.1);
+    AudioSynth.playTone(880, 'square', 0.3, 0.15);
+    
+    spawnTextParticle(pl.x, pl.y, `+${isKnownGift ? name : itemsToGenerate + ' Itens'}`, '#ffaa00');
+    pushAlertEvent(`🎁 @${consumerName} enviou '${giftDrop.gift || name}' (${isKnownGift ? repeatCount + 'x' : totalValue + ' moedas'})!`);
+}
+
+function updatePlayerOrbitAndQueue(pl, userName) {
+    if (!pl.orbitingFruits) pl.orbitingFruits = [];
+    if (!pl.giftQueue) pl.giftQueue = [];
+    
+    var now = Date.now();
+    
+    // 1. Filtrar itens que já expiraram na órbita
+    pl.orbitingFruits = pl.orbitingFruits.filter(function(fruit) {
+        return now - fruit.spawnTime < fruit.duration;
+    });
+    
+    // 2. Preencher a órbita puxando da fila até o limite físico de 10
+    while (pl.orbitingFruits.length < 10 && pl.giftQueue.length > 0) {
+        var nextGift = pl.giftQueue.shift();
+        nextGift.spawnTime = Date.now();
+        pl.orbitingFruits.push(nextGift);
+        
+        // Efeito imediato na ativação ao entrar na órbita
+        activateOrbitEffect(pl, userName, nextGift);
+    }
+}
+
+function activateOrbitEffect(pl, userName, gift) {
+    var type = gift.type;
+    var duration = gift.duration;
+    
+    if (type === '🌹') { // Rosa (Pílula de Poder)
+        var isAlreadyPower = pl.powerEndTime && pl.powerEndTime > Date.now();
+        pl.powerEndTime = (isAlreadyPower ? pl.powerEndTime : Date.now()) + duration;
+        pl.powerTimer = 1;
+        var isAlreadyAuto = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
+        pl.autoEnergyEndTime = (isAlreadyAuto ? pl.autoEnergyEndTime : Date.now()) + duration;
+        pl.autoEnergyTimer = 1;
+        pl.ghostComboCount = 0;
+        AudioSynth.playTone(880, 'sine', 0.4, 0.1);
+    }
+    else if (type === '🎮') { // GG (Super Turbo)
+        pl.giftSpeedMultiplier = 1.6;
+        var isAlreadySpeed = pl.giftSpeedEndTime && pl.giftSpeedEndTime > Date.now();
+        pl.giftSpeedEndTime = (isAlreadySpeed ? pl.giftSpeedEndTime : Date.now()) + duration;
+        pl.giftSpeedTimer = 1;
+    }
+    else if (type === '🫰') { // Perfume (Clones)
+        var isAlreadyPerfume = pl.perfumeEndTime && pl.perfumeEndTime > Date.now();
+        pl.perfumeEndTime = (isAlreadyPerfume ? pl.perfumeEndTime : Date.now()) + duration;
+        
+        // Invoca clones se não houver 5 clones ativos desse jogador
+        var existingClones = pacmanClones.filter(function(c) { return c.owner === userName; });
+        if (existingClones.length < 5) {
+            var clonesToAdd = 5 - existingClones.length;
             var cloneDirs = ['up', 'down', 'left', 'right', 'up'];
-            for (var i = 0; i < 5; i++) {
+            for (var i = 0; i < clonesToAdd; i++) {
                 pacmanClones.push({
-                    owner: consumerName, x: pl.x, y: pl.y, targetX: pl.x, targetY: pl.y, progress: 0,
-                    dir: cloneDirs[i], timer: 1, endTime: Date.now() + (60000 * repeatCount), color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
+                    owner: userName, 
+                    x: pl.x, 
+                    y: pl.y, 
+                    targetX: pl.x, 
+                    targetY: pl.y, 
+                    progress: 0,
+                    dir: cloneDirs[i], 
+                    timer: 1, 
+                    color: pl.color || '#ff00ff', 
+                    avatar: pl.avatar, 
+                    huntTimer: 0, 
+                    fleeTimer: 0,
                     spawnDelay: i * 90
                 });
             }
         }
-        msgParts.push(`${repeatCount}x CLONES`);
-        handledClassic = true;
-    } else if (isTikTok) {
-        // VIDA EXTRA (+1 Life por unidade)
-        var addedLives = 0;
-        for (var l = 0; l < repeatCount; l++) {
-            if (pl.lives < 5) { pl.lives++; addedLives++; }
-        }
-        if (addedLives > 0) {
-            msgParts.push(`+${addedLives} VIDA`);
-            AudioSynth.playTone(1000, 'square', 0.1, 0.2);
-            updatePacmanLeaderboard(true);
-        } else {
-            msgParts.push(`VIDA MÁXIMA`);
-        }
-        handledClassic = true;
-    } else if (isRosa) {
-        // PÍLULA DE PODER (15s por unidade)
-        var isAlreadyPower = pl.powerEndTime && pl.powerEndTime > Date.now();
-        pl.powerEndTime = (isAlreadyPower ? pl.powerEndTime : Date.now()) + (15000 * repeatCount);
-        pl.powerTimer = 1;
-        var isAlreadyAuto = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
-        pl.autoEnergyEndTime = (isAlreadyAuto ? pl.autoEnergyEndTime : Date.now()) + (15000 * repeatCount);
-        pl.autoEnergyTimer = 1;
-        pl.ghostComboCount = 0;
-        AudioSynth.playTone(880, 'sine', 0.4, 0.1);
-        msgParts.push(`+PÍLULA DE PODER`);
-        handledClassic = true;
-    } else if (isGG) {
-        // APENAS TURBO (20s por unidade)
-        var boostMultiplier = 1.5 + (0.1 * repeatCount);
-        if (boostMultiplier > 2.5) boostMultiplier = 2.5;
-        pl.giftSpeedMultiplier = boostMultiplier;
-        var isAlreadySpeed = pl.giftSpeedEndTime && pl.giftSpeedEndTime > Date.now();
-        pl.giftSpeedEndTime = (isAlreadySpeed ? pl.giftSpeedEndTime : Date.now()) + (20000 * repeatCount);
-        pl.giftSpeedTimer = 1;
-        msgParts.push(`SUPER TURBO`);
-        handledClassic = true;
     }
-    
-    // 2. SISTEMA MATEMÁTICO DE DIAMANTES (Somente se não foi presente clássico)
-    if (!handledClassic) {
-        // Bônus Universal de Velocidade
-        var speedBonusPercent = 0.05 * totalValue;
-        var multiplier = 1.0 + speedBonusPercent;
-        if (multiplier > 2.5) multiplier = 2.5;
-        var durationMs = 5000 + (totalValue * 1000);
-        if (durationMs > 30000) durationMs = 30000; // Cap at 30 seconds
-        
-        pl.giftSpeedMultiplier = multiplier;
-        var isAlreadySpeedMath = pl.giftSpeedEndTime && pl.giftSpeedEndTime > Date.now();
-        pl.giftSpeedEndTime = (isAlreadySpeedMath ? pl.giftSpeedEndTime : Date.now()) + durationMs;
-        pl.giftSpeedTimer = 1;
-        if (multiplier > 1.0) msgParts.push(`TURBO +${Math.round((multiplier - 1.0)*100)}%`);
-        
-        if (totalValue >= 30) {
-            // TIER 3: GIGANTE
-            var numGiants = Math.floor(totalValue / 30);
-            var remainder = totalValue % 30;
-            var addedMs = 10000 * numGiants;
-            var isAlreadyGiant = pl.giantEndTime && pl.giantEndTime > Date.now();
-            pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + addedMs;
-            pl.giantStacks = isAlreadyGiant ? (pl.giantStacks || 1) + numGiants : numGiants;
-            pl.giantTimer = 1;
-            AudioSynth.playTone(400, 'sine', 0.5, 0.2);
-            msgParts.push(`${numGiants}x GIGANTE`);
-            totalValue = remainder;
-        }
-        
-        if (totalValue >= 5) {
-            // TIER 2: CLONES
-            var numCloneGroups = Math.floor(totalValue / 5);
-            var existingClones = pacmanClones.filter(function(c) { return c.owner === consumerName; });
-            if (existingClones.length > 0) {
-                existingClones.forEach(function(c) { 
-                    var isAlreadyClone = c.endTime && c.endTime > Date.now();
-                    c.endTime = (isAlreadyClone ? c.endTime : Date.now()) + (60000 * numCloneGroups);
-                    c.timer = 1;
-                });
-            } else {
-                var cloneDirs = ['up', 'down', 'left', 'right', 'up'];
-                for (var i = 0; i < 5; i++) {
-                    pacmanClones.push({
-                        owner: consumerName, x: pl.x, y: pl.y, targetX: pl.x, targetY: pl.y, progress: 0,
-                        dir: cloneDirs[i], timer: 1, endTime: Date.now() + (60000 * numCloneGroups), color: pl.color || '#ff00ff', avatar: pl.avatar, huntTimer: 0, fleeTimer: 0,
-                        spawnDelay: i * 90
-                    });
-                }
-            }
-            msgParts.push(`${numCloneGroups}x CLONES`);
-            
-            // Tier 2 também dá Pílula de Poder
-            var rosePower = numCloneGroups * 2; 
-            var isAlreadyPower2 = pl.powerEndTime && pl.powerEndTime > Date.now();
-            pl.powerEndTime = (isAlreadyPower2 ? pl.powerEndTime : Date.now()) + (15000 * rosePower);
-            pl.powerTimer = 1;
-            var isAlreadyAuto2 = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
-            pl.autoEnergyEndTime = (isAlreadyAuto2 ? pl.autoEnergyEndTime : Date.now()) + (15000 * rosePower);
-            pl.autoEnergyTimer = 1;
-            pl.ghostComboCount = 0;
-            msgParts.push(`+PÍLULA DE PODER`);
-            AudioSynth.playTone(880, 'sine', 0.4, 0.1);
-            
-        } else if (totalValue >= 1) {
-            // TIER 1: PÍLULA DE PODER
-            var isAlreadyPower1 = pl.powerEndTime && pl.powerEndTime > Date.now();
-            pl.powerEndTime = (isAlreadyPower1 ? pl.powerEndTime : Date.now()) + (15000 * totalValue);
-            pl.powerTimer = 1;
-            var isAlreadyAuto1 = pl.autoEnergyEndTime && pl.autoEnergyEndTime > Date.now();
-            pl.autoEnergyEndTime = (isAlreadyAuto1 ? pl.autoEnergyEndTime : Date.now()) + (15000 * totalValue);
-            pl.autoEnergyTimer = 1;
-            pl.ghostComboCount = 0;
-            AudioSynth.playTone(880, 'sine', 0.4, 0.1);
-            msgParts.push(`+PÍLULA DE PODER`);
-            
-        } else if (giftDrop.diamondCount === 0 || !totalValue) {
-            spawnFruit();
-            msgParts.push(`Fruta Bônus`);
-        }
+    else if (type === '🎵') { // Jogo TikTok (Gigante)
+        var isAlreadyGiant = pl.giantEndTime && pl.giantEndTime > Date.now();
+        pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + duration;
+        pl.giantTimer = 1;
+        AudioSynth.playTone(400, 'sine', 0.5, 0.2);
     }
-    
-    var summary = msgParts.join(', ');
-    spawnTextParticle(pl.x, pl.y, summary, '#ffaa00');
-    pushAlertEvent(`🎁 @${consumerName} ativou '${giftDrop.gift}' (${diamondCount*repeatCount}💎): ${summary}!`);
 }
 
 function processTikTokLike(data) {
@@ -5270,77 +5951,47 @@ function gameLoop() {
                 cleanupInactivePlayers();
             }
  
-            // Throttle leaderboard DOM updates (at most once every 60 frames / 1 second)
-            // leaderboardUpdateCounter++;
-            // if (leaderboardUpdateCounter >= 60) {
-            //     leaderboardUpdateCounter = 0;
-            //     commitLeaderboardUpdate(); // Atualizacao continua removida para evitar travamento
-            // Atualizacao continua removida para evitar travamento
-            // }
-            
+            // Real-time Ranking Mode flag update (every 60 frames / 1 second)
+            leaderboardUpdateCounter++;
+            if (leaderboardUpdateCounter >= 60) {
+                leaderboardUpdateCounter = 0;
+                if (window.mapMode === 'ranking' && window.updateRankingFlags) {
+                    var sortedRanks = Object.keys(pacmanPlayers).map(function(k) { 
+                        return { 
+                            name: k, 
+                            score: pacmanPlayers[k].roundScore || 0, // Apenas da partida atual
+                            avatar: pacmanPlayers[k].avatar, 
+                            color: pacmanPlayers[k].color 
+                        }; 
+                    }).sort(function(a,b){ return b.score - a.score; });
+                    window.updateRankingFlags(sortedRanks);
+                }
+            }
             // --- Dynamic Fruit Spawning & Despawning ---
-            // Decrement timer
+            // Atualiza o tempo de expiração de cada fruta ativa individualmente
+            for (var fi = pacmanFruits.length - 1; fi >= 0; fi--) {
+                var fr = pacmanFruits[fi];
+                if (fr.active) {
+                    if (fr.timer && fr.timer > 0) {
+                        fr.timer--;
+                    } else {
+                        fr.active = false;
+                        pushAlertEvent(`⏰ A Fruta Bônus ${fr.type} desapareceu!`);
+                        updateDotFlowField();
+                    }
+                }
+            }
+
+            // Spawna novas frutas dinamicamente até o limite de 6 frutas simultâneas no mapa
+            if (typeof pacmanFruitTimer === 'undefined') pacmanFruitTimer = 300;
             if (pacmanFruitTimer > 0) {
                 pacmanFruitTimer--;
             } else {
-                // Check if there's any active fruit on the board
-                var activeFruits = pacmanFruits.filter(function(f) { return f.active; });
-                if (activeFruits.length === 0) {
-                    // Spawn a new fruit
+                var activeFruits = pacmanFruits.filter(function(f) { return f.active; }).length;
+                if (activeFruits < 6) {
                     spawnFruit();
-                    // Set timer to despawn it after 15 seconds (900 frames at 60fps)
-                    pacmanFruitTimer = 900;
-                } else {
-                    // Despawn the active fruit (it expired!)
-                    pacmanFruits.forEach(function(f) {
-                        if (f.active) {
-                            f.active = false;
-                            pushAlertEvent(`⏰ A Fruta Bônus desapareceu!`);
-                            
-                            // Restore the dot that was hidden under the fruit
-                            if (f.restoredDot) {
-                                var dotUnder = pacmanDots.find(function(d) { return d.x === f.x && d.y === f.y; });
-                                if (dotUnder) dotUnder.active = true;
-                            }
-                            updateDotFlowField(); // Atualiza IA para evitar travamento na fruta fantasma
-                        }
-                    });
-                    // Set timer to spawn the next fruit in 25 seconds (1500 frames at 60fps)
-                    pacmanFruitTimer = 1500;
                 }
-            }
-            
-            // Random Gift Spawn Logic
-            if (typeof pacmanGiftSpawnTimer === 'undefined') window.pacmanGiftSpawnTimer = 7200;
-            if (pacmanGiftSpawnTimer > 0) {
-                pacmanGiftSpawnTimer--;
-            } else {
-                var activeDrops = pacmanGiftDrops.filter(function(d) { return d.active; }).length;
-                if (activeDrops < 6) { // Allow up to 6 drops
-                    var pos = getAvailableGiftSpawnPosition();
-                    var naturalGifts = [
-                        { gift: 'rose', url: 'images tiktok/Rose.png' },
-                        { gift: 'rose', url: 'images tiktok/Rose.png' },
-                        { gift: 'gg', url: 'images tiktok/GG.png' },
-                        { gift: 'gg', url: 'images tiktok/GG.png' },
-                        { gift: 'amo voce', url: 'images tiktok/Hand_Hearts.png' },
-                        { gift: 'amo voce', url: 'images tiktok/Hand_Hearts.png' },
-                        { gift: 'rosquinha', url: 'images tiktok/Doughnut.png' }
-                    ];
-                    var pick = naturalGifts[Math.floor(Math.random() * naturalGifts.length)];
-                    pacmanGiftDrops.push({
-                        x: pos.x,
-                        y: pos.y,
-                        active: true,
-                        gift: pick.gift,
-                        giftPictureUrl: pick.url,
-                        sender: 'Sistema',
-                        diamondCount: 1,
-                        repeatCount: 1
-                    });
-                    pushAlertEvent(`🎁 Um presente misterioso (${pick.gift}) apareceu no labirinto! Corram!`);
-                }
-                pacmanGiftSpawnTimer = 7200 + Math.random() * 3600; // Next in 120-180 seconds
+                pacmanFruitTimer = 600 + Math.random() * 600; // Spawna a próxima em 10-20 segundos
             }
         }
         
@@ -5356,11 +6007,14 @@ function gameLoop() {
         // Update celebration logic
         updateActiveCelebration();
         
-        // Update combo popup timer
-        if (pacmanComboPopup && pacmanComboPopup.timer > 0) {
-            pacmanComboPopup.timer--;
-            if (pacmanComboPopup.timer <= 0) {
-                pacmanComboPopup = null;
+        // Update active banners/notifications timer
+        if (window.pacmanActiveBanners && window.pacmanActiveBanners.length > 0) {
+            for (var b = window.pacmanActiveBanners.length - 1; b >= 0; b--) {
+                var bannerObj = window.pacmanActiveBanners[b];
+                bannerObj.timer--;
+                if (bannerObj.timer <= 0) {
+                    window.pacmanActiveBanners.splice(b, 1);
+                }
             }
         }
         
@@ -5387,114 +6041,152 @@ function gameLoop() {
 }
 
 function drawComboPopup() {
-    if (!pacmanComboPopup || pacmanComboPopup.timer <= 0) return;
+    if (!window.pacmanActiveBanners || window.pacmanActiveBanners.length === 0) return;
     
     var w = 1080;
-    pacmanCtx.save();
-    
     var cx = w / 2;
-    var cy = 180; // Top of the screen
+    var startY = 220; // Ponto de partida vertical no topo (um pouco mais para baixo para não cobrir topo extremo)
+    var bannerSpacing = 180; // Aumentado para acomodar fontes gigantes e evitar sobreposição
     
-    var maxTimer = 180;
-    var life = pacmanComboPopup.timer / maxTimer; // 1.0 to 0.0
-    var scale = 1.0;
-    if (life > 0.9) {
-        scale = 1.0 + (1.0 - life) * 10; // Pop-in effect
-    } else if (life < 0.1) {
-        scale = life * 10; // Pop-out effect
+    for (var k = 0; k < window.pacmanActiveBanners.length; k++) {
+        var banner = window.pacmanActiveBanners[k];
+        if (banner.timer <= 0) continue;
+        
+        pacmanCtx.save();
+        
+        var cy = startY + k * bannerSpacing; // Empilhamento vertical (de cima para baixo)
+        var maxTimer = banner.maxTimer || 300;
+        var life = banner.timer / maxTimer;
+        
+        var scale = 1.0;
+        if (life > 0.9) {
+            scale = 1.0 + (1.0 - life) * 10; // Efeito suave de entrada (pop-in)
+        } else if (life < 0.1) {
+            scale = life * 10; // Efeito suave de saída (pop-out)
+        }
+        
+        // Pulsação lenta e suave (sem vibrações rápidas irritantes)
+        var pulse = 1.0 + Math.sin(Date.now() / 300) * 0.03;
+        
+        pacmanCtx.translate(cx, cy);
+        pacmanCtx.scale(scale * pulse, scale * pulse);
+        
+        var bannerW = 960;
+        var bannerH = 170;
+        
+        // Efeito de sombra removido para garantir mais fluidez (performance)
+        pacmanCtx.shadowBlur = 0;
+        pacmanCtx.shadowColor = 'transparent';
+        
+        // Desenha Avatar (Esquerda)
+        var avatarSize = 110;
+        var leftX = -bannerW / 2 + 82;
+        
+        pacmanCtx.save();
+        pacmanCtx.beginPath();
+        pacmanCtx.arc(leftX, 0, avatarSize / 2, 0, Math.PI * 2);
+        pacmanCtx.clip();
+        
+        var avatarImg = getAvatarImage(banner.user, banner.avatar);
+        if (avatarImg && avatarImg.complete) {
+            pacmanCtx.drawImage(avatarImg, leftX - avatarSize / 2, -avatarSize / 2, avatarSize, avatarSize);
+        } else {
+            pacmanCtx.fillStyle = banner.color || '#ffffff';
+            pacmanCtx.fill();
+        }
+        pacmanCtx.restore();
+        
+        // Borda do Avatar
+        pacmanCtx.beginPath();
+        pacmanCtx.arc(leftX, 0, avatarSize / 2, 0, Math.PI * 2);
+        pacmanCtx.lineWidth = 5; // Aumentado de 4 para 5
+        pacmanCtx.strokeStyle = banner.color || '#ffffff';
+        pacmanCtx.stroke();
+        
+        // Renderização conforme o tipo de banner
+        if (banner.type === 'combo') {
+            // Ícone do Fantasma (Direita)
+            var rightX = bannerW / 2 - 75;
+            var ghostColor = banner.ghostColor || '#0000ff';
+            var ghostSprite = getGhostBodySprite(ghostColor);
+            var gScale = 1.8; // Aumentado de 1.5 para 1.8
+            
+            if (ghostSprite) {
+                pacmanCtx.drawImage(ghostSprite, rightX - (ghostSprite.width * gScale) / 2, -(ghostSprite.height * gScale) / 2 + 5, ghostSprite.width * gScale, ghostSprite.height * gScale);
+            }
+            
+            // Olhos mortos do fantasma
+            var eyeScale = gScale;
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5 * eyeScale, - 6 * eyeScale, 4 * eyeScale, 0, Math.PI * 2); pacmanCtx.fill();
+            pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5 * eyeScale, - 6 * eyeScale, 4 * eyeScale, 0, Math.PI * 2); pacmanCtx.fill();
+            pacmanCtx.fillStyle = banner.color || '#ffffff';
+            pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5 * eyeScale, - 6 * eyeScale, 2 * eyeScale, 0, Math.PI * 2); pacmanCtx.fill();
+            pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5 * eyeScale, - 6 * eyeScale, 2 * eyeScale, 0, Math.PI * 2); pacmanCtx.fill();
+            
+            // Textos do Combo (Fontes gigantes para melhor visualização em celulares)
+            var combo = banner.combo;
+            var textColor = '#ffff00';
+            if (combo >= 4) textColor = '#ff00ff'; // Lendário
+            else if (combo >= 3) textColor = '#00ffff'; // Épico
+            else if (combo >= 2) textColor = pacmanThemeDotColor || '#00ffcc';
+            
+            pacmanCtx.font = "bold 52px 'Press Start 2P', monospace";
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.textBaseline = 'middle';
+            pacmanCtx.fillStyle = textColor;
+            pacmanCtx.fillText('COMBO X' + combo, 0, -28);
+            
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.font = "bold 34px 'Press Start 2P', monospace";
+            pacmanCtx.fillText('+' + banner.points + ' PTS', 0, 18);
+            
+            pacmanCtx.font = "bold 30px 'Outfit', sans-serif";
+            pacmanCtx.fillStyle = banner.color || '#ffffff';
+            pacmanCtx.fillText('@' + banner.user, 0, 60);
+            
+        } else {
+            // Skills / Presentes (type: 'skill' ou 'gift')
+            // Ícone da Skill (Direita)
+            var rightX = bannerW / 2 - 82;
+            // Try to draw real gift image on banner icon side
+            var bannerIconUrls = {
+                '🌹': 'images tiktok/Rose.png',
+                '🎮': 'images tiktok/GG.png',
+                '🫰': 'images tiktok/Perfume.png',
+                '🎵': 'images tiktok/tik_tok.png',
+                '🍦': 'images tiktok/ice_cream.png'
+            };
+            var bannerIconUrl = bannerIconUrls[banner.icon];
+            var bannerIconImg = bannerIconUrl ? getGiftImage(bannerIconUrl) : null;
+            if (bannerIconImg && bannerIconImg.complete && bannerIconImg.naturalWidth !== 0) {
+                var iconSz = 90;
+                pacmanCtx.drawImage(bannerIconImg, rightX - iconSz / 2, -iconSz / 2, iconSz, iconSz);
+            } else {
+                pacmanCtx.font = "72px Arial";
+                pacmanCtx.textAlign = 'center';
+                pacmanCtx.textBaseline = 'middle';
+                pacmanCtx.fillStyle = '#ffffff';
+                pacmanCtx.fillText(banner.icon || '🎁', rightX, 0);
+            }
+            
+            // Texto do jogador e ação
+            pacmanCtx.textAlign = 'center';
+            pacmanCtx.textBaseline = 'middle';
+            
+            // Nome do jogador
+            pacmanCtx.font = "bold 34px 'Outfit', sans-serif";
+            pacmanCtx.fillStyle = banner.color || '#ffffff';
+            pacmanCtx.fillText('@' + banner.user, 0, -26);
+            
+            // Ação realizada
+            pacmanCtx.font = "bold 28px 'Outfit', sans-serif";
+            pacmanCtx.fillStyle = '#ffffff';
+            pacmanCtx.fillText(banner.message || '', 0, 22);
+        }
+        
+        pacmanCtx.restore();
     }
-    
-    // Progression effect
-    var combo = pacmanComboPopup.combo;
-    var effectScale = 1.0 + (combo * 0.1); 
-    var glowSize = combo * 10;
-    var shadowColor = pacmanComboPopup.color;
-    
-    // Pulsação de acordo com o tamanho do combo
-    var pulse = 1.0 + Math.sin(Date.now() / (150 - combo * 15)) * (0.05 + combo * 0.02);
-    
-    pacmanCtx.translate(cx, cy);
-    pacmanCtx.scale(scale * effectScale * pulse, scale * effectScale * pulse);
-    
-    // Add screen shake for high combos
-    if (combo >= 3) {
-        var intensity = (combo - 2) * 2;
-        pacmanCtx.translate((Math.random() - 0.5) * intensity, (Math.random() - 0.5) * intensity);
-    }
-    
-    var bannerW = 600;
-    var bannerH = 120;
-    
-    // Efeito de sombra removido para garantir mais fluidez (performance)
-    pacmanCtx.shadowBlur = 0;
-    pacmanCtx.shadowColor = 'transparent';
-    
-    // Draw Avatar (Left)
-    var avatarSize = 80;
-    var leftX = -bannerW/2 + 80;
-    pacmanCtx.save();
-    pacmanCtx.beginPath();
-    pacmanCtx.arc(leftX, 0, avatarSize/2, 0, Math.PI * 2);
-    pacmanCtx.clip();
-    var avatarImg = getAvatarImage(pacmanComboPopup.user, pacmanComboPopup.avatar);
-    if (avatarImg && avatarImg.complete) {
-        pacmanCtx.drawImage(avatarImg, leftX - avatarSize/2, -avatarSize/2, avatarSize, avatarSize);
-    } else {
-        pacmanCtx.fillStyle = pacmanComboPopup.color;
-        pacmanCtx.fill();
-    }
-    pacmanCtx.restore();
-    
-    // Avatar border
-    pacmanCtx.beginPath();
-    pacmanCtx.arc(leftX, 0, avatarSize/2, 0, Math.PI * 2);
-    pacmanCtx.lineWidth = 4;
-    pacmanCtx.strokeStyle = pacmanComboPopup.color;
-    pacmanCtx.stroke();
-    
-    // Draw Ghost (Right)
-    var rightX = bannerW/2 - 80;
-    var ghostColor = pacmanComboPopup.ghostColor || '#0000ff';
-    var ghostSprite = getGhostBodySprite(ghostColor);
-    var gScale = 1.6;
-    
-    pacmanCtx.drawImage(ghostSprite, rightX - (ghostSprite.width*gScale)/2, - (ghostSprite.height*gScale)/2 + 5, ghostSprite.width*gScale, ghostSprite.height*gScale);
-    
-    // Ghost Dead Eyes
-    var eyeScale = gScale;
-    pacmanCtx.fillStyle = '#ffffff';
-    pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5*eyeScale, - 6*eyeScale, 4*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-    pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5*eyeScale, - 6*eyeScale, 4*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-    pacmanCtx.fillStyle = pacmanComboPopup.color; // The eater's color in the eyes!
-    pacmanCtx.beginPath(); pacmanCtx.arc(rightX - 5*eyeScale, - 6*eyeScale, 2*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-    pacmanCtx.beginPath(); pacmanCtx.arc(rightX + 5*eyeScale, - 6*eyeScale, 2*eyeScale, 0, Math.PI*2); pacmanCtx.fill();
-    
-    // Texts
-    pacmanCtx.fillStyle = '#ffff00';
-    if (combo >= 4) {
-        pacmanCtx.fillStyle = '#ff00ff'; // Legendary combo
-    } else if (combo >= 3) {
-        pacmanCtx.fillStyle = '#00ffff'; // Epic combo
-    } else if (combo >= 2) {
-        pacmanCtx.fillStyle = pacmanThemeDotColor; // Great combo
-    } else {   
-        pacmanCtx.fillStyle = pacmanThemeDotColor; 
-    }
-    
-    pacmanCtx.font = "bold 32px 'Press Start 2P', monospace";
-    pacmanCtx.textAlign = 'center';
-    pacmanCtx.textBaseline = 'middle';
-    pacmanCtx.fillText('COMBO X' + combo, 0, -20);
-    
-    pacmanCtx.fillStyle = '#ffffff';
-    pacmanCtx.font = "bold 20px 'Press Start 2P', monospace";
-    pacmanCtx.fillText('+' + pacmanComboPopup.points + ' PTS', 0, 20);
-    
-    pacmanCtx.font = "bold 14px 'Outfit', sans-serif";
-    pacmanCtx.fillStyle = pacmanComboPopup.color;
-    pacmanCtx.fillText('@' + pacmanComboPopup.user, 0, bannerH/2 + 25);
-    
-    pacmanCtx.restore();
 }
 
 function drawInactivityPopup(pl) {
@@ -5680,6 +6372,19 @@ function cleanupInactivePlayers() {
     
     for (var p in pacmanPlayers) {
         var pl = pacmanPlayers[p];
+        
+        // Se o jogador possui alguma habilidade ou presente ativo na fila/órbita, ele NÃO deve ser considerado inativo
+        var hasActiveSkill = (pl.powerEndTime && pl.powerEndTime > now) ||
+                             (pl.giftSpeedEndTime && pl.giftSpeedEndTime > now) ||
+                             (pl.giantEndTime && pl.giantEndTime > now) ||
+                             (pl.perfumeEndTime && pl.perfumeEndTime > now) ||
+                             (pl.orbitingFruits && pl.orbitingFruits.length > 0) ||
+                             (pl.giftQueue && pl.giftQueue.length > 0);
+                             
+        if (hasActiveSkill) {
+            pl.lastActivityTime = now;
+        }
+        
         var lastAct = pl.lastActivityTime || now;
         
         if (pl.lives <= 0) {
@@ -5739,7 +6444,7 @@ window.worldCupTeams = [
     { id: 'ae', name: 'Emirados Árabes' }, { id: 'uz', name: 'Uzbequistão' }, { id: 'eg', name: 'Egito' }, { id: 'dz', name: 'Argélia' },
     { id: 'ng', name: 'Nigéria' }, { id: 'cm', name: 'Camarões' }, { id: 'ci', name: 'Costa do Marfim' }, { id: 'gh', name: 'Gana' },
     { id: 'ml', name: 'Mali' }, { id: 'nz', name: 'Nova Zelândia' }, { id: 'cn', name: 'China' }, { id: 'tr', name: 'Turquia' },
-    { id: 'jo', name: 'Jordânia' }
+    { id: 'jo', name: 'Jordânia' }, { id: 'za', name: 'África do Sul' }
 ];
 
 // Initialize UI selects on DOM load or directly if elements exist
@@ -5758,8 +6463,17 @@ document.addEventListener('DOMContentLoaded', function() {
     loadCopaFlag(copaTeam2, cvsFlag2);
 });
 
-window.toggleWorldCupMode = function(val) {
-    isCopaMode = (val === 'on');
+window.mapMode = 'default';
+
+window.changeMapMode = function(val) {
+    window.mapMode = val;
+    var copaControls = document.getElementById('worldCupControls');
+    if (copaControls) {
+        copaControls.style.display = (val === 'copa') ? 'flex' : 'none';
+    }
+    if (typeof window.updatePacmanLeaderboard === 'function') {
+        window.updatePacmanLeaderboard(true);
+    }
 };
 
 window.changeCopaTeam = function(slot, iso) {
@@ -5784,9 +6498,164 @@ window.loadCopaFlag = function(iso, targetCvs) {
 };
 
 // ==========================================
+// MODO RANKING DINÂMICO
+// ==========================================
+var cvsRank = [
+    document.createElement('canvas'),
+    document.createElement('canvas'),
+    document.createElement('canvas')
+];
+cvsRank.forEach((c, i) => { 
+    c.width = 600; 
+    c.height = 400; 
+    var ctxOff = c.getContext('2d');
+    ctxOff.fillStyle = '#222';
+    ctxOff.fillRect(0, 0, 600, 400);
+    ctxOff.fillStyle = (i===0)?'#ffd700':(i===1)?'#c0c0c0':'#cd7f32';
+    ctxOff.fillRect(0, 0, 150, 150);
+    ctxOff.fillStyle = '#000';
+    ctxOff.font = 'bold 80px Arial';
+    ctxOff.textAlign = 'center';
+    ctxOff.textBaseline = 'middle';
+    ctxOff.fillText((i+1) + 'º', 75, 75);
+});
+window.currentTop3Users = ['', '', ''];
+
+window.updateRankingFlags = function(sortedList) {
+    if (window.mapMode !== 'ranking') return;
+    
+    // Garantir que a lista possua apenas jogadores únicos (evitando que o mesmo jogador apareça mais de uma vez)
+    var seen = {};
+    var uniqueList = [];
+    if (Array.isArray(sortedList)) {
+        for (var j = 0; j < sortedList.length; j++) {
+            var item = sortedList[j];
+            if (item && item.name) {
+                var lowerName = item.name.toLowerCase().trim();
+                if (!seen[lowerName]) {
+                    seen[lowerName] = true;
+                    uniqueList.push(item);
+                }
+            }
+        }
+    }
+    
+    var top3 = uniqueList.slice(0, 3);
+    for (var i = 0; i < 3; i++) {
+        (function(index) {
+            var p = top3[index];
+            var username = p ? p.name : '_empty_' + index;
+            if (window.currentTop3Users[index] !== username) {
+                window.currentTop3Users[index] = username;
+                var ctxOff = cvsRank[index].getContext('2d');
+                ctxOff.clearRect(0, 0, 600, 400);
+                
+                if (!p) {
+                    var bannerImg = new Image();
+                    bannerImg.crossOrigin = "Anonymous";
+                    var banners = ['subscribe_banner.png', 'gifts_banner.png', 'skills_banner.png'];
+                    bannerImg.onload = function() {
+                        if (window.currentTop3Users[index] !== username) return;
+                        ctxOff.clearRect(0, 0, 600, 400);
+                        ctxOff.drawImage(bannerImg, 0, 0, 600, 400);
+                    };
+                    bannerImg.src = 'images tiktok/' + banners[index];
+                } else {
+                    // Sempre desenha placeholder, mesmo sem jogador
+                    ctxOff.fillStyle = (p && p.color) ? p.color : '#222';
+                    ctxOff.fillRect(0, 0, 600, 400);
+                    ctxOff.fillStyle = (index === 0) ? '#ffd700' : (index === 1) ? '#c0c0c0' : '#cd7f32';
+                    ctxOff.fillRect(0, 0, 150, 150);
+                    ctxOff.fillStyle = '#000';
+                    ctxOff.font = 'bold 80px Arial';
+                    ctxOff.textAlign = 'center';
+                    ctxOff.textBaseline = 'middle';
+                    ctxOff.fillText((index + 1) + 'º', 75, 75);
+                }
+
+                if (p && p.avatar) {
+                    // Desenha a imagem original (baixa resolução) imediatamente como fallback
+                    var imgLow = new Image();
+                    imgLow.crossOrigin = "Anonymous";
+                    imgLow.onload = function() {
+                        // Segurança: Só desenha se o jogador ainda for o dono desta posição
+                        if (window.currentTop3Users[index] !== username) return;
+                        
+                        ctxOff.fillStyle = p.color || '#333';
+                        ctxOff.fillRect(0, 0, 600, 400);
+                        var s = Math.min(600, 400);
+                        ctxOff.drawImage(imgLow, (600 - s)/2, (400 - s)/2, s, s);
+                        ctxOff.fillStyle = (index === 0) ? '#ffd700' : (index === 1) ? '#c0c0c0' : '#cd7f32';
+                        ctxOff.fillRect(0, 0, 150, 150);
+                        ctxOff.fillStyle = '#000';
+                        ctxOff.font = 'bold 80px Arial';
+                        ctxOff.textAlign = 'center';
+                        ctxOff.textBaseline = 'middle';
+                        ctxOff.fillText((index + 1) + 'º', 75, 75);
+                    };
+                    imgLow.src = p.avatar;
+
+                    // Inicia o Upscale em HD silenciosamente
+                    var upscaleUrl = p.avatarPremium ? ('/' + p.avatarPremium) : null;
+                    if (upscaleUrl) {
+                        // Se já temos a imagem premium, desenhamos direto
+                        var imgHD = new Image();
+                        imgHD.crossOrigin = "Anonymous";
+                        imgHD.onload = function() {
+                            if (window.currentTop3Users[index] !== username) return;
+                            ctxOff.fillStyle = p.color || '#333';
+                            ctxOff.fillRect(0, 0, 600, 400);
+                            var s = Math.min(600, 400);
+                            ctxOff.drawImage(imgHD, (600 - s)/2, (400 - s)/2, s, s);
+                            ctxOff.fillStyle = (index === 0) ? '#ffd700' : (index === 1) ? '#c0c0c0' : '#cd7f32';
+                            ctxOff.fillRect(0, 0, 150, 150);
+                            ctxOff.fillStyle = '#000';
+                            ctxOff.font = 'bold 80px Arial';
+                            ctxOff.textAlign = 'center';
+                            ctxOff.textBaseline = 'middle';
+                            ctxOff.fillText((index + 1) + 'º', 75, 75);
+                        };
+                        imgHD.src = upscaleUrl;
+                    } else {
+                        // Caso contrário, tenta o upscale normal local
+                        fetch('/api/upscale?id=' + encodeURIComponent(username) + '&url=' + encodeURIComponent(p.avatar))
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data && data.url && window.currentTop3Users[index] === username) {
+                                // Se o premium chegou no meio tempo, descarta esse
+                                if (pacmanPlayers[username] && pacmanPlayers[username].avatarPremium) return;
+                                
+                                var imgHD = new Image();
+                                imgHD.crossOrigin = "Anonymous";
+                                imgHD.onload = function() {
+                                    if (window.currentTop3Users[index] !== username) return;
+                                    ctxOff.fillStyle = p.color || '#333';
+                                    ctxOff.fillRect(0, 0, 600, 400);
+                                    var s = Math.min(600, 400);
+                                    ctxOff.drawImage(imgHD, (600 - s)/2, (400 - s)/2, s, s);
+                                    ctxOff.fillStyle = (index === 0) ? '#ffd700' : (index === 1) ? '#c0c0c0' : '#cd7f32';
+                                    ctxOff.fillRect(0, 0, 150, 150);
+                                    ctxOff.fillStyle = '#000';
+                                    ctxOff.font = 'bold 80px Arial';
+                                    ctxOff.textAlign = 'center';
+                                    ctxOff.textBaseline = 'middle';
+                                    ctxOff.fillText((index + 1) + 'º', 75, 75);
+                                };
+                                imgHD.src = '/' + data.url;
+                            }
+                        }).catch(err => console.error('[Ranking Upscale Error]', err));
+                    }
+                }
+            }
+        })(i);
+    }
+};
+
+// ==========================================
 // MODO COPA DO MUNDO (Renderização Específica)
 // ==========================================
-window.drawWavedFlag = function(ctx, offscreen, x, y, width, height, time) {
+window.drawWavedFlag = function(ctx, offscreen, x, y, width, height, time, alphaMult = 1.0) {
+    if (alphaMult <= 0) return; // Otimização
     ctx.save();
     ctx.translate(x - width/2, y - height/2);
     var slices = 60; 
@@ -5795,7 +6664,7 @@ window.drawWavedFlag = function(ctx, offscreen, x, y, width, height, time) {
     for (var i = 0; i < slices; i++) {
         var waveY = Math.sin(time * 0.005 + i * 0.15) * (height * 0.06);
         var waveX = Math.cos(time * 0.003 + i * 0.1) * (width * 0.02);
-        ctx.globalAlpha = 0.55; 
+        ctx.globalAlpha = 0.55 * alphaMult; 
         ctx.drawImage(offscreen, i * sliceW, 0, sliceW, offscreen.height, i * drawSliceW + waveX, waveY, drawSliceW + 1.5, height);
     }
     ctx.restore();
@@ -5828,6 +6697,38 @@ window.drawSoccerField = function(ctx, w, h, time) {
     ctx.strokeRect(w/2 - smallAreaW/2, h - pad - smallAreaH, smallAreaW, smallAreaH); 
     ctx.beginPath(); ctx.arc(w/2, pad + areaH, 80, 0, Math.PI); ctx.stroke();
     ctx.beginPath(); ctx.arc(w/2, h - pad - areaH, 80, Math.PI, Math.PI*2); ctx.stroke();
+};
+
+window.drawRankingField = function(ctx, w, h, time) {
+    // Cálculo de ciclo: 20s visível, 20s invisível (Total 40s)
+    var cycle = 40000;
+    var tInCycle = time % cycle;
+    var alphaMult = 0;
+    
+    if (tInCycle < 18000) {
+        alphaMult = 1.0; // Totalmente visível (18s)
+    } else if (tInCycle < 20000) {
+        alphaMult = 1.0 - ((tInCycle - 18000) / 2000); // Fade out suave de 2s
+    } else if (tInCycle < 38000) {
+        alphaMult = 0.0; // Invisível (18s)
+    } else {
+        alphaMult = (tInCycle - 38000) / 2000; // Fade in suave de 2s
+    }
+
+    if (alphaMult <= 0) return; // Se invisível, não desenha nada (economiza CPU)
+
+    ctx.save();
+    ctx.globalAlpha = alphaMult;
+
+    // Bandeiras Top 3 (Empilhadas verticalmente para ocupar máximo de espaço)
+    var flagW = w * 0.9;
+    var flagH = h * 0.28;
+    
+    if (cvsRank[0]) drawWavedFlag(ctx, cvsRank[0], w/2, h * 0.18, flagW, flagH, time, alphaMult);        // 1º Lugar (Topo)
+    if (cvsRank[1]) drawWavedFlag(ctx, cvsRank[1], w/2, h * 0.50, flagW, flagH, time + 500, alphaMult);  // 2º Lugar (Meio)
+    if (cvsRank[2]) drawWavedFlag(ctx, cvsRank[2], w/2, h * 0.82, flagW, flagH, time + 1000, alphaMult); // 3º Lugar (Base)
+    
+    ctx.restore();
 };
 
 window.makeRealMazePath = function(ctx) {
