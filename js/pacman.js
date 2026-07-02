@@ -13,7 +13,7 @@ var pacmanGhosts = []; // list of ghosts
 var pacmanMaze = []; // 2D grid of walls
  var MAZE_LAYOUT = []; // Reference to maze used by movement code
  var pacmanScore = 0;
- var pacmanThemeBgColor = '#050510';
+ var pacmanThemeBgColor = '#000000';
  var pacmanThemeDotColor = '#ffaa00';
  var pacmanThemeWallColor = '#00aaff';
  var pacmanTileSize = 40;
@@ -876,16 +876,19 @@ function getAvatarImage(userName, url) {
 // Procedural Maze Generator
 // ==========================================
 function generateProceduralMaze() {
-    var bgHue = Math.floor(Math.random() * 360);
-    var bgSat = Math.floor(Math.random() * 40) + 50; // 50% to 90% (Vivid)
-    var bgLight = Math.floor(Math.random() * 30) + 60; // 60% to 90% (Claras/Light colors)
-    pacmanThemeBgColor = 'hsl(' + bgHue + ', ' + bgSat + '%, ' + bgLight + '%)';
+    // Keep a base hue for color coordination
+    var baseHue = Math.floor(Math.random() * 360);
     
-    var dotHue = (bgHue + 120 + Math.floor(Math.random() * 120)) % 360;
-    pacmanThemeDotColor = 'hsl(' + dotHue + ', 100%, 30%)'; // Darker for contrast
+    // Classic black background for retro neon arcade style
+    pacmanThemeBgColor = '#000000';
     
-    var wallHue = (bgHue + 180 + Math.floor(Math.random() * 90)) % 360;
-    pacmanThemeWallColor = 'hsl(' + wallHue + ', 100%, 35%)'; // Darker for contrast
+    // Bright neon wall color (using 50% lightness for pure, vibrant HSL hue)
+    var wallHue = (baseHue + 180 + Math.floor(Math.random() * 90)) % 360;
+    pacmanThemeWallColor = 'hsl(' + wallHue + ', 100%, 50%)';
+    
+    // Bright dots that stand out on black
+    var dotHue = (baseHue + 120 + Math.floor(Math.random() * 120)) % 360;
+    pacmanThemeDotColor = 'hsl(' + dotHue + ', 100%, 60%)';
 
     var cols = 27;
     var rows = 48; // Updated to 48 for 1080x1920 mobile aspect ratio
@@ -1155,6 +1158,7 @@ function getPacmanSprite(color, frameIndex) {
 // Maze Initialization & Rendering
 var dotFlowField = [];
 var cloneFlowField = [];
+var ghostFlowField = [];
 
 function updateCloneFlowField() {
     var rows = pacmanMaze.length;
@@ -1292,6 +1296,52 @@ function updateDotFlowField() {
                 if (ndist < dotFlowField[ny][nx]) {
                     dotFlowField[ny][nx] = ndist;
                     queue.push({x: nx, y: ny, dist: ndist});
+                }
+            }
+        }
+    }
+}
+
+function updateGhostFlowField() {
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    ghostFlowField = new Array(rows);
+    for (var r = 0; r < rows; r++) {
+        ghostFlowField[r] = new Array(cols).fill(999999999);
+    }
+    
+    var queue = [];
+    
+    for (var j = 0; j < pacmanGhosts.length; j++) {
+        var gh = pacmanGhosts[j];
+        if (gh.homeTime > 0 || gh.isDead || gh.impactTimer > 0) continue;
+        
+        ghostFlowField[gh.y][gh.x] = 0;
+        queue.push({ x: gh.x, y: gh.y, dist: 0 });
+    }
+    
+    if (queue.length === 0) return;
+    
+    var head = 0;
+    while (head < queue.length) {
+        var curr = queue[head++];
+        
+        if (curr.dist > ghostFlowField[curr.y][curr.x]) continue;
+        
+        var dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+        for (var d = 0; d < 4; d++) {
+            var nx = curr.x + dirs[d][0];
+            var ny = curr.y + dirs[d][1];
+            
+            if (nx < 0) nx = cols - 1;
+            else if (nx >= cols) nx = 0;
+            
+            if (ny >= 0 && ny < rows && pacmanMaze[ny] && pacmanMaze[ny][nx] !== 1) {
+                var ndist = curr.dist + 1;
+                if (ndist < ghostFlowField[ny][nx]) {
+                    ghostFlowField[ny][nx] = ndist;
+                    queue.push({ x: nx, y: ny, dist: ndist });
                 }
             }
         }
@@ -1911,44 +1961,17 @@ function findNextMoveAI(pl, isClone) {
          if (tx < 0) tx = pacmanMaze[0].length - 1;
          if (tx >= pacmanMaze[0].length) tx = 0;
          
-         if (pacmanMaze[ty] && pacmanMaze[ty][tx] !== 1) {
-             // FALLBACK CORRIGIDO PARA 999999. Antes era 9999, o que fazia ele preferir 
-             // o vazio do que um ponto que estivesse a 10.000 de custo de distância!
-             var targetField = isClone ? cloneFlowField : dotFlowField;
-             var score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
-             
-             // Penalidade de meia-volta dinâmica!
-             var revPenalty = 1000;
-             
-             if (hasPower) {
-                 revPenalty = 3500; // Impede jittering ao caçar fantasmas
+         var isGiant = pl.giantTimer > 0;
+         var isValid = false;
+         if (pacmanMaze[ty]) {
+             if (pacmanMaze[ty][tx] !== 1) {
+                 isValid = true;
+             } else if (isGiant && ty > 0 && ty < pacmanMaze.length - 1 && tx > 0 && tx < pacmanMaze[0].length - 1) {
+                 isValid = true;
              }
-             
-             // Evitar jittering extremo quando estiver muito rápido (GG)
-             if (pl.speedBoostTimer > 0) {
-                 revPenalty = 8000;
-             }
-             
-             // Se um fantasma estiver por perto (raio de 6), usamos repulsão forte para evitar o 
-             // "jittering" (ir e voltar) na borda do raio de medo (4).
-             if (!hasPower && !hasSorveteShield && nearestGhostDist < 6) {
-                 revPenalty = 4000;
-             }
-             
-             // Se um fantasma estiver MUITO perto (emergência), permitimos a meia-volta instantânea
-             if (isFleeing && nearestGhostDist < 3) revPenalty = 10;
-             
-             if (d !== pl.dir) score += 0.1;
-             if (d === oppositeDir) score += revPenalty;
-             
-             // Pheromone repulsion (max 250)
-             var pheroData = pacmanPheromones[tx + ',' + ty];
-             var pheroTime = pheroData ? (pheroData.time || pheroData) : 0;
-             var pheroAge = Date.now() - pheroTime;
-             if (pheroAge < 5000) { 
-                 score += (5000 - pheroAge) * 0.05; 
-             }
-             
+         }
+         
+         if (isValid) {
              // Lógica Dinâmica de Fantasmas
              var gDist = 99999;
              for (var j = 0; j < pacmanGhosts.length; j++) {
@@ -1956,17 +1979,64 @@ function findNextMoveAI(pl, isClone) {
                  var dG = Math.abs(tx - pacmanGhosts[j].x) + Math.abs(ty - pacmanGhosts[j].y);
                  if (dG < gDist) gDist = dG;
              }
-             if (hasPower) {
+
+             var score = 999999999;
+             
+             // Se for gigante, a caça direta aos fantasmas (devorando paredes) é prioridade absoluta!
+             if (isGiant) {
                  if (gDist !== 99999) {
-                     // CAÇAR FANTASMAS! Sempre focar no fantasma vivo mais próximo, sem limite de distância.
-                     score -= (1000 - gDist) * 2000;
+                     score = gDist * 50000;
+                     if (d === oppositeDir) score += 3500; // Evita ziguezague desnecessário
+                     if (d !== pl.dir) score += 0.1;
+                     if (pacmanMaze[ty][tx] === 1) score += 10; // Prefere caminhos livres em caso de empate
+                 } else {
+                     var targetField = isClone ? cloneFlowField : dotFlowField;
+                     score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
                  }
-             } else if (hasSorveteShield) {
-                 // IGNORA FANTASMAS: Não caça, mas também não foge. Continua focando apenas nos pontos.
              } else {
-                 if (gDist < 4) {
-                     // Forte repulsão. O peso 5000 esmaga qualquer custo de espaço vazio (1000)
-                     score += (4 - gDist) * 5000; 
+                 // Lógica normal de movimentação (com desvio de paredes)
+                 var targetField = isClone ? cloneFlowField : dotFlowField;
+                 score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
+                 
+                 // Penalidade de meia-volta dinâmica!
+                 var revPenalty = 1000;
+                 if (hasPower) {
+                     revPenalty = 3500; // Impede jittering ao caçar fantasmas
+                 }
+                 if (pl.speedBoostTimer > 0) {
+                     revPenalty = 8000;
+                 }
+                 if (!hasPower && !hasSorveteShield && nearestGhostDist < 6) {
+                      revPenalty = 4000;
+                 }
+                 if (isFleeing && nearestGhostDist < 3) revPenalty = 10;
+                 
+                 if (d !== pl.dir) score += 0.1;
+                 if (d === oppositeDir) score += revPenalty;
+                 
+                 // Pheromone repulsion (max 250)
+                 var pheroData = pacmanPheromones[tx + ',' + ty];
+                 var pheroTime = pheroData ? (pheroData.time || pheroData) : 0;
+                 var pheroAge = Date.now() - pheroTime;
+                 if (pheroAge < 5000) { 
+                     score += (5000 - pheroAge) * 0.05; 
+                 }
+                 
+                 // Lógica Dinâmica de Fantasmas
+                 if (hasPower) {
+                     var mazeGhostDist = (ghostFlowField && ghostFlowField[ty] && ghostFlowField[ty][tx] !== undefined) ? ghostFlowField[ty][tx] : 999999999;
+                     if (mazeGhostDist < 999999) {
+                         score += mazeGhostDist * 50000;
+                     } else if (gDist !== 99999) {
+                         score -= (1000 - gDist) * 2000;
+                     }
+                 } else if (hasSorveteShield) {
+                     // IGNORA FANTASMAS: Não caça, mas também não foge. Continua focando apenas nos pontos.
+                 } else {
+                     if (gDist < 4) {
+                         // Forte repulsão. O peso 5000 esmaga qualquer custo de espaço vazio (1000)
+                         score += (4 - gDist) * 5000; 
+                     }
                  }
              }
              
@@ -3550,10 +3620,16 @@ function updateEntities() {
                 pl.targetY = ty;
                 pl.progress = 0.0;
                 checkDotCollision(pl, p);
-            } else if (MAZE_LAYOUT[ty] && MAZE_LAYOUT[ty][tx] !== 1) {
+            } else if (MAZE_LAYOUT[ty] && (MAZE_LAYOUT[ty][tx] !== 1 || (pl.giantTimer > 0 && ty > 0 && ty < MAZE_LAYOUT.length - 1 && tx > 0 && tx < MAZE_LAYOUT[0].length - 1))) {
                 pl.targetX = tx;
                 pl.targetY = ty;
                 pl.progress = 0.0; // Reset progress to 0.0, we will increment it below
+                
+                // If they are a Giant and moving into a wall, destroy it immediately!
+                if (pl.giantTimer > 0 && MAZE_LAYOUT[ty][tx] === 1) {
+                    destroyMazeWall(tx, ty);
+                }
+                
                 // If they have tap speed boost active (likes frequency >= 2/sec), they move fast automatically!
                 if (pl.tapSpeedMultiplier && pl.tapSpeedMultiplier > 1.0) {
                     pl.isFast = true;
@@ -4888,6 +4964,16 @@ function commitLeaderboardUpdate() {
     
     lb.appendChild(fragment);
 }
+
+window.resetGlobalLeaderboard = function() {
+    if (confirm('Tem certeza que deseja zerar o placar geral? Isso limpará todas as pontuações acumuladas dos jogadores.')) {
+        pacmanGlobalLeaderboard = [];
+        localStorage.setItem('pacmanGlobalLeaderboard', JSON.stringify([]));
+        updatePacmanLeaderboard(true);
+        pushAlertEvent('🏆 O placar geral foi resetado com sucesso!');
+    }
+};
+
 const recentAlerts = [];
 function pushAlertEvent(text) {
     const list = document.getElementById('tickerContainer');
@@ -5999,6 +6085,9 @@ function gameLoop() {
             if (window.pacmanHitStopTimer > 0) {
                 window.pacmanHitStopTimer--;
             } else {
+                if (pacmanPowerMode) {
+                    updateGhostFlowField();
+                }
                 updateEntities();
             }
             updateParticles();
