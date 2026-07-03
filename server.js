@@ -201,6 +201,7 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     }
   });
   tiktok.on('gift', function (data) {
+    if (data.repeatEnd === false) return;
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (session.eventQueue) {
