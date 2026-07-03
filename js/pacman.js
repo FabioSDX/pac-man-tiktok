@@ -6395,14 +6395,21 @@ function processTikTokSocial(data) {
     if (!data || !data.user) return;
     var user = data.user.replace(/^@/, '').toLowerCase();
     
-    // Spawn player if they don't exist yet OR if they are out of lives
-    if (!pacmanPlayers[user] || pacmanPlayers[user].lives <= 0) {
-        spawnPacmanPlayer(user, data.avatar || '');
+    var isSubscribe = (data.action === 'subscribe');
+    var playerExistsAndAlive = pacmanPlayers[user] && pacmanPlayers[user].lives > 0;
+    
+    // ONLY spawn the player if the action is a subscription (se inscrever) OR if they are already alive in the game
+    if (!playerExistsAndAlive) {
+        if (isSubscribe) {
+            spawnPacmanPlayer(user, data.avatar || '');
+        } else {
+            // Ignore follows, shares, joins (member) for users who are not active in the game
+            return;
+        }
     }
     
-    if (pacmanPlayers[user]) {
-        pacmanPlayers[user].lastActivityTime = Date.now();
-    }
+    var pl = pacmanPlayers[user];
+    pl.lastActivityTime = Date.now();
     
     var actionName = 'interagiu';
     if (data.action === 'follow') {
@@ -6413,13 +6420,15 @@ function processTikTokSocial(data) {
         actionName = 'Compartilhou';
         queueSubscriberCelebration(user, data.avatar || '', 'COMPARTILHOU!');
     }
-    else if (data.action === 'member') actionName = 'Membro Entrou';
+    else if (data.action === 'member') {
+        actionName = 'Membro Entrou';
+    }
     else if (data.action === 'subscribe') {
         actionName = 'Se inscreveu';
         queueSubscriberCelebration(user, data.avatar || '', 'NOVO INSCRITO!');
     }
     
-    pushAlertEvent(`👤 @${user} ${actionName} a live! Entrou no jogo!`);
+    pushAlertEvent(`👤 @${user} ${actionName} a live!`);
 }
 
 function spawnConfetti(count, initial) {
