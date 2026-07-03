@@ -6381,7 +6381,7 @@ function processTikTokLike(data) {
     pl.likeEnergy = (pl.likeEnergy || 0) + (likes * 10);
     if (pl.likeEnergy > 100) pl.likeEnergy = 100; // Cap max energy at 100
     
-    pl.likesBuffer += likes;
+    pl.likesBuffer = (pl.likesBuffer || 0) + likes;
     var fuelToAdd = Math.floor(pl.likesBuffer / 5);
     if (fuelToAdd > 0) {
         pl.fuel += fuelToAdd;
@@ -6776,41 +6776,53 @@ function initWebSocket() {
         }
     };
 
+    function handleWSMessage(data) {
+        if (data.type === 'chat') {
+            window.processPacmanComment(data);
+        } else if (data.type === 'gift') {
+            processTikTokGift(data);
+        } else if (data.type === 'like') {
+            processTikTokLike(data);
+        } else if (data.type === 'social' || data.type === 'follow' || data.type === 'share' || data.type === 'subscribe' || data.type === 'member') {
+            if (!data.action) data.action = data.type; // Map type to action for processTikTokSocial
+            processTikTokSocial(data);
+        } else if (data.type === 'leaderboard') {
+            pacmanGlobalLeaderboard = data.data || [];
+            _leaderboardDirty = true;
+            commitLeaderboardUpdate();
+        } else if (data.type === 'connected') {
+            updateConnectionUI('connected', data.platform, data.username);
+            pushAlertEvent(`🟢 Conexão estabelecida com ${data.platform.toUpperCase()}`);
+            if (pacmanGameState === 'waiting') {
+                pacmanGameState = 'playing';
+                AudioSynth.playStartMelody();
+                gameLoop();
+            }
+        } else if (data.type === 'disconnected') {
+            updateConnectionUI('disconnected');
+            if (data.platform !== 'all') {
+                pushAlertEvent(`🟠 Chat ${data.platform} caiu — reconectando automaticamente...`);
+            }
+        } else if (data.type === 'error') {
+            updateConnectionUI('disconnected');
+            pushAlertEvent(`⚠️ Erro: ${data.message}`);
+            if (data.message.includes('Acesso Negado')) {
+                alert(data.message);
+            }
+        }
+    }
+
     ws.onmessage = function (e) {
         try {
             var data = JSON.parse(e.data);
-            if (data.type === 'chat') {
-                window.processPacmanComment(data);
-            } else if (data.type === 'gift') {
-                processTikTokGift(data);
-            } else if (data.type === 'like') {
-                processTikTokLike(data);
-            } else if (data.type === 'social' || data.type === 'follow' || data.type === 'share' || data.type === 'subscribe' || data.type === 'member') {
-                if (!data.action) data.action = data.type; // Map type to action for processTikTokSocial
-                processTikTokSocial(data);
-            } else if (data.type === 'leaderboard') {
-                pacmanGlobalLeaderboard = data.data || [];
-                _leaderboardDirty = true;
-                commitLeaderboardUpdate();
-            } else if (data.type === 'connected') {
-                updateConnectionUI('connected', data.platform, data.username);
-                pushAlertEvent(`🟢 Conexão estabelecida com ${data.platform.toUpperCase()}`);
-                if (pacmanGameState === 'waiting') {
-                    pacmanGameState = 'playing';
-                    AudioSynth.playStartMelody();
-                    gameLoop();
+            if (data.type === 'event_batch') {
+                if (data.events && Array.isArray(data.events)) {
+                    data.events.forEach(function(ev) {
+                        handleWSMessage(ev);
+                    });
                 }
-            } else if (data.type === 'disconnected') {
-                updateConnectionUI('disconnected');
-                if (data.platform !== 'all') {
-                    pushAlertEvent(`🟠 Chat ${data.platform} caiu — reconectando automaticamente...`);
-                }
-            } else if (data.type === 'error') {
-                updateConnectionUI('disconnected');
-                pushAlertEvent(`⚠️ Erro: ${data.message}`);
-                if (data.message.includes('Acesso Negado')) {
-                    alert(data.message);
-                }
+            } else {
+                handleWSMessage(data);
             }
         } catch (err) {
             console.error('[WS] Error processing msg:', err);
