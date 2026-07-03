@@ -5271,29 +5271,23 @@ function drawPacman() {
         else if (pl.dir === 'up') rotAngle = -Math.PI / 2;
 
         if (avatarImg && avatarImg.complete && avatarImg.naturalWidth !== 0) {
-            // Render circular avatar with animated mouth cut out
-            var mOpen = [Math.PI / 4.5, Math.PI / 8, 0.05][frameIndex];
+            // Render cached circular avatar with animated mouth cut out
+            var croppedCanvas = getMouthCroppedAvatar(p, avatarImg, frameIndex, pl.dir);
             pacmanCtx.save();
             pacmanCtx.translate(px, py);
-            pacmanCtx.rotate(rotAngle);
             
+            // Draw the pre-cropped avatar
+            pacmanCtx.drawImage(croppedCanvas, -radius, -radius, radius * 2, radius * 2);
+            
+            // Draw glowing outline of Pac-Man shape over avatar
+            pacmanCtx.rotate(rotAngle);
+            pacmanCtx.strokeStyle = pl.color;
+            pacmanCtx.lineWidth = 4 * giantScale;
             pacmanCtx.beginPath();
+            var mOpen = [Math.PI / 4.5, Math.PI / 8, 0.05][frameIndex];
             pacmanCtx.arc(0, 0, radius, mOpen, Math.PI * 2 - mOpen);
             pacmanCtx.lineTo(0, 0);
             pacmanCtx.closePath();
-            pacmanCtx.save();
-            pacmanCtx.clip();
-            
-            // Draw avatar un-rotated so the picture stays upright
-            pacmanCtx.rotate(-rotAngle);
-            pacmanCtx.drawImage(avatarImg, -radius, -radius, radius * 2, radius * 2);
-            
-            pacmanCtx.restore(); // remove clip
-            
-            // Draw glowing outline of Pac-Man shape over avatar
-            pacmanCtx.rotate(rotAngle); // rotate back for the stroke
-            pacmanCtx.strokeStyle = pl.color;
-            pacmanCtx.lineWidth = 4 * giantScale;
             pacmanCtx.stroke();
             pacmanCtx.restore();
         } else {
@@ -7369,6 +7363,11 @@ function initPacmanGame() {
     mazeCanvas.width = 1080;
     mazeCanvas.height = 1920;
     mazeCtx = mazeCanvas.getContext('2d');
+    
+    dotsCanvas = document.createElement('canvas');
+    dotsCanvas.width = 1080;
+    dotsCanvas.height = 1920;
+    dotsCtx = dotsCanvas.getContext('2d');
     
     mazeCanvasFrightened1 = document.createElement('canvas');
     mazeCanvasFrightened1.width = 1080;
