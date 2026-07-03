@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizações do Chefão Cobra - Pac-Man Tik Tok</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background: radial-gradient(circle at top, #0f172a 0%, #020617 100%);
+            color: #f1f5f9;
+            font-family: 'Outfit', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            overflow-x: hidden;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h1 {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 24px;
+            color: #fbbf24;
+            text-shadow: 0 0 15px rgba(251, 191, 36, 0.4);
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        p.subtitle {
+            font-size: 16px;
+            color: #94a3b8;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 25px;
+            width: 100%;
+            max-width: 1000px;
+        }
+        .canvas-card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            background: #020617;
+            border: 2px solid #334155;
+            border-radius: 8px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+            width: 100%;
+            max-width: 900px;
+            aspect-ratio: 16 / 9;
+        }
+        .control-panel {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .btn-skin {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #ffffff;
+        }
+        .btn-skin[data-skin="all"] {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+        }
+        .btn-skin[data-skin="forest"] {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            border-color: rgba(16, 185, 129, 0.4);
+        }
+        .btn-skin[data-skin="forest"].active, .btn-skin[data-skin="forest"]:hover {
+            background: #10b981;
+            color: #000;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+        .btn-skin[data-skin="fire"] {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border-color: rgba(239, 68, 68, 0.4);
+        }
+        .btn-skin[data-skin="fire"].active, .btn-skin[data-skin="fire"]:hover {
+            background: #ef4444;
+            color: #fff;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+        .btn-skin[data-skin="cyber"] {
+            background: rgba(6, 182, 212, 0.15);
+            color: #06b6d4;
+            border-color: rgba(6, 182, 212, 0.4);
+        }
+        .btn-skin[data-skin="cyber"].active, .btn-skin[data-skin="cyber"]:hover {
+            background: #06b6d4;
+            color: #000;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+        .btn-skin[data-skin="gold"] {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border-color: rgba(245, 158, 11, 0.4);
+        }
+        .btn-skin[data-skin="gold"].active, .btn-skin[data-skin="gold"]:hover {
+            background: #f59e0b;
+            color: #000;
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+        }
+        .skin-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            width: 100%;
+            margin-top: 15px;
+        }
+        .info-card {
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s;
+        }
+        .info-card:hover {
+            transform: translateY(-3px);
+        }
+        .info-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .info-card.forest h3 { color: #10b981; }
+        .info-card.fire h3 { color: #ef4444; }
+        .info-card.cyber h3 { color: #06b6d4; }
+        .info-card.gold h3 { color: #f59e0b; }
+        .info-card p {
+            font-size: 13.5px;
+            color: #94a3b8;
+            line-height: 1.5;
+        }
+        footer {
+            margin-top: 40px;
+            font-size: 13px;
+            color: #475569;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>PREVIEW DO CHEFÃO COBRA</h1>
+        <p class="subtitle">Demonstração interativa dos 4 modelos visuais de cobras configurados para o evento do Boss no jogo.</p>
+    </header>
+
+    <div class="main-container">
+        <div class="canvas-card">
+            <canvas id="previewCanvas" width="900" height="500"></canvas>
+            <div class="control-panel">
+                <button class="btn-skin active" data-skin="all">Ver Todas</button>
+                <button class="btn-skin" data-skin="forest">Floresta (Padrão)</button>
+                <button class="btn-skin" data-skin="fire">Lava & Fogo</button>
+                <button class="btn-skin" data-skin="cyber">Cyberpunk Neon</button>
+                <button class="btn-skin" data-skin="gold">Ouro Imperial</button>
+            </div>
+        </div>
+
+        <div class="skin-info">
+            <div class="info-card forest">
+                <h3>🐉 Floresta (Padrão)</h3>
+                <p>Desenho orgânico original. Escamas em degradê verde folhagem e outline neon brilhante. Olhos vermelhos famintos.</p>
+            </div>
+            <div class="info-card fire">
+                <h3>🔥 Lava & Fogo</h3>
+                <p>Cobra vulcânica com escamas vermelho lava e contornos amarelo-ouro. Emite brilho incandescente e possui olhos amarelados.</p>
+            </div>
+            <div class="info-card cyber">
+                <h3>⚡ Cyberpunk Neon</h3>
+                <p>Cobra cibernética tecnológica com escamas roxas neon, outlines ciano e traços de circuitos elétricos. Olhos magenta laser.</p>
+            </div>
+            <div class="info-card gold">
+                <h3>👑 Ouro Imperial</h3>
+                <p>Uma lendária cobra real dourada cintilante com detalhes majestosos. Olhos de esmeralda verde vibrante.</p>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        Desenvolvido com carinho para o projeto Pac-Man TikTok
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('previewCanvas');
+        const ctx = canvas.getContext('2d');
+        const buttons = document.querySelectorAll('.btn-skin');
+        
+        let activeView = 'all'; // 'all', 'forest', 'fire', 'cyber', 'gold'
+        let time = 0;
+
+        const tileScale = 22;
+
+        const configs = {
+            forest: {
+                fill: (i) => `hsl(135, 100%, ${25 + (i % 3) * 6}%)`,
+                stroke: '#00ff66',
+                ridge: 'rgba(0, 255, 102, 0.4)',
+                headFill: '#052e16',
+                headStroke: '#00ff66',
+                eyeFill: '#ef4444',
+                tongueStroke: '#ef4444'
+            },
+            fire: {
+                fill: (i) => `hsl(15, 100%, ${35 + (i % 3) * 8}%)`,
+                stroke: '#ff9900',
+                ridge: 'rgba(255, 153, 0, 0.4)',
+                headFill: '#1c1917',
+                headStroke: '#ffaa00',
+                eyeFill: '#ffff00',
+                tongueStroke: '#ffaa00'
+            },
+            cyber: {
+                fill: (i) => `hsl(280, 100%, ${30 + (i % 3) * 8}%)`,
+                stroke: '#00f0ff',
+                ridge: 'rgba(0, 240, 255, 0.4)',
+                headFill: '#0f172a',
+                headStroke: '#00f0ff',
+                eyeFill: '#ff00ff',
+                tongueStroke: '#ff00ff'
+            },
+            gold: {
+                fill: (i) => `hsl(45, 100%, ${35 + (i % 3) * 7}%)`,
+                stroke: '#fbbf24',
+                ridge: 'rgba(251, 191, 36, 0.4)',
+                headFill: '#451a03',
+                headStroke: '#fbbf24',
+                eyeFill: '#10b981',
+                tongueStroke: '#10b981'
+            }
+        };
+
+        buttons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                activeView = btn.getAttribute('data-skin');
+            });
+        });
+
+        function drawSnakeSegment(ctx, sx, sy, angle, i, skin) {
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.rotate(angle);
+            
+            var w = tileScale * 1.5;
+            var h = tileScale * 1.35;
+            ctx.lineWidth = 3.5;
+            
+            if (skin === 'forest') { // Dragão Chinês
+                ctx.fillStyle = `hsl(135, 100%, ${25 + (i % 3) * 6}%)`;
+                ctx.strokeStyle = '#00ff66';
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                
+                // Penacho
+                ctx.fillStyle = '#00ff66';
+                ctx.beginPath();
+                ctx.moveTo(-w/4, -w/2);
+                ctx.quadraticCurveTo(-w/2, -w, -w*0.8, -w*0.7);
+                ctx.quadraticCurveTo(-w/3, -w/2, 0, -w/2);
+                ctx.closePath();
+                ctx.fill();
+                
+            } else if (skin === 'fire') { // Lagarto de Lava
+                ctx.fillStyle = `hsl(15, 100%, ${35 + (i % 3) * 8}%)`;
+                ctx.strokeStyle = '#ff9900';
+                
+                ctx.beginPath();
+                ctx.moveTo(-w/2, 0);
+                ctx.lineTo(-w/4, -h/2);
+                ctx.lineTo(w/4, -h/2);
+                ctx.lineTo(w/2, 0);
+                ctx.lineTo(w/4, h/2);
+                ctx.lineTo(-w/4, h/2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                // Espinho
+                ctx.fillStyle = '#ffcc00';
+                ctx.beginPath();
+                ctx.moveTo(-w/4, -h/2);
+                ctx.lineTo(-w/2, -h*0.85);
+                ctx.lineTo(0, -h/2);
+                ctx.closePath();
+                ctx.fill();
+                
+            } else if (skin === 'cyber') { // Cobra Robótica
+                ctx.fillStyle = `hsl(280, 100%, ${30 + (i % 3) * 8}%)`;
+                ctx.strokeStyle = '#00f0ff';
+                
+                ctx.beginPath();
+                ctx.moveTo(-w/2, 0);
+                ctx.lineTo(-w/3, -h/2.2);
+                ctx.lineTo(w/3, -h/2.2);
+                ctx.lineTo(w/2, 0);
+                ctx.lineTo(w/3, h/2.2);
+                ctx.lineTo(-w/3, h/2.2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#00f0ff';
+                ctx.beginPath();
+                ctx.arc(0, 0, w/5, 0, Math.PI*2);
+                ctx.fill();
+                
+            } else if (skin === 'gold') { // Serpente Real
+                ctx.fillStyle = `hsl(45, 100%, ${35 + (i % 3) * 7}%)`;
+                ctx.strokeStyle = '#fbbf24';
+                
+                ctx.beginPath();
+                ctx.moveTo(-w/2, -h/3);
+                ctx.quadraticCurveTo(0, -h/2, w/2, -h/3);
+                ctx.quadraticCurveTo(w/2, h/3, 0, h/2);
+                ctx.quadraticCurveTo(-w/2, h/3, -w/2, -h/3);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(0, 0, w/7, 0, Math.PI*2);
+                ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawSnakeHead(ctx, hx, hy, angle, skin) {
+            ctx.save();
+            ctx.translate(hx, hy);
+            ctx.rotate(angle);
+            
+            var hw = tileScale * 1.8;
+            var hh = tileScale * 1.6;
+            ctx.lineWidth = 4;
+            
+            if (skin === 'forest') { // Cabeça de Dragão Chinês
+                ctx.fillStyle = '#052e16';
+                ctx.strokeStyle = '#00ff66';
+                
+                ctx.beginPath();
+                ctx.moveTo(-hw/3, -hh/2);
+                ctx.lineTo(hw/4, -hh/2.5);
+                ctx.lineTo(hw/2, -hh/4);
+                ctx.lineTo(hw/2, hh/4);
+                ctx.lineTo(hw/4, hh/2.5);
+                ctx.lineTo(-hw/3, hh/2);
+                ctx.quadraticCurveTo(-hw/2, 0, -hw/3, -hh/2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.strokeStyle = '#00ff66';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-hw/4, -hh/2.2);
+                ctx.quadraticCurveTo(-hw*0.9, -hh*0.9, -hw*1.2, -hh*0.6);
+                ctx.moveTo(-hw/4, hh/2.2);
+                ctx.quadraticCurveTo(-hw*0.9, hh*0.9, -hw*1.2, hh*0.6);
+                ctx.stroke();
+                
+                var wWave = Math.sin(time / 8) * 8;
+                ctx.strokeStyle = '#ff3366';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(hw/3, -hh/6);
+                ctx.quadraticCurveTo(hw*0.8, -hh/3 + wWave, hw*1.1, -hh/6);
+                ctx.moveTo(hw/3, hh/6);
+                ctx.quadraticCurveTo(hw*0.8, hh/3 - wWave, hw*1.1, hh/6);
+                ctx.stroke();
+                
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(hw/6, -hh/4, 5, 0, Math.PI * 2);
+                ctx.arc(hw/6, hh/4, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+            } else if (skin === 'fire') { // Cabeça Espinhosa de Lagarto
+                ctx.fillStyle = '#1c1917';
+                ctx.strokeStyle = '#ffaa00';
+                
+                ctx.beginPath();
+                ctx.moveTo(-hw/2, -hh/3);
+                ctx.lineTo(0, -hh/2);
+                ctx.lineTo(hw/2, -hh/6);
+                ctx.lineTo(hw/2, hh/6);
+                ctx.lineTo(0, hh/2);
+                ctx.lineTo(-hw/2, hh/3);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.moveTo(-hw/2, -hh/3); ctx.lineTo(-hw*0.8, -hh/2); ctx.lineTo(-hw/4, -hh/2.2);
+                ctx.moveTo(-hw/2, hh/3); ctx.lineTo(-hw*0.8, hh/2); ctx.lineTo(-hw/4, hh/2.2);
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(hw/5, -hh/5, 5, 0, Math.PI * 2);
+                ctx.arc(hw/5, hh/5, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(hw/5 - 1, -hh/5 - 4, 2, 8);
+                ctx.fillRect(hw/5 - 1, hh/5 - 4, 2, 8);
+                
+            } else if (skin === 'cyber') { // Cabeça Robótica de Mech
+                ctx.fillStyle = '#0f172a';
+                ctx.strokeStyle = '#00f0ff';
+                
+                ctx.beginPath();
+                ctx.moveTo(-hw/2, -hh/2);
+                ctx.lineTo(hw/3, -hh/2);
+                ctx.lineTo(hw/2, 0);
+                ctx.lineTo(hw/3, hh/2);
+                ctx.lineTo(-hw/2, hh/2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#ff00ff';
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#ff00ff';
+                ctx.fillRect(hw/6, -hh/3, 8, hh * 0.66);
+                ctx.shadowBlur = 0;
+                
+                ctx.strokeStyle = '#00f0ff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-hw/3, -hh/2);
+                ctx.lineTo(-hw*0.7, -hh*0.8);
+                ctx.stroke();
+                
+            } else if (skin === 'gold') { // Cabeça Coroada de Naja Real
+                ctx.fillStyle = '#78350f';
+                ctx.strokeStyle = '#fbbf24';
+                ctx.beginPath();
+                ctx.ellipse(-hw/8, 0, hw/2, hh/1.4, 0, 0, Math.PI*2);
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#fbbf24';
+                ctx.beginPath();
+                ctx.moveTo(-hw/3, -hh/3);
+                ctx.lineTo(hw/4, -hh/3);
+                ctx.quadraticCurveTo(hw/2, 0, hw/4, hh/3);
+                ctx.lineTo(-hw/3, hh/3);
+                ctx.quadraticCurveTo(-hw/2, 0, -hw/3, -hh/3);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#fbbf24';
+                ctx.strokeStyle = '#78350f';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(-hw/2.5, -hh/4);
+                ctx.lineTo(-hw/2.5, -hh/3);
+                ctx.lineTo(-hw * 0.75, -hh/2); // Top point
+                ctx.lineTo(-hw/2.5, -hh/6);    // Valley 1
+                ctx.lineTo(-hw * 0.9, 0);       // Center point
+                ctx.lineTo(-hw/2.5, hh/6);     // Valley 2
+                ctx.lineTo(-hw * 0.75, hh/2);  // Bottom point
+                ctx.lineTo(-hw/2.5, hh/3);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#10b981';
+                ctx.beginPath();
+                ctx.arc(hw/5, -hh/6, 4.5, 0, Math.PI * 2);
+                ctx.arc(hw/5, hh/6, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            if (skin !== 'cyber' && Math.floor(time / 4) % 2 === 0) {
+                var tongueCol = (skin === 'gold' || skin === 'forest') ? '#ef4444' : '#ffaa00';
+                ctx.strokeStyle = tongueCol;
+                ctx.lineWidth = 3.5;
+                ctx.beginPath();
+                ctx.moveTo(hw/3, 0);
+                ctx.lineTo(hw/3 + 12, -4);
+                ctx.moveTo(hw/3, 0);
+                ctx.lineTo(hw/3 + 12, 4);
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawSnake(cx, cy, skin) {
+            const length = 8;
+            
+            let segments = [];
+            for (let i = 0; i <= length; i++) {
+                const segX = cx - i * 1.05;
+                const segY = cy + Math.sin(time * 0.08 - i * 0.8) * 0.8;
+                segments.push({ x: segX, y: segY });
+            }
+
+            const head = segments[0];
+
+            for (let i = length; i >= 1; i--) {
+                const seg = segments[i];
+                const nextSeg = segments[i - 1];
+                const dx = nextSeg.x - seg.x;
+                const dy = nextSeg.y - seg.y;
+                const angle = Math.atan2(dy, dx);
+                
+                const sx = seg.x * tileScale;
+                const sy = seg.y * tileScale;
+
+                drawSnakeSegment(ctx, sx, sy, angle, i, skin);
+            }
+
+            const headNextX = head.x + 0.1;
+            const headNextY = head.y + Math.cos(time * 0.08) * 0.1;
+            const headAngle = Math.atan2(headNextY - head.y, headNextX - head.x);
+
+            const hx = head.x * tileScale;
+            const hy = head.y * tileScale;
+
+            drawSnakeHead(ctx, hx, hy, headAngle, skin);
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid in background (Pac-man theme)
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += tileScale) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += tileScale) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            time++;
+
+            if (activeView === 'all') {
+                ctx.save();
+                
+                ctx.font = "bold 13px 'Press Start 2P', monospace";
+                ctx.textAlign = 'left';
+                
+                // Forest
+                ctx.fillStyle = '#10b981';
+                ctx.fillText("FOREST SKIN (PADRÃO)", 40, 60);
+                drawSnake(14, 5, 'forest');
+
+                // Fire
+                ctx.fillStyle = '#ef4444';
+                ctx.fillText("LAVA & FIRE SKIN", 40, 175);
+                drawSnake(14, 10.2, 'fire');
+
+                // Cyber
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillText("CYBERPUNK NEON SKIN", 40, 290);
+                drawSnake(14, 15.5, 'cyber');
+
+                // Gold
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillText("GOLDEN IMPERIAL SKIN", 40, 405);
+                drawSnake(14, 20.7, 'gold');
+
+                ctx.restore();
+            } else {
+                ctx.save();
+                ctx.scale(2.0, 2.0); // Make it double size
+                
+                ctx.font = "bold 9px 'Press Start 2P', monospace";
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(`VISUAL ATIVO: ${activeView.toUpperCase()}`, 20, 25);
+                
+                drawSnake(12, 6, activeView);
+                
+                ctx.restore();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

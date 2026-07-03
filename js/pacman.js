@@ -72,9 +72,20 @@ var pacmanZoomCooldown = 0;
 var pacmanLastLeaderboard = [];
 var pacmanInitialLeaderSet = false;
 
+// Boss Event Globals
+window.snakeBoss = null;
+window.cannons = [
+    { x: 1, y: 1, cooldown: 0, maxCooldown: 480 },
+    { x: 25, y: 1, cooldown: 0, maxCooldown: 480 },
+    { x: 1, y: 46, cooldown: 0, maxCooldown: 480 },
+    { x: 25, y: 46, cooldown: 0, maxCooldown: 480 }
+];
+var cannonFlowField = [];
+
 // Particles and VFX
 var pacmanParticles = [];
 var pacmanTextParticles = [];
+window.pacmanShockwaves = [];
 
 // ==========================================
 // Daily Revenue & Quotes Logic
@@ -334,8 +345,14 @@ const AudioSynth = {
         this.init();
         if (this.ctx.state === 'suspended') this.ctx.resume();
         
-        const style = window.pacmanMusicStyle || 'techno';
         const now = this.ctx.currentTime;
+        
+        if (window.snakeBoss) {
+            this.updateBossTheme(now);
+            return;
+        }
+        
+        const style = window.pacmanMusicStyle || 'techno';
         
         if (style === 'arcade') {
             this.updateSirenArcade(now, powerMode, eatenRatio);
@@ -344,6 +361,121 @@ const AudioSynth = {
         } else {
             this.updateSirenTechno(now, powerMode, eatenRatio);
         }
+    },
+    updateBossTheme(now) {
+        if (this.arcadeSirenOsc) this.stopSiren();
+        
+        if (this.bgmNextNoteTime === 0) {
+            this.bgmNextNoteTime = now + 0.1;
+            this.bgmStep = 0;
+        }
+        
+        if (now > this.bgmNextNoteTime - 0.1) {
+            const t = this.bgmNextNoteTime;
+            const stepDuration = (60 / 145) / 4; 
+            
+            const bassline = [110.00, 110.00, 116.54, 110.00, 123.47, 110.00, 116.54, 123.47];
+            const bassFreq = bassline[this.bgmStep % bassline.length];
+            
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            const filter = this.ctx.createBiquadFilter();
+            
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(bassFreq, t);
+            
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(600, t);
+            filter.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+            
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(0.12, t + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+            
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.musicGain);
+            
+            osc.start(t);
+            osc.stop(t + 0.25);
+            
+            if (this.bgmStep % 4 === 2) {
+                const tickOsc = this.ctx.createOscillator();
+                const tickGain = this.ctx.createGain();
+                tickOsc.type = 'square';
+                tickOsc.frequency.value = 9000;
+                
+                tickGain.gain.setValueAtTime(0.015, t);
+                tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+                
+                tickOsc.connect(tickGain);
+                tickGain.connect(this.musicGain);
+                tickOsc.start(t);
+                tickOsc.stop(t + 0.05);
+            }
+            
+            if (this.bgmStep % 16 === 8 || this.bgmStep % 16 === 14) {
+                const melOsc = this.ctx.createOscillator();
+                const melGain = this.ctx.createGain();
+                melOsc.type = 'triangle';
+                
+                const melodies = [440.00, 622.25, 587.33, 493.88];
+                const note = melodies[Math.floor(this.bgmStep / 16) % melodies.length];
+                melOsc.frequency.setValueAtTime(note, t);
+                
+                melGain.gain.setValueAtTime(0, t);
+                melGain.gain.linearRampToValueAtTime(0.06, t + 0.03);
+                melGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+                
+                melOsc.connect(melGain);
+                melGain.connect(this.musicGain);
+                melOsc.start(t);
+                melOsc.stop(t + 0.7);
+            }
+            
+            this.bgmStep++;
+            this.bgmNextNoteTime = t + stepDuration;
+        }
+    },
+    playCannonLaunch() {
+        if (this.muted) return;
+        this.init();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const t = this.ctx.currentTime;
+        
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(80, t);
+        osc.frequency.exponentialRampToValueAtTime(900, t + 0.35);
+        
+        gain.gain.setValueAtTime(0.35, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        
+        osc.connect(gain);
+        gain.connect(this.gameGain);
+        osc.start(t);
+        osc.stop(t + 0.45);
+    },
+    playCannonImpact() {
+        if (this.muted) return;
+        this.init();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const t = this.ctx.currentTime;
+        
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(150, t);
+        osc.frequency.exponentialRampToValueAtTime(30, t + 0.55);
+        
+        gain.gain.setValueAtTime(0.9, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+        
+        osc.connect(gain);
+        gain.connect(this.gameGain);
+        osc.start(t);
+        osc.stop(t + 0.65);
     },
     updateSirenArcade(now, powerMode, eatenRatio) {
         if (!this.arcadeSirenOsc) {
@@ -1348,6 +1480,62 @@ function updateGhostFlowField() {
     }
 }
 
+function updateCannonFlowField() {
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    cannonFlowField = new Array(rows);
+    for (var r = 0; r < rows; r++) {
+        cannonFlowField[r] = new Array(cols).fill(999999999);
+    }
+    
+    var queue = [];
+    var activeCannonsCount = 0;
+    
+    window.cannons.forEach(function(cannon) {
+        if (cannon.cooldown <= 0) {
+            activeCannonsCount++;
+            
+            var startDist = 0;
+            if (window.snakeBoss) {
+                // Calcular distância do canhão até a cabeça da cobra
+                var distToSnake = Math.abs(cannon.x - window.snakeBoss.headX) + Math.abs(cannon.y - window.snakeBoss.headY);
+                // Canhões mais próximos da cobra começam com um custo (penalidade) maior, até 30 passos
+                startDist = Math.max(0, 22 - distToSnake) * 1.5;
+            }
+            
+            cannonFlowField[cannon.y][cannon.x] = startDist;
+            queue.push({ x: cannon.x, y: cannon.y, dist: startDist });
+        }
+    });
+    
+    if (activeCannonsCount === 0) return;
+    
+    var head = 0;
+    while (head < queue.length) {
+        var curr = queue[head++];
+        
+        if (curr.dist > cannonFlowField[curr.y][curr.x]) continue;
+        
+        var dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+        for (var d = 0; d < 4; d++) {
+            var nx = curr.x + dirs[d][0];
+            var ny = curr.y + dirs[d][1];
+            
+            if (nx < 0) nx = cols - 1;
+            else if (nx >= cols) nx = 0;
+            
+            if (ny >= 0 && ny < rows && pacmanMaze[ny] && pacmanMaze[ny][nx] !== 1) {
+                var ndist = curr.dist + 1;
+                if (ndist < cannonFlowField[ny][nx]) {
+                    cannonFlowField[ny][nx] = ndist;
+                    queue.push({ x: nx, y: ny, dist: ndist });
+                }
+            }
+        }
+    }
+}
+
 // Auto Like Bot Logic
 var pacmanAutoLikeBotInterval = null;
 function toggleAutoLikeBot() {
@@ -1400,6 +1588,9 @@ function initPacmanMaze() {
              }
          }
      }
+     
+     window.pacmanMaxDots = pacmanDots.length;
+     window.pacmanBossTriggeredThisLevel = false;
      
      pacmanGiftDrops = []; // Reset gift drops
      
@@ -1835,6 +2026,26 @@ function checkDotCollision(pl, userName) {
              spawnDotParticles(pl.targetX, pl.targetY, dot.power ? '#00ffcc' : pacmanThemeDotColor, dot.power ? 20 : 5);
              updatePacmanLeaderboard();
              
+             // Verificar gatilho automático do Boss Cobra (quando metade dos pontos for coletado, fase sim, fase não)
+             if (pacmanLevel % 2 === 0 && !window.pacmanBossTriggeredThisLevel) {
+                 var activeDotsCount = pacmanDots.filter(function(d) { return d.active; }).length;
+                 if (activeDotsCount <= window.pacmanMaxDots / 2) {
+                     window.pacmanBossTriggeredThisLevel = true;
+                     
+                     // Escolhe uma variação aleatória de skin para a cobra!
+                     var skins = ['forest', 'fire', 'cyber', 'gold'];
+                     var chosenSkin = skins[Math.floor(Math.random() * skins.length)];
+                     
+                     if (!window.snakeBoss) {
+                         window.toggleSnakeBossEvent();
+                         if (window.snakeBoss) {
+                             window.snakeBoss.skin = chosenSkin;
+                             pushAlertEvent(`🐉 ALERTA: O Chefão Cobra de tipo [${chosenSkin.toUpperCase()}] apareceu porque metade dos pontos foi coletada!`);
+                         }
+                     }
+                 }
+             }
+
              // Check if all dots collected
              if (pacmanDots.every(function(d) { return !d.active; })) {
                  triggerRoundEnd();
@@ -1933,11 +2144,11 @@ function spawnPacmanPlayer(userName, avatar) {
 
 function findNextMoveAI(pl, isClone) {
      var bestDir = pl.dir || 'right';
-     var bestScore = 999999999; // Aumentado para suportar labirintos vazios gigantes
+     var bestScore = 999999999;
+     var hasSpeed = (pl.speedBoostTimer > 0 || pl.giftSpeedTimer > 0 || pl.giftSpeedMultiplier > 1.0);
      
      var oppositeDir = { 'up': 'down', 'down': 'up', 'left': 'right', 'right': 'left' }[pl.dir];
      
-     // Verifica distância inicial dos fantasmas para ajustar comportamento de fuga
      var nearestGhostDist = 999;
      for (var j = 0; j < pacmanGhosts.length; j++) {
          var gh = pacmanGhosts[j];
@@ -1972,7 +2183,6 @@ function findNextMoveAI(pl, isClone) {
          }
          
          if (isValid) {
-             // Lógica Dinâmica de Fantasmas
              var gDist = 99999;
              for (var j = 0; j < pacmanGhosts.length; j++) {
                  if (pacmanGhosts[j].homeTime > 0 || pacmanGhosts[j].isDead) continue;
@@ -1982,26 +2192,40 @@ function findNextMoveAI(pl, isClone) {
 
              var score = 999999999;
              
-             // Se for gigante, a caça direta aos fantasmas (devorando paredes) é prioridade absoluta!
              if (isGiant) {
+                 // Giant Mode AI routing
                  if (gDist !== 99999) {
                      score = gDist * 50000;
-                     if (d === oppositeDir) score += 3500; // Evita ziguezague desnecessário
+                     if (d === oppositeDir) score += 3500;
                      if (d !== pl.dir) score += 0.1;
-                     if (pacmanMaze[ty][tx] === 1) score += 10; // Prefere caminhos livres em caso de empate
+                     if (pacmanMaze[ty][tx] === 1) score += 10;
                  } else {
                      var targetField = isClone ? cloneFlowField : dotFlowField;
                      score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
                  }
              } else {
-                 // Lógica normal de movimentação (com desvio de paredes)
+                 // Normal mode AI routing
                  var targetField = isClone ? cloneFlowField : dotFlowField;
+                 
+                 // Se o boss estiver ativo e não for clone, priorizar o canhão.
+                 // No modo speed, a prioridade para o canhão é absoluta.
+                 if (window.snakeBoss && !isClone) {
+                     var hasActiveCannon = window.cannons.some(function(c) { return c.cooldown <= 0; });
+                     if (hasActiveCannon) {
+                         targetField = cannonFlowField;
+                     }
+                 }
+                 
                  score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
                  
-                 // Penalidade de meia-volta dinâmica!
+                 // Se estiver no modo Speed e indo pro canhão, dá prioridade absoluta (atração forte)
+                 if (hasSpeed && window.snakeBoss && targetField === cannonFlowField) {
+                     score -= 15000; // Super atração para canhões válidos
+                 }
+                 
                  var revPenalty = 1000;
                  if (hasPower) {
-                     revPenalty = 3500; // Impede jittering ao caçar fantasmas
+                     revPenalty = 3500; 
                  }
                  if (pl.speedBoostTimer > 0) {
                      revPenalty = 8000;
@@ -2014,7 +2238,6 @@ function findNextMoveAI(pl, isClone) {
                  if (d !== pl.dir) score += 0.1;
                  if (d === oppositeDir) score += revPenalty;
                  
-                 // Pheromone repulsion (max 250)
                  var pheroData = pacmanPheromones[tx + ',' + ty];
                  var pheroTime = pheroData ? (pheroData.time || pheroData) : 0;
                  var pheroAge = Date.now() - pheroTime;
@@ -2022,7 +2245,6 @@ function findNextMoveAI(pl, isClone) {
                      score += (5000 - pheroAge) * 0.05; 
                  }
                  
-                 // Lógica Dinâmica de Fantasmas
                  if (hasPower) {
                      var mazeGhostDist = (ghostFlowField && ghostFlowField[ty] && ghostFlowField[ty][tx] !== undefined) ? ghostFlowField[ty][tx] : 999999999;
                      if (mazeGhostDist < 999999) {
@@ -2031,13 +2253,34 @@ function findNextMoveAI(pl, isClone) {
                          score -= (1000 - gDist) * 2000;
                      }
                  } else if (hasSorveteShield) {
-                     // IGNORA FANTASMAS: Não caça, mas também não foge. Continua focando apenas nos pontos.
                  } else {
                      if (gDist < 4) {
-                         // Forte repulsão. O peso 5000 esmaga qualquer custo de espaço vazio (1000)
                          score += (4 - gDist) * 5000; 
                      }
                  }
+             }
+             
+             // Evitar o Chefão Cobra (Apenas se NÃO for gigante, pois o gigante pode atropelar a cobra para dar dano!)
+             if (window.snakeBoss && !isGiant) {
+                 var sDist = 99999;
+                 var dH = Math.abs(tx - window.snakeBoss.headX) + Math.abs(ty - window.snakeBoss.headY);
+                 if (dH < sDist) sDist = dH;
+                 
+                 window.snakeBoss.segments.forEach(function(seg) {
+                     var dS = Math.abs(tx - seg.x) + Math.abs(ty - seg.y);
+                     if (dS < sDist) sDist = dS;
+                 });
+                 
+                 if (sDist < 3) {
+                     score += (3 - sDist) * 35000; // Forte repulsão da cabeça/corpo da cobra
+                 }
+                 
+                 // Bloquear completamente andar por cima de segmentos da cauda
+                 window.snakeBoss.segments.forEach(function(seg) {
+                     if (tx === seg.x && ty === seg.y) {
+                         score += 250000; // Bloqueio total
+                     }
+                  });
              }
              
              if (score < bestScore) {
@@ -2066,16 +2309,25 @@ function getClosestPlayer(ghX, ghY) {
  }
 
 function getAvailableSpawnPosition() {
-     // Find a safe position in the ghost house area
-     var candidates = [];
-     for (var c = 10; c <= 14; c++) {
-         for (var r = 17; r <= 21; r++) {
-             if (pacmanMaze[r] && pacmanMaze[r][c] === 0) {
-                 candidates.push({ x: c, y: r });
+     // Encontra uma posição livre em qualquer parte do labirinto (fora da casa dos fantasmas e longe da cobra)
+     var validSpots = [];
+     for (var r = 1; r < pacmanMaze.length - 1; r++) {
+         for (var c = 1; c < pacmanMaze[0].length - 1; c++) {
+             if (pacmanMaze[r][c] === 0) {
+                 // Excluir a área da casa dos fantasmas
+                 if (r >= 15 && r <= 23 && c >= 8 && c <= 16) continue;
+                 
+                 // Se o Chefão Cobra estiver ativo, evitar posições muito próximas da cabeça dele
+                 if (window.snakeBoss) {
+                     var dH = Math.abs(c - window.snakeBoss.headX) + Math.abs(r - window.snakeBoss.headY);
+                     if (dH < 6) continue;
+                 }
+                 
+                 validSpots.push({ x: c, y: r });
              }
          }
      }
-     return candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : { x: 13, y: 19 };
+     return validSpots.length > 0 ? validSpots[Math.floor(Math.random() * validSpots.length)] : { x: 13, y: 19 };
  }
 
 function getAvailableGiftSpawnPosition() {
@@ -3538,6 +3790,7 @@ function updateEntities() {
     for (var p in pacmanPlayers) {
         var pl = pacmanPlayers[p];
         if (pl.lives <= 0) continue;
+        if (pl.isCannonball) continue;
         
         if (pl.spawnProtection > 0) pl.spawnProtection--;
         if (pl.speedBoostTimer > 0) pl.speedBoostTimer--;
@@ -3739,6 +3992,28 @@ function updateEntities() {
                 
                 AudioSynth.playWaka(); // Som waka-waka ao andar/comer
                 checkDotCollision(pl, p);
+                
+                // Entrar no canhão ao parar sobre ele (Somente se o Boss estiver ativo e NÃO estiver na animação de morte)
+                if (window.snakeBoss && window.snakeBoss.state !== 'dying') {
+                    window.cannons.forEach(function(cannon) {
+                        if (pl.x === cannon.x && pl.y === cannon.y && cannon.cooldown <= 0) {
+                            pl.isCannonball = true;
+                            pl.flightProgress = 0.0;
+                            pl.flightStartX = pl.x;
+                            pl.flightStartY = pl.y;
+                            pl.flightCurrentX = pl.x;
+                            pl.flightCurrentY = pl.y;
+                            
+                            cannon.cooldown = cannon.maxCooldown;
+                            
+                            AudioSynth.playCannonLaunch();
+                            spawnTextParticle(pl.x, pl.y, '🚀 LANÇADO!', '#ff9900');
+                            pushAlertEvent(`💥 @${p} foi lançado pelo canhão contra a Cobra!`);
+                            
+                            updateCannonFlowField();
+                        }
+                    });
+                }
             }
         }
     }
@@ -4208,6 +4483,280 @@ function checkCameraZoomTrigger() {
     }
 }
 
+function drawSnakeSegment(ctx, sx, sy, angle, i, skin) {
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(angle);
+    
+    var w = pacmanTileSize * 1.5;
+    var h = pacmanTileSize * 1.35;
+    ctx.lineWidth = 3.5;
+    
+    if (skin === 'forest') { // Dragão Chinês / Serpente Emplumada
+        ctx.fillStyle = `hsl(135, 100%, ${25 + (i % 3) * 6}%)`;
+        ctx.strokeStyle = '#00ff66';
+        
+        ctx.beginPath();
+        ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Penacho de pelos/escamas nas costas
+        ctx.fillStyle = '#00ff66';
+        ctx.beginPath();
+        ctx.moveTo(-w/4, -w/2);
+        ctx.quadraticCurveTo(-w/2, -w, -w*0.8, -w*0.7);
+        ctx.quadraticCurveTo(-w/3, -w/2, 0, -w/2);
+        ctx.closePath();
+        ctx.fill();
+        
+    } else if (skin === 'fire') { // Lagarto de Lava / Dinossauro
+        ctx.fillStyle = `hsl(15, 100%, ${35 + (i % 3) * 8}%)`;
+        ctx.strokeStyle = '#ff9900';
+        
+        ctx.beginPath();
+        ctx.moveTo(-w/2, 0);
+        ctx.lineTo(-w/4, -h/2);
+        ctx.lineTo(w/4, -h/2);
+        ctx.lineTo(w/2, 0);
+        ctx.lineTo(w/4, h/2);
+        ctx.lineTo(-w/4, h/2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Espinho de pedra rígido
+        ctx.fillStyle = '#ffcc00';
+        ctx.beginPath();
+        ctx.moveTo(-w/4, -h/2);
+        ctx.lineTo(-w/2, -h*0.85);
+        ctx.lineTo(0, -h/2);
+        ctx.closePath();
+        ctx.fill();
+        
+    } else if (skin === 'cyber') { // Cobra Robótica Hexagonal
+        ctx.fillStyle = `hsl(280, 100%, ${30 + (i % 3) * 8}%)`;
+        ctx.strokeStyle = '#00f0ff';
+        
+        ctx.beginPath();
+        ctx.moveTo(-w/2, 0);
+        ctx.lineTo(-w/3, -h/2.2);
+        ctx.lineTo(w/3, -h/2.2);
+        ctx.lineTo(w/2, 0);
+        ctx.lineTo(w/3, h/2.2);
+        ctx.lineTo(-w/3, h/2.2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Núcleo de energia neon
+        ctx.fillStyle = '#00f0ff';
+        ctx.beginPath();
+        ctx.arc(0, 0, w/5, 0, Math.PI*2);
+        ctx.fill();
+        
+    } else if (skin === 'gold') { // Serpente Real / Coroada
+        ctx.fillStyle = `hsl(45, 100%, ${35 + (i % 3) * 7}%)`;
+        ctx.strokeStyle = '#fbbf24';
+        
+        ctx.beginPath();
+        ctx.moveTo(-w/2, -h/3);
+        ctx.quadraticCurveTo(0, -h/2, w/2, -h/3);
+        ctx.quadraticCurveTo(w/2, h/3, 0, h/2);
+        ctx.quadraticCurveTo(-w/2, h/3, -w/2, -h/3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Joia vermelha central
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, 0, w/7, 0, Math.PI*2);
+        ctx.fill();
+    }
+    
+    ctx.restore();
+}
+
+function drawSnakeHead(ctx, hx, hy, angle, skin) {
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(angle);
+    
+    var hw = pacmanTileSize * 1.8;
+    var hh = pacmanTileSize * 1.6;
+    ctx.lineWidth = 4;
+    
+    var hitFlash = window.snakeBoss && window.snakeBoss.hitFlashTimer && window.snakeBoss.hitFlashTimer > 0;
+    
+    if (skin === 'forest') { // Cabeça de Dragão Chinês
+        ctx.fillStyle = hitFlash ? ((Math.floor(window.snakeBoss.hitFlashTimer / 3) % 2 === 0) ? '#ffffff' : '#ef4444') : '#052e16';
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#00ff66';
+        
+        ctx.beginPath();
+        ctx.moveTo(-hw/3, -hh/2);
+        ctx.lineTo(hw/4, -hh/2.5);
+        ctx.lineTo(hw/2, -hh/4);
+        ctx.lineTo(hw/2, hh/4);
+        ctx.lineTo(hw/4, hh/2.5);
+        ctx.lineTo(-hw/3, hh/2);
+        ctx.quadraticCurveTo(-hw/2, 0, -hw/3, -hh/2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Chifres longos curvados de Dragão
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#00ff66';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-hw/4, -hh/2.2);
+        ctx.quadraticCurveTo(-hw*0.9, -hh*0.9, -hw*1.2, -hh*0.6);
+        ctx.moveTo(-hw/4, hh/2.2);
+        ctx.quadraticCurveTo(-hw*0.9, hh*0.9, -hw*1.2, hh*0.6);
+        ctx.stroke();
+        
+        // Bigodes ondulantes de dragão
+        var wWave = Math.sin(Date.now() / 150) * 8;
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#ff3366';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(hw/3, -hh/6);
+        ctx.quadraticCurveTo(hw*0.8, -hh/3 + wWave, hw*1.1, -hh/6);
+        ctx.moveTo(hw/3, hh/6);
+        ctx.quadraticCurveTo(hw*0.8, hh/3 - wWave, hw*1.1, hh/6);
+        ctx.stroke();
+        
+        // Olhos vermelhos
+        ctx.fillStyle = hitFlash ? '#ffffff' : '#ef4444';
+        ctx.beginPath();
+        ctx.arc(hw/6, -hh/4, 5, 0, Math.PI * 2);
+        ctx.arc(hw/6, hh/4, 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+    } else if (skin === 'fire') { // Cabeça Espinhosa de Lagarto
+        ctx.fillStyle = hitFlash ? ((Math.floor(window.snakeBoss.hitFlashTimer / 3) % 2 === 0) ? '#ffffff' : '#ef4444') : '#1c1917';
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#ffaa00';
+        
+        ctx.beginPath();
+        ctx.moveTo(-hw/2, -hh/3);
+        ctx.lineTo(0, -hh/2);
+        ctx.lineTo(hw/2, -hh/6);
+        ctx.lineTo(hw/2, hh/6);
+        ctx.lineTo(0, hh/2);
+        ctx.lineTo(-hw/2, hh/3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Cristas/Espinhos ósseos na nuca
+        ctx.fillStyle = hitFlash ? '#ffffff' : '#ef4444';
+        ctx.beginPath();
+        ctx.moveTo(-hw/2, -hh/3); ctx.lineTo(-hw*0.8, -hh/2); ctx.lineTo(-hw/4, -hh/2.2);
+        ctx.moveTo(-hw/2, hh/3); ctx.lineTo(-hw*0.8, hh/2); ctx.lineTo(-hw/4, hh/2.2);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Olhos amarelos com pupilas de fenda (lizard eyes)
+        ctx.fillStyle = hitFlash ? '#ffffff' : '#ffff00';
+        ctx.beginPath();
+        ctx.arc(hw/5, -hh/5, 5, 0, Math.PI * 2);
+        ctx.arc(hw/5, hh/5, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(hw/5 - 1, -hh/5 - 4, 2, 8);
+        ctx.fillRect(hw/5 - 1, hh/5 - 4, 2, 8);
+        
+    } else if (skin === 'cyber') { // Cabeça Robótica de Mech
+        ctx.fillStyle = hitFlash ? ((Math.floor(window.snakeBoss.hitFlashTimer / 3) % 2 === 0) ? '#ffffff' : '#ef4444') : '#0f172a';
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#00f0ff';
+        
+        ctx.beginPath();
+        ctx.moveTo(-hw/2, -hh/2);
+        ctx.lineTo(hw/3, -hh/2);
+        ctx.lineTo(hw/2, 0);
+        ctx.lineTo(hw/3, hh/2);
+        ctx.lineTo(-hw/2, hh/2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Visor Neon
+        ctx.fillStyle = hitFlash ? '#ffffff' : '#ff00ff';
+        ctx.shadowBlur = hitFlash ? 0 : 8;
+        ctx.shadowColor = '#ff00ff';
+        ctx.fillRect(hw/6, -hh/3, 8, hh * 0.66);
+        ctx.shadowBlur = 0;
+        
+        // Antenas cibernéticas
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#00f0ff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-hw/3, -hh/2);
+        ctx.lineTo(-hw*0.7, -hh*0.8);
+        ctx.stroke();
+        
+    } else if (skin === 'gold') { // Cabeça Coroada de Naja Real
+        // Capelo largo nas laterais (naja hood)
+        ctx.fillStyle = hitFlash ? ((Math.floor(window.snakeBoss.hitFlashTimer / 3) % 2 === 0) ? '#ffffff' : '#ef4444') : '#78350f';
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#fbbf24';
+        ctx.beginPath();
+        ctx.ellipse(-hw/8, 0, hw/2, hh/1.4, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Cabeça central
+        ctx.fillStyle = hitFlash ? ((Math.floor(window.snakeBoss.hitFlashTimer / 3) % 2 === 0) ? '#ffffff' : '#ef4444') : '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(-hw/3, -hh/3);
+        ctx.lineTo(hw/4, -hh/3);
+        ctx.quadraticCurveTo(hw/2, 0, hw/4, hh/3);
+        ctx.lineTo(-hw/3, hh/3);
+        ctx.quadraticCurveTo(-hw/2, 0, -hw/3, -hh/3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Coroa Imperial (Symmetrical along Y-axis)
+        ctx.fillStyle = hitFlash ? '#ffffff' : '#fbbf24';
+        ctx.strokeStyle = hitFlash ? '#ffffff' : '#78350f';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-hw/2.5, -hh/4);
+        ctx.lineTo(-hw/2.5, -hh/3);
+        ctx.lineTo(-hw * 0.75, -hh/2); // Top point
+        ctx.lineTo(-hw/2.5, -hh/6);    // Valley 1
+        ctx.lineTo(-hw * 0.9, 0);       // Center point
+        ctx.lineTo(-hw/2.5, hh/6);     // Valley 2
+        ctx.lineTo(-hw * 0.75, hh/2);  // Bottom point
+        ctx.lineTo(-hw/2.5, hh/3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Olhos esmeralda
+        ctx.fillStyle = '#10b981';
+        ctx.beginPath();
+        ctx.arc(hw/5, -hh/6, 4.5, 0, Math.PI * 2);
+        ctx.arc(hw/5, hh/6, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
+    // Língua bifurcada (exceto para cibernética)
+    if (skin !== 'cyber' && Math.floor(Date.now() / 150) % 2 === 0) {
+        var tongueCol = (skin === 'gold' || skin === 'forest') ? '#ef4444' : '#ffaa00';
+        ctx.strokeStyle = tongueCol;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(hw/3, 0);
+        ctx.lineTo(hw/3 + 12, -4);
+        ctx.moveTo(hw/3, 0);
+        ctx.lineTo(hw/3 + 12, 4);
+        ctx.stroke();
+    }
+    
+    ctx.restore();
+}
+
 function drawPacman() {
     if (!pacmanCtx) return;
     var canvas = document.getElementById('gameCanvas');
@@ -4220,6 +4769,15 @@ function drawPacman() {
     
     // Save context for zoom transformations
     pacmanCtx.save();
+    
+    // Screen Shake Effect
+    if (window.pacmanScreenShake && window.pacmanScreenShake > 0) {
+        var dx = (Math.random() - 0.5) * window.pacmanScreenShake;
+        var dy = (Math.random() - 0.5) * window.pacmanScreenShake;
+        pacmanCtx.translate(dx, dy);
+        window.pacmanScreenShake *= 0.9; // decay
+        if (window.pacmanScreenShake < 0.5) window.pacmanScreenShake = 0;
+    }
     
     // Apply zoom if active (applies to everything: maze, dots, players, ghosts)
     if (pacmanZoomTarget) {
@@ -4821,6 +5379,215 @@ function drawPacman() {
     
     // Overlay DOM sync removido a pedido do usuário (animação agora é fixa no centro)
     
+    // === DRAW SNAKE BOSS AND CANNONS IN GAME SPACE ===
+    if (window.snakeBoss) {
+        // 1. Draw Cannons
+        window.cannons.forEach(function(c) {
+            var cx = (c.x + 0.5) * pacmanTileSize;
+            var cy = (c.y + 0.5) * pacmanTileSize;
+            var rad = pacmanTileSize * 0.9;
+            
+            pacmanCtx.save();
+            
+            // Draw outer metallic ring
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(cx, cy, rad, 0, Math.PI * 2);
+            if (c.cooldown > 0) {
+                pacmanCtx.fillStyle = 'rgba(70, 70, 80, 0.5)';
+                pacmanCtx.strokeStyle = '#444455';
+            } else {
+                var pulse = 1.0 + Math.sin(Date.now() / 100) * 0.08;
+                pacmanCtx.fillStyle = 'rgba(147, 51, 234, 0.3)';
+                pacmanCtx.strokeStyle = '#c084fc';
+                rad *= pulse;
+            }
+            pacmanCtx.lineWidth = 4;
+            pacmanCtx.fill();
+            pacmanCtx.stroke();
+            
+            // Draw barrel pointing to Snake Head if ready
+            if (c.cooldown <= 0) {
+                var dx = window.snakeBoss.headX - c.x;
+                var dy = window.snakeBoss.headY - c.y;
+                var angle = Math.atan2(dy, dx);
+                
+                pacmanCtx.translate(cx, cy);
+                pacmanCtx.rotate(angle);
+                
+                pacmanCtx.fillStyle = '#c084fc';
+                pacmanCtx.fillRect(0, -8, rad * 1.1, 16);
+                
+                pacmanCtx.fillStyle = '#00ffff';
+                pacmanCtx.fillRect(rad * 0.8, -10, 8, 20);
+                
+                pacmanCtx.restore();
+                pacmanCtx.save();
+            }
+            
+            // Draw inner core
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(cx, cy, rad * 0.4, 0, Math.PI * 2);
+            pacmanCtx.fillStyle = c.cooldown > 0 ? '#33333b' : '#00ffff';
+            pacmanCtx.fill();
+            
+            // Draw cooldown arc overlay
+            if (c.cooldown > 0) {
+                var pct = c.cooldown / c.maxCooldown;
+                pacmanCtx.beginPath();
+                pacmanCtx.moveTo(cx, cy);
+                pacmanCtx.arc(cx, cy, rad * 1.05, -Math.PI/2, -Math.PI/2 + (Math.PI * 2 * pct), false);
+                pacmanCtx.closePath();
+                pacmanCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                pacmanCtx.fill();
+                
+                pacmanCtx.font = "bold 10px monospace";
+                pacmanCtx.fillStyle = '#ff3333';
+                pacmanCtx.textAlign = 'center';
+                pacmanCtx.textBaseline = 'middle';
+                var secLeft = Math.ceil(c.cooldown / 60);
+                pacmanCtx.fillText(secLeft + 's', cx, cy);
+            } else {
+                pacmanCtx.font = "bold 12px monospace";
+                pacmanCtx.fillStyle = '#000000';
+                pacmanCtx.textAlign = 'center';
+                pacmanCtx.textBaseline = 'middle';
+                pacmanCtx.fillText('⚡', cx, cy);
+            }
+            
+            pacmanCtx.restore();
+        });
+        
+        // 2. Draw Snake Body segments (reversed order for overlapping scales)
+        var boss = window.snakeBoss;
+        var skin = boss.skin || 'forest';
+        var startIdx = (boss.state === 'dying') ? boss.deathSegmentIndex : boss.segments.length - 1;
+        for (var i = startIdx; i >= 0; i--) {
+            var seg = boss.segments[i];
+            var nextSeg = (i === 0) ? { x: boss.headX, y: boss.headY } : boss.segments[i - 1];
+            var dx = nextSeg.x - seg.x;
+            var dy = nextSeg.y - seg.y;
+            var rows = pacmanMaze.length;
+            var cols = pacmanMaze[0].length;
+            
+            // Adjust delta for wrap-around
+            if (Math.abs(dx) > cols / 2) {
+                dx = -Math.sign(dx) * (cols - Math.abs(dx));
+            }
+            if (Math.abs(dy) > rows / 2) {
+                dy = -Math.sign(dy) * (rows - Math.abs(dy));
+            }
+            
+            var angle = Math.atan2(dy, dx);
+            
+            // Interpolate segment position for smooth sliding
+            var interpX = seg.x;
+            var interpY = seg.y;
+            
+            if (boss.state !== 'dying' && boss.progress > 0) {
+                interpX = (seg.x + dx * boss.progress + cols) % cols;
+                interpY = (seg.y + dy * boss.progress + rows) % rows;
+            }
+            
+            var sx = (interpX + 0.5) * pacmanTileSize;
+            var sy = (interpY + 0.5) * pacmanTileSize;
+            
+            drawSnakeSegment(pacmanCtx, sx, sy, angle, i, skin);
+        }
+        
+        // 3. Draw Snake Head (interpolated position)
+        if (boss.state !== 'dying' || boss.deathSegmentIndex >= 0) {
+            var hx = (boss.headX + 0.5) * pacmanTileSize;
+            var hy = (boss.headY + 0.5) * pacmanTileSize;
+            if (boss.progress > 0) {
+                var dx = boss.targetX - boss.headX;
+                var dy = boss.targetY - boss.headY;
+                var rows = pacmanMaze.length;
+                var cols = pacmanMaze[0].length;
+                if (Math.abs(dx) > cols / 2) dx = -Math.sign(dx) * 1;
+                if (Math.abs(dy) > rows / 2) dy = -Math.sign(dy) * 1;
+                hx += dx * boss.progress * pacmanTileSize;
+                hy += dy * boss.progress * pacmanTileSize;
+            }
+            
+            var headAngle = 0;
+            if (boss.dir === 'left') headAngle = Math.PI;
+            else if (boss.dir === 'right') headAngle = 0;
+            else if (boss.dir === 'up') headAngle = -Math.PI/2;
+            else if (boss.dir === 'down') headAngle = Math.PI/2;
+            
+            drawSnakeHead(pacmanCtx, hx, hy, headAngle, skin);
+        }
+    }
+    
+    // 4. Draw Flying Cannonball Players
+    for (var p in pacmanPlayers) {
+        var pl = pacmanPlayers[p];
+        if (pl.lives > 0 && pl.isCannonball) {
+            var fx = pl.flightCurrentX * pacmanTileSize + pacmanTileSize/2;
+            var fy = pl.flightCurrentY * pacmanTileSize + pacmanTileSize/2;
+            var rad = pacmanTileSize * 0.95;
+            
+            pacmanCtx.save();
+            
+            // Glow and burning flame circle
+            var fireGrad = pacmanCtx.createRadialGradient(fx, fy, rad * 0.2, fx, fy, rad * 1.2);
+            fireGrad.addColorStop(0, '#ffff00');
+            fireGrad.addColorStop(0.3, '#ffaa00');
+            fireGrad.addColorStop(0.7, '#ff3300');
+            fireGrad.addColorStop(1, 'rgba(255, 51, 0, 0)');
+            
+            pacmanCtx.fillStyle = fireGrad;
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(fx, fy, rad * 1.2, 0, Math.PI * 2);
+            pacmanCtx.fill();
+            
+            // Draw player avatar circular mask
+            var avatarImg = getGiftImage(pl.avatar);
+            if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0) {
+                pacmanCtx.beginPath();
+                pacmanCtx.arc(fx, fy, rad * 0.65, 0, Math.PI * 2);
+                pacmanCtx.closePath();
+                pacmanCtx.clip();
+                
+                pacmanCtx.drawImage(avatarImg, fx - rad * 0.65, fy - rad * 0.65, rad * 1.3, rad * 1.3);
+            } else {
+                pacmanCtx.fillStyle = pl.color;
+                pacmanCtx.beginPath();
+                pacmanCtx.arc(fx, fy, rad * 0.65, 0, Math.PI * 2);
+                pacmanCtx.fill();
+            }
+            
+            pacmanCtx.restore();
+        }
+    }
+
+    // Update and draw Shockwaves in Game Space (Cinematic)
+    if (window.pacmanShockwaves && window.pacmanShockwaves.length > 0) {
+        for (var sIdx = window.pacmanShockwaves.length - 1; sIdx >= 0; sIdx--) {
+            var sw = window.pacmanShockwaves[sIdx];
+            sw.life--;
+            if (sw.life <= 0) {
+                window.pacmanShockwaves.splice(sIdx, 1);
+                continue;
+            }
+            var radius = sw.radius + (sw.maxRadius - sw.radius) * (1 - sw.life / 24);
+            var alpha = sw.life / 24;
+            
+            pacmanCtx.save();
+            pacmanCtx.strokeStyle = sw.color;
+            pacmanCtx.globalAlpha = alpha;
+            pacmanCtx.lineWidth = 6;
+            pacmanCtx.shadowBlur = 15;
+            pacmanCtx.shadowColor = sw.color;
+            
+            pacmanCtx.beginPath();
+            pacmanCtx.arc(sw.x, sw.y, radius, 0, Math.PI * 2);
+            pacmanCtx.stroke();
+            
+            pacmanCtx.restore();
+        }
+    }
+
     // Restore translation context
     pacmanCtx.restore();
     
@@ -4837,6 +5604,121 @@ function drawPacman() {
         pacmanCtx.font = "11px monospace";
         pacmanCtx.fillStyle = '#ffffff';
         pacmanCtx.fillText('AGUARDANDO CONEXAO DA LIVE...', canvas.width / 2, canvas.height / 2 + 15);
+    }
+
+    // === DRAW BOSS HEALTH BAR IN SCREEN SPACE ===
+    if (window.snakeBoss) {
+        var boss = window.snakeBoss;
+        var barW = 600;
+        var barH = 26;
+        var barX = canvas.width / 2 - barW / 2;
+        var barY = 120;
+        
+        pacmanCtx.save();
+        
+        pacmanCtx.fillStyle = '#1e293b';
+        pacmanCtx.strokeStyle = '#64748b';
+        pacmanCtx.lineWidth = 4;
+        pacmanCtx.shadowBlur = 10;
+        pacmanCtx.shadowColor = 'rgba(0,0,0,0.5)';
+        
+        function drawRoundedRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+        
+        drawRoundedRect(pacmanCtx, barX, barY, barW, barH, 6);
+        pacmanCtx.fill();
+        pacmanCtx.stroke();
+        pacmanCtx.shadowBlur = 0;
+        
+        var hpPct = Math.max(0, boss.health / boss.maxHealth);
+        if (hpPct > 0) {
+            pacmanCtx.save();
+            drawRoundedRect(pacmanCtx, barX + 3, barY + 3, (barW - 6) * hpPct, barH - 6, 4);
+            pacmanCtx.clip();
+            
+            var fillGrad = pacmanCtx.createLinearGradient(barX, 0, barX + barW, 0);
+            fillGrad.addColorStop(0, '#ff0033');
+            fillGrad.addColorStop(0.5, '#ff6600');
+            fillGrad.addColorStop(1.0, '#ffaa00');
+            
+            pacmanCtx.fillStyle = fillGrad;
+            pacmanCtx.fillRect(barX + 3, barY + 3, (barW - 6) * hpPct, barH - 6);
+            pacmanCtx.restore();
+        }
+        
+        pacmanCtx.font = "bold 15px 'Outfit', Inter, sans-serif";
+        pacmanCtx.fillStyle = '#ffffff';
+        pacmanCtx.strokeStyle = '#000000';
+        pacmanCtx.lineWidth = 3;
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        
+        var hpText = `🐉 CHEFÃO COBRA - HP: ${boss.health} / ${boss.maxHealth}`;
+        pacmanCtx.strokeText(hpText, canvas.width / 2, barY + barH/2);
+        pacmanCtx.fillText(hpText, canvas.width / 2, barY + barH/2);
+        
+        pacmanCtx.restore();
+    }
+    
+    // Render Boss Victory Banner (Screenspace)
+    if (window.pacmanBossVictoryBanner && window.pacmanBossVictoryBanner.timer > 0) {
+        var vb = window.pacmanBossVictoryBanner;
+        vb.timer--;
+        
+        pacmanCtx.save();
+        
+        var animPct = Math.min(1.0, (480 - vb.timer) / 30);
+        if (vb.timer < 30) animPct = vb.timer / 30;
+        
+        pacmanCtx.globalAlpha = animPct * 0.9;
+        pacmanCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        pacmanCtx.fillRect(0, canvas.height / 2 - 160, canvas.width, 320);
+        
+        pacmanCtx.strokeStyle = '#eab308';
+        pacmanCtx.lineWidth = 5;
+        pacmanCtx.beginPath();
+        pacmanCtx.moveTo(0, canvas.height / 2 - 160);
+        pacmanCtx.lineTo(canvas.width, canvas.height / 2 - 160);
+        pacmanCtx.moveTo(0, canvas.height / 2 + 160);
+        pacmanCtx.lineTo(canvas.width, canvas.height / 2 + 160);
+        pacmanCtx.stroke();
+        
+        pacmanCtx.shadowBlur = 20;
+        pacmanCtx.shadowColor = '#fbbf24';
+        pacmanCtx.font = "bold 32px 'Outfit', Inter, sans-serif";
+        pacmanCtx.fillStyle = '#fbbf24';
+        pacmanCtx.textAlign = 'center';
+        pacmanCtx.textBaseline = 'middle';
+        pacmanCtx.fillText('🏆 O CHEFÃO FOI DERROTADO! 🏆', canvas.width / 2, canvas.height / 2 - 80);
+        
+        pacmanCtx.shadowBlur = 10;
+        pacmanCtx.shadowColor = '#00ffff';
+        pacmanCtx.font = "bold 20px 'Outfit', Inter, sans-serif";
+        pacmanCtx.fillStyle = '#00ffff';
+        pacmanCtx.fillText('MVP DO COMBATE:', canvas.width / 2, canvas.height / 2 - 20);
+        
+        pacmanCtx.shadowBlur = 15;
+        pacmanCtx.shadowColor = vb.color;
+        pacmanCtx.font = "bold 28px 'Outfit', Inter, sans-serif";
+        pacmanCtx.fillStyle = vb.color;
+        pacmanCtx.fillText(`👑 @${vb.mvpName}`, canvas.width / 2, canvas.height / 2 + 30);
+        
+        pacmanCtx.font = "18px 'Outfit', Inter, sans-serif";
+        pacmanCtx.fillStyle = '#cbd5e1';
+        pacmanCtx.fillText(`Causou ${vb.damage} de dano com tiros de canhão!`, canvas.width / 2, canvas.height / 2 + 80);
+        
+        pacmanCtx.restore();
     }
 }
 
@@ -6089,6 +6971,9 @@ function gameLoop() {
                     updateGhostFlowField();
                 }
                 updateEntities();
+                if (window.snakeBoss) {
+                    updateSnakeBoss();
+                }
             }
             updateParticles();
         }
@@ -6862,3 +7747,576 @@ window.drawRealMazeBorders = function(ctx) {
     ctx.stroke();
     ctx.shadowBlur = 0;
 };
+
+// ==========================================
+// Snake Boss Logic and Actions
+// ==========================================
+
+window.toggleSnakeBossEvent = function() {
+    var btn = document.getElementById('btnBossEvent');
+    if (window.snakeBoss) {
+        window.snakeBoss = null;
+        if (btn) {
+            btn.innerHTML = '🐉 INICIAR EVENTO DO BOSS';
+            btn.style.background = 'rgba(147, 51, 234, 0.2)';
+            btn.style.color = '#c084fc';
+        }
+        pushAlertEvent('🐉 O evento do Chefão Cobra foi encerrado.');
+        updateDotFlowField();
+    } else {
+        window.snakeBoss = {
+            health: 12,
+            maxHealth: 12,
+            headX: 13,
+            headY: 19,
+            targetX: 13,
+            targetY: 19,
+            progress: 0,
+            dir: 'up',
+            length: 6,
+            segments: [
+                { x: 13, y: 20 },
+                { x: 13, y: 21 },
+                { x: 13, y: 22 },
+                { x: 13, y: 23 },
+                { x: 13, y: 24 }
+            ],
+            speed: 0.02,
+            growTimer: 0
+        };
+        
+        window.cannons.forEach(function(c) { c.cooldown = 0; });
+        for (var p in pacmanPlayers) {
+            pacmanPlayers[p].bossDamageDealt = 0;
+        }
+        
+        if (btn) {
+            btn.innerHTML = '🐉 PARAR EVENTO DO BOSS';
+            btn.style.background = 'rgba(147, 51, 234, 0.8)';
+            btn.style.color = '#fff';
+        }
+        pushAlertEvent('🐉 CUIDADO! O Chefão Cobra invadiu o labirinto!');
+        pushAlertEvent('💥 Use os canhões nos cantos para atacá-lo!');
+        
+        updateCannonFlowField();
+    }
+};
+
+window.defeatSnakeBoss = function() {
+    var btn = document.getElementById('btnBossEvent');
+    window.snakeBoss = null;
+    if (btn) {
+        btn.innerHTML = '🐉 INICIAR EVENTO DO BOSS';
+        btn.style.background = 'rgba(147, 51, 234, 0.2)';
+        btn.style.color = '#c084fc';
+    }
+    
+    var mvpName = '';
+    var maxDamage = 0;
+    var mvpColor = '#ffffff';
+    var mvpAvatar = '';
+    
+    for (var p in pacmanPlayers) {
+        var pl = pacmanPlayers[p];
+        var dmg = pl.bossDamageDealt || 0;
+        if (dmg > maxDamage) {
+            maxDamage = dmg;
+            mvpName = p;
+            mvpColor = pl.color || '#ffffff';
+            mvpAvatar = pl.avatar || '';
+        }
+    }
+    
+    if (mvpName) {
+        window.pacmanBossVictoryBanner = {
+            mvpName: mvpName,
+            damage: maxDamage,
+            color: mvpColor,
+            timer: 480
+        };
+        
+        window.pushBannerNotification({
+            type: 'boss_victory',
+            user: mvpName,
+            avatar: mvpAvatar,
+            color: mvpColor,
+            message: `MVP DO BOSS! Causou ${maxDamage} de dano! 🏆`,
+            icon: '👑',
+            timer: 480
+        });
+        pushAlertEvent(`🏆 MVP DO BOSS: @${mvpName} com ${maxDamage} acertos!`);
+    } else {
+        pushAlertEvent('🐉 O Chefão Cobra foi derrotado!');
+    }
+    
+    var colors = ['#ff0055', '#00ffcc', '#ffff00', '#ff00ff', '#00ff00', '#ff9900'];
+    var canvas = document.getElementById('gameCanvas');
+    var w = canvas ? canvas.width : 1080;
+    var h = canvas ? canvas.height : 1920;
+    
+    for (var i = 0; i < 120; i++) {
+        pacmanParticles.push({
+            x: Math.random() * w,
+            y: Math.random() * h * 0.3,
+            vx: (Math.random() - 0.5) * 4,
+            vy: 2 + Math.random() * 5,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            size: 4 + Math.random() * 6,
+            life: 180 + Math.floor(Math.random() * 100),
+            maxLife: 280
+        });
+    }
+    
+    for (var p in pacmanPlayers) {
+        var pl = pacmanPlayers[p];
+        if (pl.isCannonball) {
+            pl.isCannonball = false;
+            snapPlayerToPath(pl, pl.x, pl.y);
+        }
+        if (pl.lives > 0) {
+            pl.score += 5000;
+            pl.roundScore += 5000;
+        }
+        pl.bossDamageDealt = 0;
+    }
+    
+    pushAlertEvent('🏆 VICTORY! O Chefão Cobra foi derrotado!');
+    pushAlertEvent('💰 Sobreviventes ganharam +5000 pontos!');
+    
+    AudioSynth.playVictoryFanfare();
+    updatePacmanLeaderboard(true);
+    updateDotFlowField();
+};
+
+function updateSnakeBoss() {
+    if (!window.snakeBoss) return;
+    
+    var boss = window.snakeBoss;
+    
+    var cooldownUpdated = false;
+    window.cannons.forEach(function(c) {
+        if (c.cooldown > 0) {
+            c.cooldown--;
+            if (c.cooldown === 0) {
+                cooldownUpdated = true;
+            }
+        }
+    });
+    if (cooldownUpdated) {
+        updateCannonFlowField();
+    }
+    
+    if (boss.state === 'dying') {
+        boss.deathTimer++;
+        if (boss.deathTimer % 12 === 0) {
+            if (boss.deathSegmentIndex >= 0) {
+                var seg = boss.segments[boss.deathSegmentIndex];
+                if (seg) {
+                    for (var j = 0; j < 15; j++) {
+                        pacmanParticles.push({
+                            x: seg.x * pacmanTileSize + pacmanTileSize/2,
+                            y: seg.y * pacmanTileSize + pacmanTileSize/2,
+                            vx: (Math.random() - 0.5) * 5,
+                            vy: (Math.random() - 0.5) * 5,
+                            color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+                            size: 4 + Math.random() * 5,
+                            life: 25,
+                            maxLife: 25
+                        });
+                    }
+                    window.pacmanScreenShake = 12;
+                    var pitch = 150 + (boss.segments.length - boss.deathSegmentIndex) * 70;
+                    AudioSynth.playTone(pitch, 'sawtooth', 0.15, 0.25);
+                }
+                boss.deathSegmentIndex--;
+            } else {
+                for (var j = 0; j < 55; j++) {
+                    pacmanParticles.push({
+                        x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                        y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                        vx: (Math.random() - 0.5) * 9,
+                        vy: (Math.random() - 0.5) * 9,
+                        color: Math.random() < 0.5 ? '#ff0033' : '#ffff00',
+                        size: 6 + Math.random() * 7,
+                        life: 45,
+                        maxLife: 45
+                    });
+                }
+                window.pacmanScreenShake = 35;
+                AudioSynth.playCannonImpact();
+                window.defeatSnakeBoss();
+            }
+        }
+        return;
+    }
+    
+    // Centralized hit flash timer decrement
+    if (boss.hitFlashTimer && boss.hitFlashTimer > 0) {
+        boss.hitFlashTimer--;
+    }
+
+    for (var p in pacmanPlayers) {
+        var pl = pacmanPlayers[p];
+        if (pl.lives <= 0) continue;
+        
+        if (pl.isCannonball) {
+            pl.flightProgress += 0.025;
+            
+            var flightX = pl.flightStartX + (boss.headX - pl.flightStartX) * pl.flightProgress;
+            var flightY = pl.flightStartY + (boss.headY - pl.flightStartY) * pl.flightProgress;
+            pl.flightCurrentX = flightX;
+            pl.flightCurrentY = flightY;
+            
+            // Highly intense cinematic cannonball trail (colorful plasma beam)
+            for (var j = 0; j < 3; j++) {
+                pacmanParticles.push({
+                    x: flightX * pacmanTileSize + pacmanTileSize/2 + (Math.random() - 0.5) * 8,
+                    y: flightY * pacmanTileSize + pacmanTileSize/2 + (Math.random() - 0.5) * 8,
+                    vx: (Math.random() - 0.5) * 2.5 - (boss.headX - pl.flightStartX) * 0.04,
+                    vy: (Math.random() - 0.5) * 2.5 - (boss.headY - pl.flightStartY) * 0.04,
+                    color: ['#ff1e27', '#ff8400', '#ffea00', '#d946ef', '#06b6d4'][Math.floor(Math.random() * 5)],
+                    size: 4 + Math.random() * 6,
+                    life: 20 + Math.random() * 15,
+                    maxLife: 35
+                });
+            }
+            
+            var distToHead = Math.hypot(flightX - boss.headX, flightY - boss.headY);
+            // Homing check: If close enough OR progress reached end, register hit!
+            if (distToHead < 1.25 || pl.flightProgress >= 1.0) {
+                boss.health -= 1;
+                pl.isCannonball = false;
+                
+                boss.hitFlashTimer = 15; // Set hit flash duration
+                // Push snake head back in progress as hit impact reaction
+                boss.progress = Math.max(0.0, boss.progress - 0.18);
+                
+                pl.bossDamageDealt = (pl.bossDamageDealt || 0) + 1;
+                
+                // Spawn massive explosive shower of sparks
+                for (var i = 0; i < 55; i++) {
+                    var sparkColor = ['#ffffff', '#ffcc00', '#ff0055', '#00ffcc'][Math.floor(Math.random() * 4)];
+                    pacmanParticles.push({
+                        x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                        y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        color: sparkColor,
+                        size: 3 + Math.random() * 6,
+                        life: 25 + Math.random() * 15,
+                        maxLife: 40
+                    });
+                }
+                
+                // Spawn dynamic shockwave ring
+                var swColor = {
+                    forest: '#00ff66',
+                    fire: '#ffaa00',
+                    cyber: '#00f0ff',
+                    gold: '#fbbf24'
+                }[boss.skin || 'forest'] || '#00ffff';
+                
+                window.pacmanShockwaves.push({
+                    x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                    y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                    radius: 10,
+                    maxRadius: 120,
+                    color: swColor,
+                    life: 24
+                });
+                
+                pl.score += 1500;
+                pl.roundScore += 1500;
+                spawnTextParticle(boss.headX, boss.headY, '💥 CRITICAL! -1 HP', '#ff3366');
+                spawnTextParticle(pl.x, pl.y, '+1500', '#ffff00');
+                
+                var landSpot = getAvailableSpawnPosition();
+                pl.x = landSpot.x;
+                pl.y = landSpot.y;
+                pl.targetX = landSpot.x;
+                pl.targetY = landSpot.y;
+                pl.progress = 0.0;
+                
+                AudioSynth.playCannonImpact();
+                
+                window.pacmanScreenShake = 28;
+                window.pacmanHitStopTimer = 14;
+                
+                if (boss.health <= 0) {
+                    boss.state = 'dying';
+                    boss.deathTimer = 0;
+                    boss.deathSegmentIndex = boss.segments.length - 1;
+                    return;
+                }
+            }
+        }
+    }
+    
+    if (boss.progress === 0) {
+        boss.segments.unshift({ x: boss.headX, y: boss.headY });
+        if (boss.segments.length > boss.length) {
+            boss.segments.pop();
+        }
+        
+        var targetPlayer = null;
+        var minDist = Infinity;
+        for (var p in pacmanPlayers) {
+            var pl = pacmanPlayers[p];
+            if (pl.lives > 0 && pl.spawnProtection <= 0 && !pl.isCannonball) {
+                var d = Math.abs(pl.x - boss.headX) + Math.abs(pl.y - boss.headY);
+                if (d < minDist) {
+                    minDist = d;
+                    targetPlayer = pl;
+                }
+            }
+        }
+        
+        var possibleDirs = ['left', 'right', 'up', 'down'];
+        var opposite = { 'left': 'right', 'right': 'left', 'up': 'down', 'down': 'up' };
+        var oppositeDir = opposite[boss.dir] || 'down';
+        
+        var validDirs = possibleDirs.filter(function(d) {
+            var dx = d === 'left' ? -1 : d === 'right' ? 1 : 0;
+            var dy = d === 'up' ? -1 : d === 'down' ? 1 : 0;
+            var nx = boss.headX + dx;
+            var ny = boss.headY + dy;
+            
+            if (nx < 0 || nx >= pacmanMaze[0].length || ny < 0 || ny >= pacmanMaze.length) return false;
+            return pacmanMaze[ny][nx] === 0;
+        });
+        
+        if (validDirs.length > 1) {
+            validDirs = validDirs.filter(function(d) { return d !== oppositeDir; });
+        }
+        
+        if (validDirs.length > 0) {
+            if (targetPlayer && Math.random() < 0.75) {
+                var tx = targetPlayer.x;
+                var ty = targetPlayer.y;
+                validDirs.sort(function(a, b) {
+                    var ax = boss.headX + (a === 'left' ? -1 : a === 'right' ? 1 : 0);
+                    var ay = boss.headY + (a === 'up' ? -1 : a === 'down' ? 1 : 0);
+                    var bx = boss.headX + (b === 'left' ? -1 : b === 'right' ? 1 : 0);
+                    var by = boss.headY + (b === 'up' ? -1 : b === 'down' ? 1 : 0);
+                    
+                    var distA = Math.abs(ax - tx) + Math.abs(ay - ty);
+                    var distB = Math.abs(bx - tx) + Math.abs(by - ty);
+                    return distA - distB;
+                });
+                boss.dir = validDirs[0];
+            } else {
+                boss.dir = validDirs[Math.floor(Math.random() * validDirs.length)];
+            }
+            
+            var dx = boss.dir === 'left' ? -1 : boss.dir === 'right' ? 1 : 0;
+            var dy = boss.dir === 'up' ? -1 : boss.dir === 'down' ? 1 : 0;
+            boss.targetX = boss.headX + dx;
+            boss.targetY = boss.headY + dy;
+        } else {
+            boss.targetX = boss.headX;
+            boss.targetY = boss.headY;
+        }
+    }
+    
+    boss.progress += boss.speed;
+    if (boss.progress >= 1.0) {
+        boss.headX = boss.targetX;
+        boss.headY = boss.targetY;
+        boss.progress = 0.0;
+        
+        updateCannonFlowField();
+        checkPlayerSnakeCollisions(boss);
+    }
+    
+    boss.growTimer++;
+    if (boss.growTimer >= 300) {
+        boss.growTimer = 0;
+        boss.length++;
+        spawnTextParticle(boss.headX, boss.headY, '🐍 CRESCENDO!', '#00ff66');
+    }
+}
+
+function snapPlayerToPath(pl, fx, fy) {
+    var snapX = Math.round(fx);
+    var snapY = Math.round(fy);
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    if (snapY >= 0 && snapY < rows && snapX >= 0 && snapX < cols && pacmanMaze[snapY][snapX] === 1) {
+        var found = false;
+        var searchDirs = [[0,0],[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(var d=0; d<searchDirs.length; d++) {
+            var nx = snapX + searchDirs[d][0];
+            var ny = snapY + searchDirs[d][1];
+            if (ny >= 0 && ny < rows && nx >= 0 && nx < cols && pacmanMaze[ny][nx] === 0) {
+                pl.x = nx;
+                pl.y = ny;
+                found = true;
+                break;
+            }
+        }
+        if (!found) { pl.x = 13; pl.y = 19; }
+    } else {
+        pl.x = Math.max(0, Math.min(cols-1, snapX));
+        pl.y = Math.max(0, Math.min(rows-1, snapY));
+    }
+    pl.targetX = pl.x;
+    pl.targetY = pl.y;
+    pl.progress = 0.0;
+}
+
+function checkPlayerSnakeCollisions(boss) {
+    if (boss.state === 'dying') return;
+    
+    for (var p in pacmanPlayers) {
+        var pl = pacmanPlayers[p];
+        if (pl.lives <= 0 || pl.spawnProtection > 0 || pl.isCannonball) continue;
+        
+        var hit = (pl.x === boss.headX && pl.y === boss.headY);
+        
+        if (!hit) {
+            for (var i = 0; i < boss.segments.length; i++) {
+                if (pl.x === boss.segments[i].x && pl.y === boss.segments[i].y) {
+                    hit = true;
+                    break;
+                }
+            }
+        }
+        
+        if (hit) {
+            var hasSorveteShield = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🍦'; });
+            var isGiant = pl.giantTimer > 0;
+            
+            if (hasSorveteShield) {
+                boss.health -= 1;
+                boss.hitFlashTimer = 15; // Set flash duration
+                
+                pl.score += 1500;
+                pl.roundScore += 1500;
+                pl.bossDamageDealt = (pl.bossDamageDealt || 0) + 1;
+                
+                var sIdx = pl.orbitingFruits.findIndex(function(f) { return f.type === '🍦'; });
+                if (sIdx !== -1) {
+                    pl.orbitingFruits.splice(sIdx, 1);
+                }
+                
+                // Shockwave and particles
+                var swColor = {
+                    forest: '#00ff66',
+                    fire: '#ffaa00',
+                    cyber: '#00f0ff',
+                    gold: '#fbbf24'
+                }[boss.skin || 'forest'] || '#00ffff';
+                
+                window.pacmanShockwaves.push({
+                    x: pl.x * pacmanTileSize + pacmanTileSize/2,
+                    y: pl.y * pacmanTileSize + pacmanTileSize/2,
+                    radius: 8,
+                    maxRadius: 85,
+                    color: swColor,
+                    life: 20
+                });
+                
+                for (var i = 0; i < 20; i++) {
+                    pacmanParticles.push({
+                        x: pl.x * pacmanTileSize + pacmanTileSize/2,
+                        y: pl.y * pacmanTileSize + pacmanTileSize/2,
+                        vx: (Math.random() - 0.5) * 6,
+                        vy: (Math.random() - 0.5) * 6,
+                        color: swColor,
+                        size: 3 + Math.random() * 4,
+                        life: 15 + Math.random() * 10,
+                        maxLife: 25
+                    });
+                }
+                
+                spawnTextParticle(pl.x, pl.y, '🛡️ ESCUDO COMPACTADO! -1 HP', '#00ffff');
+                AudioSynth.playCannonImpact();
+                window.pacmanScreenShake = 22;
+                
+                snapPlayerToPath(pl, pl.x + (Math.random() < 0.5 ? -1.5 : 1.5), pl.y + (Math.random() < 0.5 ? -1.5 : 1.5));
+                
+                if (boss.health <= 0) {
+                    boss.state = 'dying';
+                    boss.deathTimer = 0;
+                    boss.deathSegmentIndex = boss.segments.length - 1;
+                    return;
+                }
+                
+                hit = false;
+            } else if (isGiant) {
+                var now = Date.now();
+                if (!pl.lastSnakeDamageTime || now - pl.lastSnakeDamageTime > 1000) {
+                    pl.lastSnakeDamageTime = now;
+                    boss.health -= 1;
+                    boss.hitFlashTimer = 15; // Set flash duration
+                    
+                    pl.score += 1500;
+                    pl.roundScore += 1500;
+                    pl.bossDamageDealt = (pl.bossDamageDealt || 0) + 1;
+                    
+                    // Shockwave and particles
+                    var swColor = {
+                        forest: '#00ff66',
+                        fire: '#ffaa00',
+                        cyber: '#00f0ff',
+                        gold: '#fbbf24'
+                    }[boss.skin || 'forest'] || '#00ffff';
+                    
+                    window.pacmanShockwaves.push({
+                        x: pl.x * pacmanTileSize + pacmanTileSize/2,
+                        y: pl.y * pacmanTileSize + pacmanTileSize/2,
+                        radius: 8,
+                        maxRadius: 100,
+                        color: swColor,
+                        life: 20
+                    });
+                    
+                    for (var i = 0; i < 30; i++) {
+                        pacmanParticles.push({
+                            x: pl.x * pacmanTileSize + pacmanTileSize/2,
+                            y: pl.y * pacmanTileSize + pacmanTileSize/2,
+                            vx: (Math.random() - 0.5) * 7,
+                            vy: (Math.random() - 0.5) * 7,
+                            color: '#00ffcc',
+                            size: 3 + Math.random() * 5,
+                            life: 20 + Math.random() * 10,
+                            maxLife: 30
+                        });
+                    }
+                    
+                    spawnTextParticle(pl.x, pl.y, '💥 ESMAGADA GIGANTE! -1 HP', '#00ffcc');
+                    AudioSynth.playCannonImpact();
+                    window.pacmanScreenShake = 24;
+                    
+                    if (boss.health <= 0) {
+                        boss.state = 'dying';
+                        boss.deathTimer = 0;
+                        boss.deathSegmentIndex = boss.segments.length - 1;
+                        return;
+                    }
+                }
+                
+                hit = false;
+            }
+        }
+        
+        if (hit) {
+            pl.lives--;
+            spawnDeathParticles(pl.x, pl.y, pl.color);
+            spawnTextParticle(pl.x, pl.y, 'DESTRUIDO POR COBRA', '#ff0000');
+            AudioSynth.playDeath();
+            
+            if (pl.lives > 0) {
+                var respawnPos = getAvailableSpawnPosition();
+                pl.x = respawnPos.x;
+                pl.y = respawnPos.y;
+                pl.targetX = respawnPos.x;
+                pl.targetY = respawnPos.y;
+                pl.progress = 0.0;
+                pl.spawnProtection = 120;
+            }
+            updatePacmanLeaderboard(true);
+        }
+    }
+}
