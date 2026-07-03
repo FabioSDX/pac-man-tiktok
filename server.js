@@ -79,11 +79,33 @@ function send(ws, obj) {
   try { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (e) { }
 }
 
+function initBatching(session, ws) {
+  if (!session.eventQueue) session.eventQueue = [];
+  if (!session.likeBuffer) session.likeBuffer = {};
+  if (!session.batchInterval) {
+    session.batchInterval = setInterval(function () {
+      if (session.likeBuffer) {
+        for (var user in session.likeBuffer) {
+          session.eventQueue.push(session.likeBuffer[user]);
+        }
+        session.likeBuffer = {};
+      }
+      if (session.eventQueue.length > 0) {
+        send(ws, { type: 'event_batch', events: session.eventQueue });
+        session.eventQueue = [];
+      }
+    }, 100);
+  }
+}
+
 function cleanupSession(ws) {
   var s = sessions.get(ws);
   if (!s) return;
   if (s.tiktok && s.tiktok.conn) { try { s.tiktok.conn.disconnect(); } catch (e) { } }
   if (s.youtube && s.youtube.conn) { try { s.youtube.conn.stop(); } catch (e) { } }
+  if (s.batchInterval) {
+    try { clearInterval(s.batchInterval); } catch (e) { }
+  }
   sessions.delete(ws);
 }
 
@@ -162,85 +184,69 @@ function attachTikTokEvents(ws, tiktok, username, session) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, username), nick = getNick(u, data, uid), av = getAvatar(u, data);
     var chatEv = { type: 'chat', platform: 'tiktok', user: uid, nickname: nick, avatar: av, comment: data.comment || '', msgId: data.msgId };
-
-    if (!session.chatBuffer) session.chatBuffer = [];
-    session.chatBuffer.push(chatEv);
-
-    if (!session.chatTimeout) {
-      session.chatTimeout = setTimeout(function () {
-        if (session.chatBuffer) {
-          session.chatBuffer.forEach(function (msg) { send(ws, msg); });
-          session.chatBuffer = [];
-        }
-        session.chatTimeout = null;
-      }, 100);
-    }
+    if (session.eventQueue) session.eventQueue.push(chatEv);
   });
   tiktok.on('member', function (data) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) send(ws, { type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    if (uid && session.eventQueue) {
+      session.eventQueue.push({ type: 'member', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    }
   });
   tiktok.on('subscribe', function (data) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) send(ws, { type: 'subscribe', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    if (uid && session.eventQueue) {
+      session.eventQueue.push({ type: 'subscribe', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    }
   });
   tiktok.on('gift', function (data) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    send(ws, {
-      type: 'gift', platform: 'tiktok', user: uid, nickname: nick, avatar: av,
-      giftName: (data.giftName || data.describe || '').toLowerCase(), diamondCount: data.diamondCount || 1,
-      repeatCount: data.repeatCount || 1, giftId: data.giftId || 0, msgId: data.msgId,
-      giftPictureUrl: data.giftPictureUrl || (data.extendedGiftInfo && data.extendedGiftInfo.icon && data.extendedGiftInfo.icon.url_list ? data.extendedGiftInfo.icon.url_list[0] : ''),
-      giftAnimationUrl: data.extendedGiftInfo && data.extendedGiftInfo.image && data.extendedGiftInfo.image.url_list ? data.extendedGiftInfo.image.url_list[0] : '',
-      giftType: data.giftType || 0
-    });
+    if (session.eventQueue) {
+      session.eventQueue.push({
+        type: 'gift', platform: 'tiktok', user: uid, nickname: nick, avatar: av,
+        giftName: (data.giftName || data.describe || '').toLowerCase(), diamondCount: data.diamondCount || 1,
+        repeatCount: data.repeatCount || 1, giftId: data.giftId || 0, msgId: data.msgId,
+        giftPictureUrl: data.giftPictureUrl || (data.extendedGiftInfo && data.extendedGiftInfo.icon && data.extendedGiftInfo.icon.url_list ? data.extendedGiftInfo.icon.url_list[0] : ''),
+        giftAnimationUrl: data.extendedGiftInfo && data.extendedGiftInfo.image && data.extendedGiftInfo.image.url_list ? data.extendedGiftInfo.image.url_list[0] : '',
+        giftType: data.giftType || 0
+      });
+    }
   });
   tiktok.on('like', function (data) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
     if (!uid) return;
 
-    // Buffer likes per user to avoid flooding the WebSocket
     if (!session.likeBuffer) session.likeBuffer = {};
     if (!session.likeBuffer[uid]) {
       session.likeBuffer[uid] = { type: 'like', platform: 'tiktok', user: uid, nickname: nick, avatar: av, likeCount: 0, msgId: data.msgId };
     }
     session.likeBuffer[uid].likeCount += (data.likeCount || 1);
-
-    if (!session.likeTimeout) {
-      session.likeTimeout = setTimeout(function () {
-        if (session.likeBuffer) {
-          for (var user in session.likeBuffer) {
-            send(ws, session.likeBuffer[user]);
-          }
-          session.likeBuffer = {};
-        }
-        session.likeTimeout = null;
-      }, 300); // 300ms interval for responsiveness
-    }
   });
   tiktok.on('follow', function (data) {
     eventsCounter++;
     console.log('[TikTok] Follow event detected:', data.uniqueId || (data.user && data.user.uniqueId));
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    send(ws, { type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    if (session.eventQueue) {
+      session.eventQueue.push({ type: 'follow', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    }
   });
   tiktok.on('share', function (data) {
     eventsCounter++;
     var u = data.user || {}, uid = getUser(u, data, 'unknown'), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    send(ws, { type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    if (session.eventQueue) {
+      session.eventQueue.push({ type: 'share', platform: 'tiktok', user: uid, nickname: nick, avatar: av, msgId: data.msgId });
+    }
   });
   tiktok.on('social', function (data) {
     console.log('[TikTok] Social event:', data.displayType, 'from', data.uniqueId || (data.user && data.user.uniqueId));
     var u = data.user || {}, uid = getUser(u, data, ''), nick = getNick(u, data, uid), av = getAvatar(u, data);
-    if (uid) {
-      // If it's a follow label, treat as follow
+    if (uid && session.eventQueue) {
       var isFollow = data.displayType && (data.displayType.includes('follow') || data.displayType.includes('seguidor'));
       var type = isFollow ? 'follow' : 'social';
-      send(ws, { type: type, platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social', msgId: data.msgId });
+      session.eventQueue.push({ type: type, platform: 'tiktok', user: uid, nickname: nick, avatar: av, label: data.displayType || 'social', msgId: data.msgId });
     }
   });
   tiktok.on('roomUser', function (data) { send(ws, { type: 'roomUser', platform: 'tiktok', viewerCount: data.viewerCount || 0 }); });
@@ -321,49 +327,44 @@ function connectYouTube(ws, youtubeId) {
     }
 
     var chatEv = { type: 'chat', platform: 'youtube', user: uid, nickname: nick, avatar: av, comment: comment, msgId: chatItem.id, isBroadcaster: isBroadcaster };
-    
-    if (!session.chatBuffer) session.chatBuffer = [];
-    session.chatBuffer.push(chatEv);
-    if (!session.chatTimeout) {
-      session.chatTimeout = setTimeout(function () {
-        if (session.chatBuffer) {
-          session.chatBuffer.forEach(function (msg) { send(ws, msg); });
-          session.chatBuffer = [];
-        }
-        session.chatTimeout = null;
-      }, 100);
-    }
+    if (session.eventQueue) session.eventQueue.push(chatEv);
   });
 
   liveChat.on('superChat', (item) => {
     var nick = item.author.name || 'unknown';
     var uid = '@' + nick;
     var av = formatYouTubeAvatar(item.author.thumbnail);
-    send(ws, {
-      type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
-      giftName: 'SuperChat ' + item.amount, diamondCount: 10,
-      repeatCount: 1, giftId: item.id, msgId: item.id,
-      giftPictureUrl: ''
-    });
+    if (session.eventQueue) {
+      session.eventQueue.push({
+        type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
+        giftName: 'SuperChat ' + item.amount, diamondCount: 10,
+        repeatCount: 1, giftId: item.id, msgId: item.id,
+        giftPictureUrl: ''
+      });
+    }
   });
 
   liveChat.on('superSticker', (item) => {
     var nick = item.author.name || 'unknown';
     var uid = '@' + nick;
     var av = formatYouTubeAvatar(item.author.thumbnail);
-    send(ws, {
-      type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
-      giftName: item.stickerName || 'SuperSticker', diamondCount: 10,
-      repeatCount: 1, giftId: item.id, msgId: item.id,
-      giftPictureUrl: ''
-    });
+    if (session.eventQueue) {
+      session.eventQueue.push({
+        type: 'gift', platform: 'youtube', user: uid, nickname: nick, avatar: av,
+        giftName: item.stickerName || 'SuperSticker', diamondCount: 10,
+        repeatCount: 1, giftId: item.id, msgId: item.id,
+        giftPictureUrl: ''
+      });
+    }
   });
 
   liveChat.on('member', (item) => {
      var nick = item.author.name || 'unknown';
      var uid = '@' + nick;
      var av = formatYouTubeAvatar(item.author.thumbnail);
-     send(ws, { type: 'member', platform: 'youtube', user: uid, nickname: nick, avatar: av, msgId: item.id });
+     if (session.eventQueue) {
+       session.eventQueue.push({ type: 'member', platform: 'youtube', user: uid, nickname: nick, avatar: av, msgId: item.id });
+     }
   });
 
   liveChat.on('error', (err) => {
@@ -387,11 +388,12 @@ function connectYouTube(ws, youtubeId) {
 // ── WebSocket handler ────────────────────────────────────────────────────────
 wss.on('connection', function (ws) {
   console.log('[WS] Client connected. Total:', wss.clients.size);
+  var session = getSession(ws);
+  initBatching(session, ws);
 
   ws.on('message', function (raw) {
     try {
       var msg = JSON.parse(raw);
-      var session = getSession(ws);
 
       // Rate-limit per platform
       if (msg.action === 'connect' && session.lastTTConnect && (Date.now() - session.lastTTConnect < 10000)) {
