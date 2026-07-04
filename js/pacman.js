@@ -1615,6 +1615,58 @@ function updateCannonFlowField() {
     }
 }
 
+var snakeBossFlowField = [];
+function updateSnakeBossFlowField() {
+    ensureFlowFieldBuffers();
+    var rows = pacmanMaze.length;
+    var cols = pacmanMaze[0].length;
+    
+    if (snakeBossFlowField.length !== rows) {
+        snakeBossFlowField = new Array(rows);
+        for (var r = 0; r < rows; r++) {
+            snakeBossFlowField[r] = new Array(cols);
+        }
+    }
+    
+    for (var r = 0; r < rows; r++) {
+        snakeBossFlowField[r].fill(999999999);
+    }
+    
+    if (!window.snakeBoss) return;
+    
+    var queue = [];
+    var sx = window.snakeBoss.headX;
+    var sy = window.snakeBoss.headY;
+    
+    if (sy >= 0 && sy < rows && sx >= 0 && sx < cols) {
+        snakeBossFlowField[sy][sx] = 0;
+        queue.push({ x: sx, y: sy, dist: 0 });
+    }
+    
+    var head = 0;
+    while (head < queue.length) {
+        var curr = queue[head++];
+        if (curr.dist > snakeBossFlowField[curr.y][curr.x]) continue;
+        
+        var dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+        for (var d = 0; d < 4; d++) {
+            var nx = curr.x + dirs[d][0];
+            var ny = curr.y + dirs[d][1];
+            
+            if (nx < 0) nx = cols - 1;
+            else if (nx >= cols) nx = 0;
+            
+            if (ny >= 0 && ny < rows && pacmanMaze[ny] && pacmanMaze[ny][nx] !== 1) {
+                var ndist = curr.dist + 1;
+                if (ndist < snakeBossFlowField[ny][nx]) {
+                    snakeBossFlowField[ny][nx] = ndist;
+                    queue.push({ x: nx, y: ny, dist: ndist });
+                }
+            }
+        }
+    }
+}
+
 // Auto Like Bot Logic
 var pacmanAutoLikeBotInterval = null;
 function toggleAutoLikeBot() {
@@ -1678,7 +1730,8 @@ function initPacmanMaze() {
           { gift: 'gg', url: 'images tiktok/GG.png' },
           { gift: 'perfume', url: 'images tiktok/Perfume.png' },
           { gift: 'jogo tiktok', url: 'images tiktok/tik_tok.png' },
-          { gift: 'icecream', url: 'images tiktok/ice_cream.png' }
+          { gift: 'icecream', url: 'images tiktok/ice_cream.png' },
+          { gift: 'cake', url: 'images tiktok/Cake_Slice.png' }
       ];
      // Distribuir 4 presentes iniciais aleatórios no labirinto
      for (var i = 0; i < 4; i++) {
@@ -1758,7 +1811,7 @@ function renderMazeStatic() {
       var dotRadius = pacmanTileSize * 0.15;
       for (var i = 0; i < pacmanDots.length; i++) {
           var dot = pacmanDots[i];
-          if (dot.active && !dot.power) {
+          if (dot.active && !dot.power && !dot.regenerated) {
               var cx = (dot.x + 0.5) * pacmanTileSize;
               var cy = (dot.y + 0.5) * pacmanTileSize;
               dotsCtx.moveTo(cx + dotRadius, cy);
@@ -2176,6 +2229,7 @@ function checkDotCollision(pl, userName) {
         else if (fr.type === '🫰') frGiftName = 'perfume';
         else if (fr.type === '🎵') frGiftName = 'jogo tiktok';
         else if (fr.type === '🍦') frGiftName = 'icecream';
+        else if (fr.type === '🍰') frGiftName = 'cake';
         
         var fakeGiftDrop = {
             gift: frGiftName,
@@ -2299,25 +2353,34 @@ function findNextMoveAI(pl, isClone) {
                      if (pacmanMaze[ty][tx] === 1) score += 10;
                  } else {
                      var targetField = isClone ? cloneFlowField : dotFlowField;
+                     if (window.snakeBoss && !isClone) {
+                         var numRoses = (pl.orbitingFruits ? pl.orbitingFruits.filter(function(f) { return f.type === '🌹'; }).length : 0) + (pl.giftQueue ? pl.giftQueue.filter(function(f) { return f.type === '🌹'; }).length : 0);
+                         if (numRoses >= 5) {
+                             targetField = snakeBossFlowField;
+                         }
+                     }
                      score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
                  }
              } else {
                  // Normal mode AI routing
                  var targetField = isClone ? cloneFlowField : dotFlowField;
                  
-                 // Se o boss estiver ativo e não for clone, priorizar o canhão.
-                 // No modo speed, a prioridade para o canhão é absoluta.
                  if (window.snakeBoss && !isClone) {
-                     var hasActiveCannon = window.cannons.some(function(c) { return c.cooldown <= 0; });
-                     if (hasActiveCannon) {
-                         targetField = cannonFlowField;
+                     var numRoses = (pl.orbitingFruits ? pl.orbitingFruits.filter(function(f) { return f.type === '🌹'; }).length : 0) + (pl.giftQueue ? pl.giftQueue.filter(function(f) { return f.type === '🌹'; }).length : 0);
+                     if (numRoses >= 5) {
+                         targetField = snakeBossFlowField;
+                     } else {
+                         var hasActiveCannon = window.cannons.some(function(c) { return c.cooldown <= 0; });
+                         if (hasActiveCannon) {
+                             targetField = cannonFlowField;
+                         }
                      }
                  }
                  
                  score = (targetField[ty] && targetField[ty][tx] !== undefined) ? targetField[ty][tx] : 999999999;
                  
                  // Se estiver no modo Speed e indo pro canhão, dá prioridade absoluta (atração forte)
-                 if (hasSpeed && window.snakeBoss && targetField === cannonFlowField) {
+                 if (hasSpeed && window.snakeBoss && (targetField === cannonFlowField || targetField === snakeBossFlowField)) {
                      score -= 15000; // Super atração para canhões válidos
                  }
                  
@@ -2896,7 +2959,9 @@ function drawRoundEndOverlay() {
             { url: 'images tiktok/GG.png',        emoji: '🎮', name: 'GG',      skill: 'Turbo' },
             { url: 'images tiktok/Perfume.png',   emoji: '🫰', name: 'Perfume', skill: 'Clones' },
             { url: 'images tiktok/tik_tok.png',   emoji: '🎵', name: 'TikTok',  skill: 'Gigante' },
-            { url: 'images tiktok/ice_cream.png', emoji: '🍦', name: 'Sorvete', skill: 'Escudo' }
+            { url: 'images tiktok/ice_cream.png', emoji: '🍦', name: 'Sorvete', skill: 'Escudo' },
+            { url: 'images tiktok/Cake_Slice.png', emoji: '🍰', name: 'Bolo',    skill: 'Regenera Pontos' },
+            { url: 'images tiktok/Doughnut.png',  emoji: '🍩', name: 'Donut',   skill: 'Super Combo' }
         ];
         
         // Legend title
@@ -3058,7 +3123,7 @@ function drawRoundEndOverlay() {
 
 function spawnFruit() {
     var pos = getAvailableGiftSpawnPosition();
-    var giftTypes = ['🌹', '🎮', '🫰', '🍦', '🎵'];
+    var giftTypes = ['🌹', '🎮', '🫰', '🍦', '🎵', '🍰'];
     var type = giftTypes[Math.floor(Math.random() * giftTypes.length)];
     var val = (giftTypes.indexOf(type) + 1) * 300;
     
@@ -3067,7 +3132,8 @@ function spawnFruit() {
         '🎮': 'images tiktok/GG.png',
         '🫰': 'images tiktok/Perfume.png',
         '🎵': 'images tiktok/tik_tok.png',
-        '🍦': 'images tiktok/ice_cream.png'
+        '🍦': 'images tiktok/ice_cream.png',
+        '🍰': 'images tiktok/Cake_Slice.png'
     };
     
     pacmanFruits.push({
@@ -3087,6 +3153,7 @@ function spawnFruit() {
     else if (type === '🫰') giftName = 'Perfume';
     else if (type === '🍦') giftName = 'Sorvete';
     else if (type === '🎵') giftName = 'TikTok';
+    else if (type === '🍰') giftName = 'Bolo';
     
     spawnTextParticle(pos.x, pos.y, `${type} ${giftName.toUpperCase()}!`, '#ff5500');
     pushAlertEvent(`${type} Um presente de 1 Diamante (${giftName}) surgiu no labirinto!`);
@@ -3327,7 +3394,9 @@ function drawSimulatedGift(x, y, type, scale) {
         'gg': 'images tiktok/GG.png',
         'heart': 'images tiktok/Perfume.png',
         'tiktok': 'images tiktok/tik_tok.png',
-        'icecream': 'images tiktok/ice_cream.png'
+        'icecream': 'images tiktok/ice_cream.png',
+        'cake': 'images tiktok/Cake_Slice.png',
+        'donut': 'images tiktok/Doughnut.png'
     };
     var emoji = '🎁';
     if (type === 'rose') emoji = '🌹';
@@ -3335,6 +3404,8 @@ function drawSimulatedGift(x, y, type, scale) {
     else if (type === 'tiktok') emoji = '🎵';
     else if (type === 'heart') emoji = '🫰';
     else if (type === 'icecream') emoji = '🍦';
+    else if (type === 'cake') emoji = '🍰';
+    else if (type === 'donut') emoji = '🍩';
     
     var url = urls[type];
     var img = getGiftImage(url);
@@ -3888,6 +3959,20 @@ function updateEntities() {
     for (var p in pacmanPlayers) {
         var pl = pacmanPlayers[p];
         if (pl.lives <= 0) continue;
+        
+        if (pl.isDevouring) {
+            if (window.snakeBoss) {
+                pl.x = window.snakeBoss.headX;
+                pl.y = window.snakeBoss.headY;
+                pl.targetX = window.snakeBoss.headX;
+                pl.targetY = window.snakeBoss.headY;
+                pl.progress = 0.0;
+            } else {
+                pl.isDevouring = false;
+            }
+            continue; // Skip AI pathfinding and normal updates!
+        }
+        
         if (pl.isCannonball) continue;
         
         if (pl.spawnProtection > 0) pl.spawnProtection--;
@@ -3895,6 +3980,27 @@ function updateEntities() {
         
         // Update orbiting fruits and pull from queue
         updatePlayerOrbitAndQueue(pl, p);
+        
+        // --- Cake Slice Dot Regeneration ---
+        var numCakes = pl.orbitingFruits ? pl.orbitingFruits.filter(function(f) { return f.type === '🍰'; }).length : 0;
+        if (numCakes > 0 && pacmanGameState === 'playing') {
+            var now = Date.now();
+            if (!pl.lastCakeRegenTime) {
+                pl.lastCakeRegenTime = now;
+            }
+            var elapsedSeconds = (now - pl.lastCakeRegenTime) / 1000;
+            pl.lastCakeRegenTime = now;
+            
+            pl.cakeRegenFraction = (pl.cakeRegenFraction || 0) + (5 * numCakes) * elapsedSeconds;
+            var dotsToRegen = Math.floor(pl.cakeRegenFraction);
+            if (dotsToRegen > 0) {
+                pl.cakeRegenFraction -= dotsToRegen;
+                regenerateDots(dotsToRegen, pl);
+            }
+        } else {
+            pl.lastCakeRegenTime = 0;
+            pl.cakeRegenFraction = 0;
+        }
         
         // Recalculate player skill states based on what is in pl.orbitingFruits
         var hasRose = pl.orbitingFruits && pl.orbitingFruits.some(function(f) { return f.type === '🌹'; });
@@ -5043,6 +5149,30 @@ function drawPacman() {
         }
     }
     
+    // Draw Regenerated Pellets (individually with a temporary boing size-oscillating effect)
+    for (var i = 0; i < pacmanDots.length; i++) {
+        var dot = pacmanDots[i];
+        if (dot.active && !dot.power && dot.regenerated) {
+            var elapsed = Date.now() - dot.regenStartTime;
+            if (elapsed < 1000) { // Animate for 1 second (1000ms)
+                // 2 complete oscillations (frequency: 2 * Math.PI)
+                var progress = elapsed / 1000;
+                var bounce = Math.sin(progress * Math.PI * 4); // 2 full waves (up and down twice)
+                var scale = 0.15 + bounce * 0.15 * (1 - progress); // dampened bounce
+                var r = pacmanTileSize * scale;
+                
+                pacmanCtx.fillStyle = pacmanThemeDotColor || '#ffbb00';
+                pacmanCtx.beginPath();
+                pacmanCtx.arc((dot.x + 0.5) * pacmanTileSize, (dot.y + 0.5) * pacmanTileSize, r, 0, Math.PI * 2);
+                pacmanCtx.fill();
+            } else {
+                // Animation finished! Join the static canvas.
+                dot.regenerated = false;
+                renderDotsStatic();
+            }
+        }
+    }
+    
     // Draw Fruits (Larger size & juicy pulsating effect)
     pacmanFruits.forEach(function(fr) {
         if (fr.active) {
@@ -5060,7 +5190,8 @@ function drawPacman() {
                 '🎮': 'images tiktok/GG.png',
                 '🫰': 'images tiktok/Perfume.png',
                 '🎵': 'images tiktok/tik_tok.png',
-                '🍦': 'images tiktok/ice_cream.png'
+                '🍦': 'images tiktok/ice_cream.png',
+                '🍰': 'images tiktok/Cake_Slice.png'
             };
             var imgPath = fr.url || urls[fr.type] || 'images tiktok/Rose.png';
             var img = getGiftImage(imgPath);
@@ -5210,8 +5341,12 @@ function drawPacman() {
                     url = 'images tiktok/Perfume.png';
                 } else if (gName.includes('tiktok') || gName.includes('jogo')) {
                     url = 'images tiktok/tik_tok.png';
+                } else if (gName.includes('cake') || gName.includes('bolo') || gName.includes('fatia') || gName.includes('slice')) {
+                    url = 'images tiktok/Cake_Slice.png';
                 } else if (gName.includes('ice') || gName.includes('cream') || gName.includes('sorvete')) {
                     url = 'images tiktok/ice_cream.png';
+                } else if (gName.includes('donut') || gName.includes('rosquinha')) {
+                    url = 'images tiktok/Doughnut.png';
                 }
                 
                 var img = getGiftImage(url);
@@ -6224,10 +6359,15 @@ function activateGiftPower(pl, userName, giftDrop) {
         emoji = '🫰'; url = 'images tiktok/Perfume.png'; name = 'Perfume'; duration = 60000; isKnownGift = true;
     } else if (giftName.includes('tiktok') || giftName.includes('jogo')) {
         emoji = '🎵'; url = 'images tiktok/tik_tok.png'; name = 'Jogo TikTok'; duration = 15000; isKnownGift = true;
+    } else if (giftName.includes('cake') || giftName.includes('bolo') || giftName.includes('fatia') || giftName.includes('slice')) {
+        emoji = '🍰'; url = 'images tiktok/Cake_Slice.png'; name = 'Fatia de Bolo'; duration = 15000; isKnownGift = true;
     } else if (giftName.includes('ice') || giftName.includes('cream') || giftName.includes('sorvete') || giftName.includes('gelado')) {
         emoji = '🍦'; url = 'images tiktok/ice_cream.png'; name = 'Sorvete'; duration = 60000; isKnownGift = true;
     } else if (giftName.includes('rose') || giftName.includes('rosa') || giftName.includes('love')) {
         isKnownGift = true;
+    } else if (giftName.includes('donut') || giftName.includes('rosquinha')) {
+        emoji = '🍩'; url = 'images tiktok/Doughnut.png'; name = 'Donut'; duration = 15000; isKnownGift = true;
+        if (diamondCount < 30) diamondCount = 30;
     }
     
     if (!pl.giftQueue) pl.giftQueue = [];
@@ -6242,27 +6382,57 @@ function activateGiftPower(pl, userName, giftDrop) {
         { emoji: '🎮', url: 'images tiktok/GG.png', name: 'GG', duration: 15000 },
         { emoji: '🫰', url: 'images tiktok/Perfume.png', name: 'Perfume', duration: 60000 },
         { emoji: '🎵', url: 'images tiktok/tik_tok.png', name: 'Jogo TikTok', duration: 15000 },
-        { emoji: '🍦', url: 'images tiktok/ice_cream.png', name: 'Sorvete', duration: 60000 }
+        { emoji: '🍦', url: 'images tiktok/ice_cream.png', name: 'Sorvete', duration: 60000 },
+        { emoji: '🍰', url: 'images tiktok/Cake_Slice.png', name: 'Fatia de Bolo', duration: 15000 }
     ];
     
-    for (var r = 0; r < itemsToGenerate; r++) {
-        var gEmoji = emoji;
-        var gUrl = url;
-        var gName = name;
-        var gDuration = duration;
+    var isDonut = giftName.includes('donut') || giftName.includes('rosquinha');
+    var isHighValue = isDonut || (!isKnownGift && totalValue >= 30);
+    
+    if (isHighValue) {
+        var val = isDonut ? (30 * repeatCount) : totalValue;
+        var mixCount = Math.max(1, Math.floor(val / 15));
+        mixCount = Math.min(mixCount, 50); // safety cap to prevent too many items
         
-        if (!isKnownGift) {
-            var randG = standardGifts[Math.floor(Math.random() * standardGifts.length)];
-            gEmoji = randG.emoji; gUrl = randG.url; gName = randG.name; gDuration = randG.duration;
+        var mixTemplates = [
+            { emoji: '🌹', url: 'images tiktok/Rose.png', name: 'Rosa', duration: 15000 },
+            { emoji: '🍰', url: 'images tiktok/Cake_Slice.png', name: 'Fatia de Bolo', duration: 15000 },
+            { emoji: '🍦', url: 'images tiktok/ice_cream.png', name: 'Sorvete', duration: 60000 },
+            { emoji: '🎮', url: 'images tiktok/GG.png', name: 'GG', duration: 15000 },
+            { emoji: '🎵', url: 'images tiktok/tik_tok.png', name: 'Jogo TikTok', duration: 15000 }
+        ];
+        
+        for (var i = 0; i < mixCount; i++) {
+            mixTemplates.forEach(function(item) {
+                pl.giftQueue.push({
+                    type: item.emoji,
+                    url: item.url,
+                    name: item.name,
+                    duration: item.duration,
+                    spawnTime: 0
+                });
+            });
         }
-        
-        pl.giftQueue.push({
-            type: gEmoji,
-            url: gUrl,
-            name: gName,
-            duration: gDuration,
-            spawnTime: 0
-        });
+    } else {
+        for (var r = 0; r < itemsToGenerate; r++) {
+            var gEmoji = emoji;
+            var gUrl = url;
+            var gName = name;
+            var gDuration = duration;
+            
+            if (!isKnownGift) {
+                var randG = standardGifts[Math.floor(Math.random() * standardGifts.length)];
+                gEmoji = randG.emoji; gUrl = randG.url; gName = randG.name; gDuration = randG.duration;
+            }
+            
+            pl.giftQueue.push({
+                type: gEmoji,
+                url: gUrl,
+                name: gName,
+                duration: gDuration,
+                spawnTime: 0
+            });
+        }
     }
     
     updatePlayerOrbitAndQueue(pl, consumerName);
@@ -6291,15 +6461,39 @@ function updatePlayerOrbitAndQueue(pl, userName) {
     
     var now = Date.now();
     
+    // Ticke o tempo restante sequencialmente por tipo
+    var tickedTypes = {};
+    for (var i = 0; i < pl.orbitingFruits.length; i++) {
+        var fruit = pl.orbitingFruits[i];
+        if (fruit.remainingTime === undefined) {
+            fruit.remainingTime = fruit.duration || 15000;
+        }
+        if (fruit.lastTickTime === undefined) {
+            fruit.lastTickTime = now;
+        }
+        
+        var delta = now - fruit.lastTickTime;
+        fruit.lastTickTime = now;
+        
+        // Apenas o PRIMEIRO item de cada tipo tem seu tempo restante decrementado (consumo sequencial)
+        if (!tickedTypes[fruit.type]) {
+            tickedTypes[fruit.type] = true;
+            fruit.remainingTime -= delta;
+        } else {
+            // Itens subsequentes iguais na órbita mantêm seu tempo restante congelado até o anterior expirar
+        }
+    }
+    
     // 1. Filtrar itens que já expiraram na órbita
     pl.orbitingFruits = pl.orbitingFruits.filter(function(fruit) {
-        return now - fruit.spawnTime < fruit.duration;
+        return fruit.remainingTime > 0;
     });
     
-    // 2. Preencher a órbita puxando da fila até o limite físico de 10
+    // 2. Preencher a órbita puxando da fila até o limite físico de 10 (permite até 10 itens simultâneos visuais)
     while (pl.orbitingFruits.length < 10 && pl.giftQueue.length > 0) {
         var nextGift = pl.giftQueue.shift();
-        nextGift.spawnTime = Date.now();
+        nextGift.remainingTime = nextGift.duration || 15000;
+        nextGift.lastTickTime = Date.now();
         pl.orbitingFruits.push(nextGift);
         
         // Efeito imediato na ativação ao entrar na órbita
@@ -6360,6 +6554,11 @@ function activateOrbitEffect(pl, userName, gift) {
         pl.giantEndTime = (isAlreadyGiant ? pl.giantEndTime : Date.now()) + duration;
         pl.giantTimer = 1;
         AudioSynth.playTone(400, 'sine', 0.5, 0.2);
+    }
+    else if (type === '🍰') { // Fatia de Bolo (Regenera Pontos)
+        AudioSynth.playTone(523.25, 'sine', 0.2, 0.2); // C5 note
+        setTimeout(function() { AudioSynth.playTone(659.25, 'sine', 0.2, 0.2); }, 100); // E5 note
+        spawnTextParticle(pl.x, pl.y, '🎂 REGENERAÇÃO', '#00ffcc');
     }
 }
 
@@ -7235,7 +7434,9 @@ function drawComboPopup() {
                 '🎮': 'images tiktok/GG.png',
                 '🫰': 'images tiktok/Perfume.png',
                 '🎵': 'images tiktok/tik_tok.png',
-                '🍦': 'images tiktok/ice_cream.png'
+                '🍦': 'images tiktok/ice_cream.png',
+                '🍰': 'images tiktok/Cake_Slice.png',
+                '🍩': 'images tiktok/Doughnut.png'
             };
             var bannerIconUrl = bannerIconUrls[banner.icon];
             var bannerIconImg = bannerIconUrl ? getGiftImage(bannerIconUrl) : null;
@@ -7910,6 +8111,7 @@ window.toggleSnakeBossEvent = function() {
         pushAlertEvent('💥 Use os canhões nos cantos para atacá-lo!');
         
         updateCannonFlowField();
+        updateSnakeBossFlowField();
     }
 };
 
@@ -7980,6 +8182,7 @@ window.defeatSnakeBoss = function() {
     
     for (var p in pacmanPlayers) {
         var pl = pacmanPlayers[p];
+        pl.isDevouring = false;
         if (pl.isCannonball) {
             pl.isCannonball = false;
             snapPlayerToPath(pl, pl.x, pl.y);
@@ -8003,6 +8206,99 @@ function updateSnakeBoss() {
     if (!window.snakeBoss) return;
     
     var boss = window.snakeBoss;
+    
+    if (boss.state === 'being_eaten') {
+        boss.devourTimer = (boss.devourTimer || 0) + 1;
+        
+        // Every 8 frames, eat a segment
+        if (boss.devourTimer % 8 === 0) {
+            var pl = boss.devourer;
+            if (pl && pl.lives > 0) {
+                pl.snakeEatCombo = (pl.snakeEatCombo || 0) + 1;
+                var combo = pl.snakeEatCombo;
+                var pts = 1000 * combo;
+                pl.score += pts;
+                pl.roundScore += pts;
+                
+                pl.x = boss.headX;
+                pl.y = boss.headY;
+                pl.targetX = boss.headX;
+                pl.targetY = boss.headY;
+                pl.progress = 0.0;
+                
+                var swColor = ['#ff0055', '#00ffcc', '#ffff00', '#ff00ff'][combo % 4];
+                window.pacmanShockwaves.push({
+                    x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                    y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                    radius: 12,
+                    maxRadius: 140,
+                    color: swColor,
+                    life: 25
+                });
+                
+                for (var i = 0; i < 30; i++) {
+                    pacmanParticles.push({
+                        x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                        y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        color: swColor,
+                        size: 3 + Math.random() * 4,
+                        life: 15 + Math.random() * 10,
+                        maxLife: 25
+                    });
+                }
+                
+                spawnTextParticle(boss.headX, boss.headY, `🔥 COMBO X${combo}!`, swColor);
+                spawnTextParticle(pl.x, pl.y, `+${pts} PTS`, '#ffff00');
+                
+                window.pacmanScreenShake = 15 + combo;
+                
+                var pitch = 250 + combo * 60;
+                AudioSynth.playTone(pitch, 'sawtooth', 0.12, 0.2);
+                setTimeout(function() {
+                    AudioSynth.playTone(pitch * 1.5, 'sine', 0.08, 0.1);
+                }, 40);
+                
+                if (boss.segments.length > 0) {
+                    var nextSeg = boss.segments.shift();
+                    boss.headX = nextSeg.x;
+                    boss.headY = nextSeg.y;
+                    boss.targetX = nextSeg.x;
+                    boss.targetY = nextSeg.y;
+                    boss.progress = 0.0;
+                } else {
+                    boss.state = 'dying';
+                    boss.deathTimer = 0;
+                    boss.deathSegmentIndex = -1;
+                    
+                    for (var j = 0; j < 60; j++) {
+                        pacmanParticles.push({
+                            x: boss.headX * pacmanTileSize + pacmanTileSize/2,
+                            y: boss.headY * pacmanTileSize + pacmanTileSize/2,
+                            vx: (Math.random() - 0.5) * 12,
+                            vy: (Math.random() - 0.5) * 12,
+                            color: Math.random() < 0.5 ? '#ff0033' : '#ffff00',
+                            size: 6 + Math.random() * 6,
+                            life: 40,
+                            maxLife: 40
+                        });
+                    }
+                    window.pacmanScreenShake = 35;
+                    AudioSynth.playCannonImpact();
+                    
+                    pl.score += 10000;
+                    pl.roundScore += 10000;
+                    spawnTextParticle(pl.x, pl.y, '🏆 COBRA DEVORADA! +10K', '#ffff00');
+                }
+            } else {
+                boss.state = 'dying';
+                boss.deathTimer = 0;
+                boss.deathSegmentIndex = boss.segments.length - 1;
+            }
+        }
+        return;
+    }
     
     var cooldownUpdated = false;
     window.cannons.forEach(function(c) {
@@ -8236,6 +8532,7 @@ function updateSnakeBoss() {
         boss.progress = 0.0;
         
         updateCannonFlowField();
+        updateSnakeBossFlowField();
         checkPlayerSnakeCollisions(boss);
     }
     
@@ -8290,6 +8587,32 @@ function checkPlayerSnakeCollisions(boss) {
                 if (pl.x === boss.segments[i].x && pl.y === boss.segments[i].y) {
                     hit = true;
                     break;
+                }
+            }
+        }
+        
+        var numRoses = (pl.orbitingFruits ? pl.orbitingFruits.filter(function(f) { return f.type === '🌹'; }).length : 0) + (pl.giftQueue ? pl.giftQueue.filter(function(f) { return f.type === '🌹'; }).length : 0);
+        if (numRoses >= 5) {
+            if (pl.x === boss.headX && pl.y === boss.headY) {
+                // Ativar o evento especial cinematográfico de devorar a cobra sessão por sessão!
+                boss.state = 'being_eaten';
+                boss.devourer = pl;
+                boss.devourTimer = 0;
+                pl.snakeEatCombo = 0;
+                pl.isDevouring = true;
+                
+                window.pacmanScreenShake = 25;
+                AudioSynth.playTone(180, 'sawtooth', 0.4, 0.4); // Tom dramático de início
+                spawnTextParticle(boss.headX, boss.headY, '🐉 DEVORANDO COBRA!', '#ff0055');
+                
+                hit = false;
+            } else {
+                // Proteger o jogador caso ele colida com o corpo enquanto devora ou tem 5 rosas
+                for (var i = 0; i < boss.segments.length; i++) {
+                    if (pl.x === boss.segments[i].x && pl.y === boss.segments[i].y) {
+                        hit = false;
+                        break;
+                    }
                 }
             }
         }
@@ -8430,4 +8753,55 @@ function checkPlayerSnakeCollisions(boss) {
             updatePacmanLeaderboard(true);
         }
     }
+}
+
+var lastRegenSoundTime = 0;
+function triggerDotRegenSound() {
+    var now = Date.now();
+    if (now - lastRegenSoundTime > 180) { // Limit sound frequency
+        lastRegenSoundTime = now;
+        AudioSynth.playTone(650, 'sine', 0.08, 0.08, 0);
+        AudioSynth.playTone(900, 'sine', 0.08, 0.08, 0.04);
+        AudioSynth.playTone(1150, 'sine', 0.12, 0.08, 0.08);
+    }
+}
+
+function triggerDotRegenVFX(x, y) {
+    if (pacmanParticles.length < 200) {
+        var numParticles = 6;
+        for (var i = 0; i < numParticles; i++) {
+            var angle = (i / numParticles) * Math.PI * 2 + Math.random() * 0.5;
+            var speed = 0.5 + Math.random() * 0.8;
+            pacmanParticles.push({
+                x: (x + 0.5) * pacmanTileSize,
+                y: (y + 0.5) * pacmanTileSize,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                color: '#00ffcc',
+                size: 2 + Math.random() * 2,
+                life: 15 + Math.floor(Math.random() * 10),
+                maxLife: 25
+            });
+        }
+    }
+}
+
+function regenerateDots(count, pl) {
+    var inactiveDots = pacmanDots.filter(function(d) { return !d.active && !d.power; });
+    if (inactiveDots.length === 0) return;
+    
+    var toRegen = Math.min(count, inactiveDots.length);
+    for (var i = 0; i < toRegen; i++) {
+        var randomIndex = Math.floor(Math.random() * inactiveDots.length);
+        var dot = inactiveDots.splice(randomIndex, 1)[0];
+        dot.active = true;
+        dot.regenerated = true; // Mark as regenerated so it dynamic-animates with a boing effect!
+        dot.regenStartTime = Date.now(); // Record start time for the temporary boing effect
+        
+        triggerDotRegenVFX(dot.x, dot.y);
+        triggerDotRegenSound();
+    }
+    
+    dotFlowFieldDirty = true;
+    renderDotsStatic();
 }
